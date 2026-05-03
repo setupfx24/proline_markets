@@ -1,0 +1,280 @@
+# Proline Markets-only stack (project name → container/volume prefix). Not tied to ptd2 or other paths.
+name: Proline Markets
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-Proline Markets}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-Proline Markets_dev}
+      POSTGRES_DB: ${POSTGRES_DB:-Proline Markets}
+    # No host port binding — all services connect via Docker network (postgres:5432)
+    # For local dev access: docker compose exec postgres psql -U Proline Markets
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./backend/infra/docker/init-db.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-proline}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    environment:
+      POSTGRES_USER: ${TIMESCALE_USER:-Proline Markets}
+      POSTGRES_PASSWORD: ${TIMESCALE_PASSWORD:-Proline Markets_dev}
+      POSTGRES_DB: ${TIMESCALE_DB:-marketdata}
+    # No host port binding — all services connect via Docker network (timescaledb:5432)
+    volumes:
+      - ts_data:/var/lib/postgresql/data
+      - ./backend/infra/docker/init-timescale.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-proline}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    # No host port binding — all services connect via Docker network (redis:6379)
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.0
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    # No host port binding — only kafka connects via Docker network (zookeeper:2181)
+
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    depends_on:
+      - zookeeper
+    # No host port binding — all services connect via Docker network (kafka:29092)
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_INTERNAL://kafka:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    depends_on:
+      - kafka
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: Proline Markets
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+
+  # Admin dashboard API (port 8001)
+  # Loads secrets from backend/.env (Compose does NOT auto-load that path for ${VAR} substitution).
+  admin-api:
+    build:
+      context: .
+      dockerfile: backend/services/admin/Dockerfile
+    ports:
+      - "8001:8001"
+    env_file:
+      - path: ./.env
+        required: false
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      # Override: shared backend/.env uses REDIS_URL for gateway (db 0); admin service must use db 1
+      REDIS_URL: redis://redis:6379/1
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-Proline Markets}:${POSTGRES_PASSWORD:-Proline Markets_dev}@postgres:5432/${POSTGRES_DB:-Proline Markets}
+      ADMIN_JWT_SECRET: ${ADMIN_JWT_SECRET:?Set ADMIN_JWT_SECRET in .env}
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+      BANNERS_UPLOAD_DIR: /app/uploads/banners
+      WALLET_UPLOAD_ROOT: /app/uploads/wallet
+    volumes:
+      - ./backend/services/admin:/app
+      - ./backend/packages/common:/app/packages/common
+      - ./backend/uploads:/app/uploads
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001", "--reload"]
+
+  gateway:
+    build:
+      context: .
+      dockerfile: backend/services/gateway/Dockerfile
+    ports:
+      - "8000:8000"
+    env_file:
+      - path: ./.env
+        required: false
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      # Kafka "healthy" can block for a long time; gateway only needs broker up
+      kafka:
+        condition: service_started
+    environment:
+      BANNERS_UPLOAD_DIR: /app/uploads/banners
+      WALLET_UPLOAD_ROOT: /app/uploads/wallet
+    volumes:
+      - ./backend/services/gateway:/app/services/gateway
+      - ./backend/packages:/app/packages
+      - ./backend/uploads:/app/uploads
+
+  market-data:
+    build:
+      context: .
+      dockerfile: backend/services/market-data/Dockerfile
+    env_file:
+      - path: ./.env
+        required: false
+    environment:
+      # Ensure key is in process env (Compose substitution + container env)
+      INFOWAY_API_KEY: ${INFOWAY_API_KEY:-}
+      INFOWAY_API_URL: ${INFOWAY_API_URL:-https://api.infoway.io}
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+    volumes:
+      - ./backend/services/market-data:/app/services/market_data
+      - ./backend/packages:/app/packages
+
+  b-book-engine:
+    build:
+      context: .
+      dockerfile: backend/services/b-book-engine/Dockerfile
+    env_file:
+      - path: ./.env
+        required: false
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+    volumes:
+      - ./backend/services/b-book-engine:/app/services/b_book_engine
+      - ./backend/packages:/app/packages
+
+  risk-engine:
+    build:
+      context: .
+      dockerfile: backend/services/risk-engine/Dockerfile
+    env_file:
+      - path: ./.env
+        required: false
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+    volumes:
+      - ./backend/services/risk-engine:/app/services/risk_engine
+      - ./backend/packages:/app/packages
+
+  # Trader frontend (port 3000) — RESTART ALONE IS NOT ENOUGH. Rebuild the image or the browser keeps old JS:
+  #   PowerShell:  $env:APP_VERSION=(Get-Date -Format 'yyyyMMdd-HHmmss'); docker compose build --no-cache trader-frontend; docker compose up -d trader-frontend
+  #   Bash:        APP_VERSION=$(date +%Y%m%d-%H%M%S) docker compose build --no-cache trader-frontend && docker compose up -d trader-frontend
+  # After deploy: hard-refresh (Ctrl+Shift+R). Top bar shows APP_VERSION when set (xl screens).
+  trader-frontend:
+    build:
+      context: ./frontend/trader
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_APP_VERSION: ${APP_VERSION:-docker}
+    ports:
+      # Host 3010 if 3000 is already taken (local Next/other apps)
+      - "3010:3000"
+    environment:
+      # Do NOT set NEXT_PUBLIC_* http/ws here — browsers on https:// will hit mixed-content blocks.
+      # App route src/app/api/v1/[...path]/route.ts proxies using INTERNAL_API_URL or TRADER_API_PROXY_TARGET.
+      INTERNAL_API_URL: http://gateway:8000/api/v1
+      TRADER_API_PROXY_TARGET: http://gateway:8000
+      # Fallback rewrite target: any URL not matched by Next.js falls through to the landing Vite app.
+      LANDING_PROXY_TARGET: http://landing:5173
+    volumes:
+      # Bind-mount public/ so new assets (favicon, logos, images) appear without a full image rebuild.
+      - ./frontend/trader/public:/app/public:ro
+    depends_on:
+      - gateway
+      - landing
+
+  # Landing (Vite dev) — internal only, container 5173
+  # Standalone marketing/landing app (separate from Next.js trader). Hot-reload via bind-mount.
+  # No host port: only reachable via trader-frontend's Next.js fallback proxy at http://localhost:3010.
+  landing:
+    build:
+      context: ./frontend/trader/src/landing
+      dockerfile: Dockerfile
+    expose:
+      - "5173"
+    volumes:
+      # Bind only source files for hot-reload; keep image's node_modules intact.
+      - ./frontend/trader/src/landing/src:/app/src
+      - ./frontend/trader/src/landing/public:/app/public
+      - ./frontend/trader/src/landing/index.html:/app/index.html
+      - ./frontend/trader/src/landing/vite.config.js:/app/vite.config.js
+
+  # Admin frontend — host 3011 if 3001 is already taken
+  admin-frontend:
+    build:
+      context: ./frontend/admin
+      dockerfile: Dockerfile
+    ports:
+      - "3011:3001"
+    environment:
+      # Server-side proxy /admin-api → admin-api (browser must not use docker hostname admin-api)
+      ADMIN_API_PROXY_TARGET: http://admin-api:8001
+    volumes:
+      # Bind-mount public/ so logo/favicon updates apply without a full image rebuild.
+      - ./frontend/admin/public:/app/public:ro
+    depends_on:
+      - gateway
+      - admin-api
+
+  # One-off migration runner — NOT started automatically.
+  # Run with: docker compose --profile migrate up migrate
+  migrate:
+    image: python:3.12-slim
+    working_dir: /app
+    command: >
+      sh -c "pip install -e packages/common --quiet &&
+             pip install alembic sqlalchemy[asyncio] asyncpg --quiet &&
+             alembic -c infra/migrations/alembic.ini upgrade head"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://Proline Markets:Proline Markets_dev@postgres:5432/Proline Markets}
+    volumes:
+      - ./backend:/app
+    profiles:
+      - migrate
+
+volumes:
+  pg_data:
+  ts_data:
+  redis_data:
