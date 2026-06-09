@@ -1,5 +1,5 @@
 # Proline Markets-only stack (project name → container/volume prefix). Not tied to ptd2 or other paths.
-name: Proline Markets
+name: prolinemarket
 
 services:
   postgres:

@@ -2,7 +2,7 @@
 # Proline Markets — Production overrides
 # Usage: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 # ============================================================
-name: Proline Markets
+name: prolinemarket
 
 services:
   # ── Infrastructure — restart policy only (no host ports needed) ──
@@ -55,14 +55,14 @@ services:
       dockerfile: Dockerfile
       args:
         NEXT_PUBLIC_APP_VERSION: ${APP_VERSION:-production}
-        NEXT_PUBLIC_WS_URL: wss://api.Proline Marketsfx.com
+        NEXT_PUBLIC_WS_URL: wss://api.prolinemarket.com
     ports:
       - "127.0.0.1:3012:3000"
     environment:
       INTERNAL_API_URL: http://gateway:8000/api/v1
       TRADER_API_PROXY_TARGET: http://gateway:8000
       # Browser WebSocket connects directly to api subdomain
-      NEXT_PUBLIC_WS_URL: wss://api.Proline Marketsfx.com
+      NEXT_PUBLIC_WS_URL: wss://api.prolinemarket.com
       # DO NOT set NEXT_PUBLIC_GATEWAY_URL — browser uses same-origin /api/v1 proxy (avoids CORS)
     restart: always
 
