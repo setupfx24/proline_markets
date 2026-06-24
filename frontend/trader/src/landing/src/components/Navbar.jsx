@@ -1,7 +1,10 @@
 import { useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { motion, useScroll, useMotionValueEvent, AnimatePresence } from "motion/react";
-import { ArrowUpRight, Menu, X } from "lucide-react";
+import { ArrowUpRight, Menu, X, Download } from "lucide-react";
+
+// Android APK served as a static file from the trader frontend's public/ dir.
+const APK_DOWNLOAD_HREF = "/proline_apk.apk";
 import { Button } from "@/components/ui/button";
 import { NAV_ITEMS, HEADER_BUTTONS, BRAND } from "@/lib/forexData";
 
@@ -169,6 +172,16 @@ export function Navbar() {
           </div>
 
           <div className="hidden lg:flex items-center gap-2">
+            <a
+              href={APK_DOWNLOAD_HREF}
+              download
+              aria-label="Download Android app (APK)"
+              title="Download Android app (APK)"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-body text-foreground/80 hover:text-foreground rounded-full transition-colors whitespace-nowrap"
+            >
+              <Download className="size-4" />
+              APK
+            </a>
             <NavLinkOrAnchor
               href={HEADER_BUTTONS.helpCenter.href}
               className="px-3 py-1.5 text-xs font-body text-foreground/80 hover:text-foreground rounded-full transition-colors whitespace-nowrap"
@@ -252,6 +265,12 @@ export function Navbar() {
                 </motion.div>
               ))}
               <div className="flex flex-col gap-2 mt-6 w-full max-w-xs">
+                <Button variant="heroGlass" asChild className="w-full">
+                  <a href={APK_DOWNLOAD_HREF} download onClick={() => setOpen(false)}>
+                    <Download className="mr-1 size-4" />
+                    Download APK
+                  </a>
+                </Button>
                 <Button variant="heroGlass" asChild className="w-full">
                   <a href={HEADER_BUTTONS.clientPortal.href} onClick={() => setOpen(false)}>
                     {HEADER_BUTTONS.clientPortal.label}
