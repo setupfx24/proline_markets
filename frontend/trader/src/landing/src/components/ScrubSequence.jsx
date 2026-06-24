@@ -20,23 +20,44 @@ export function ScrubSequence({
   );
 
   useEffect(() => {
-    const imgs = [];
     const urls = Array.from(
       { length: frameCount },
       (_, i) => `${framesPath}/frame_${pad4(i + 1)}.${ext}`
     );
 
-    const first = new Image();
-    first.src = urls[0];
-    first.fetchPriority = "high";
-    imgs[0] = first;
-
-    urls.slice(1).forEach((src, i) => {
-      const img = new Image();
-      img.src = src;
-      imgs[i + 1] = img;
-    });
+    // Pre-create the Image objects so drawFrame() can index any frame safely,
+    // but DON'T set every .src at once — firing all ~240 requests simultaneously
+    // floods the origin (tripping rate limits / overwhelming the upstream and
+    // causing 503s). Load sequentially through a small concurrency pool instead;
+    // sequential order also matches how the scrubber consumes frames.
+    const imgs = Array.from({ length: frameCount }, () => new Image());
+    if (imgs[0]) imgs[0].fetchPriority = "high";
     imagesRef.current = imgs;
+
+    let cancelled = false;
+    let next = 0;
+    const CONCURRENCY = Math.min(8, frameCount);
+
+    const loadNext = () => {
+      if (cancelled) return;
+      const i = next++;
+      if (i >= frameCount) return;
+      const img = imgs[i];
+      const advance = () => {
+        img.onload = null;
+        img.onerror = null;
+        loadNext();
+      };
+      img.onload = advance;
+      img.onerror = advance; // skip missing frames rather than stalling the pool
+      img.src = urls[i];
+    };
+
+    for (let k = 0; k < CONCURRENCY; k++) loadNext();
+
+    return () => {
+      cancelled = true;
+    };
   }, [framesPath, frameCount, ext]);
 
   const drawImage = (img) => {
