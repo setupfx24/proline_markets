@@ -39,6 +39,11 @@ PASSWORD = "Proline@2026"            # initial login password (change after hand
 OPEN_DATE = "2025-11-25 10:00:00+00"  # account opened
 YEAR = 2026
 
+# Funding / payout method: USDT crypto wallet (replace with the real wallet if needed)
+PAY_METHOD = "crypto_usdt"
+PAY_CURRENCY = "USDT"
+USDT_WALLET = "TQ9Lm5kS3vN8pHq2wYbR7cZ4dF6gJ1aXu"  # TRC20 USDT address (placeholder)
+
 # Deposits: (timestamp, amount USD)
 DEPOSITS = [
     ("2026-01-02 11:00:00+00", 100000),
@@ -46,8 +51,8 @@ DEPOSITS = [
 ]
 BASE_CAPITAL = 150000  # profit % is computed on this flat base (profit withdrawn monthly)
 
-# Monthly return % on BASE_CAPITAL
-MONTHLY_PCT = {1: 4.2, 2: 3.4, 3: 4.9, 4: 5.3, 5: 4.6, 6: 4.1}
+# Monthly return % on BASE_CAPITAL — every month kept in the 4-5% band (>= 6000 USD)
+MONTHLY_PCT = {1: 4.5, 2: 4.3, 3: 4.9, 4: 5.0, 5: 4.6, 6: 4.4}
 MONTH_NAME = {1: "January", 2: "February", 3: "March", 4: "April",
               5: "May", 6: "June"}
 # Profit for these months is withdrawn on the 5th & 6th of the FOLLOWING month.
@@ -88,6 +93,10 @@ def split_pool(pool_cents: int, k: int) -> list[int]:
     return parts
 
 
+def txhash() -> str:
+    return "".join(RNG.choice("0123456789abcdef") for _ in range(64))
+
+
 def month_trade_profits(month_cents: int) -> list[tuple[str, int]]:
     """Return list of (symbol, profit_cents) summing exactly to month_cents."""
     xau = round(month_cents * ALLOC["XAUUSD"])
@@ -96,17 +105,19 @@ def month_trade_profits(month_cents: int) -> list[tuple[str, int]]:
 
     trades: list[tuple[str, int]] = []
 
-    # XAUUSD: 5 trades incl. one realistic loser (~12% of the gross)
-    loss = round(xau * 0.12)
-    winners = split_pool(xau + loss, 4)
-    xau_parts = winners + [-loss]
+    # XAUUSD: 9 trades incl. two realistic losers (~14% of the gross combined)
+    loss = round(xau * 0.14)
+    l1 = round(loss * 0.55)
+    l2 = loss - l1
+    winners = split_pool(xau + loss, 7)
+    xau_parts = winners + [-l1, -l2]
     RNG.shuffle(xau_parts)
     trades += [("XAUUSD", p) for p in xau_parts]
 
-    # GBPUSD: 2 winning trades
-    trades += [("GBPUSD", p) for p in split_pool(gbp, 2)]
-    # US100: 2 winning trades
-    trades += [("US100", p) for p in split_pool(tec, 2)]
+    # GBPUSD: 3 winning trades
+    trades += [("GBPUSD", p) for p in split_pool(gbp, 3)]
+    # US100: 3 winning trades
+    trades += [("US100", p) for p in split_pool(tec, 3)]
     return trades
 
 
@@ -146,18 +157,13 @@ def build():
                 "profit": profit, "opened": opened, "closed": closed,
             }))
 
-    # withdrawals: month m profit withdrawn on 5th & 6th of month m+1
+    # withdrawals: one withdrawal per month = full month profit, on the 5th of month m+1
     for m in WITHDRAW_MONTHS:
         P = monthly_profit_cents[m]
-        w1 = round(P * 0.6)
-        w2 = P - w1
         nm = m + 1
-        events.append((f"{YEAR}-{nm:02d}-05 12:00:00+00", "withdraw",
-                       {"amount": w1, "ts": f"{YEAR}-{nm:02d}-05 12:00:00+00",
-                        "for_month": MONTH_NAME[m]}))
-        events.append((f"{YEAR}-{nm:02d}-06 12:30:00+00", "withdraw",
-                       {"amount": w2, "ts": f"{YEAR}-{nm:02d}-06 12:30:00+00",
-                        "for_month": MONTH_NAME[m]}))
+        ts = f"{YEAR}-{nm:02d}-05 12:00:00+00"
+        events.append((ts, "withdraw",
+                       {"amount": P, "ts": ts, "for_month": MONTH_NAME[m]}))
 
     # ---- running balance (cents) in chronological order ----
     events.sort(key=lambda e: e[0])
@@ -193,10 +199,10 @@ def emit(events, monthly_profit_cents, final_balance) -> str:
     a("-- ============================================================================")
     a(f"-- Seed: client {FIRST_NAME} {LAST_NAME} <{EMAIL}>")
     a(f"-- Account opened: {OPEN_DATE}")
-    a(f"-- Deposits: 100,000 (02 Jan 2026) + 50,000 (04 Jan 2026) = 150,000 USD")
-    a("-- Monthly net profit (% of 150,000, withdrawn on the 5th/6th of next month):")
+    a(f"-- Deposits: 100,000 (02 Jan 2026) + 50,000 (04 Jan 2026) = 150,000 (USDT)")
+    a("-- Monthly net profit (% of 150,000, withdrawn in USDT on the 5th of next month):")
     for m, pct in MONTHLY_PCT.items():
-        a(f"--   {MONTH_NAME[m]:9s}: {pct:>4}%  =  {monthly_profit_cents[m]/100:>10,.2f} USD")
+        a(f"--   {MONTH_NAME[m]:9s}: {pct:>4}%  =  {monthly_profit_cents[m]/100:>10,.2f}")
     a(f"-- Instruments: XAUUSD 80% / GBPUSD 10% / US100 (USTEC/NQ) 10%")
     a(f"-- {total_trades} closed trades; final balance {final_balance:,.2f} USD")
     a("-- Idempotent: re-running rebuilds ONLY this user's data. Runs in one tx.")
@@ -246,10 +252,10 @@ def emit(events, monthly_profit_cents, final_balance) -> str:
         if kind == "deposit":
             amt = p["amount"]
             ba = p["balance_after"] / 100.0
-            a(f"  INSERT INTO deposits (user_id,account_id,amount,currency,method,status,approved_at,created_at)")
-            a(f"   VALUES (v_uid,v_acc,{amt:.2f},'USD','bank_transfer','approved','{p['ts']}','{p['ts']}');")
+            a(f"  INSERT INTO deposits (user_id,account_id,amount,currency,method,status,crypto_address,crypto_tx_hash,transaction_id,approved_at,created_at)")
+            a(f"   VALUES (v_uid,v_acc,{amt:.2f},'{PAY_CURRENCY}','{PAY_METHOD}','approved','{q(USDT_WALLET)}','{txhash()}','{txhash()[:16]}','{p['ts']}','{p['ts']}');")
             a(f"  INSERT INTO transactions (user_id,account_id,type,amount,balance_after,description,created_at)")
-            a(f"   VALUES (v_uid,v_acc,'deposit',{amt:.2f},{ba:.2f},'Deposit {amt:,.0f} USD','{p['ts']}');")
+            a(f"   VALUES (v_uid,v_acc,'deposit',{amt:.2f},{ba:.2f},'USDT deposit {amt:,.0f}','{p['ts']}');")
         elif kind == "trade":
             sym = p["symbol"]
             ivar = {"XAUUSD": "v_xau", "GBPUSD": "v_gbp", "US100": "v_tec"}[sym]
@@ -261,10 +267,10 @@ def emit(events, monthly_profit_cents, final_balance) -> str:
         elif kind == "withdraw":
             amt = p["amount"] / 100.0
             ba = p["balance_after"] / 100.0
-            a(f"  INSERT INTO withdrawals (user_id,account_id,amount,currency,method,status,approved_at,completed_at,created_at)")
-            a(f"   VALUES (v_uid,v_acc,{amt:.2f},'USD','bank_transfer','completed','{p['ts']}','{p['ts']}','{p['ts']}');")
+            a(f"  INSERT INTO withdrawals (user_id,account_id,amount,currency,method,status,crypto_address,crypto_tx_hash,approved_at,completed_at,created_at)")
+            a(f"   VALUES (v_uid,v_acc,{amt:.2f},'{PAY_CURRENCY}','{PAY_METHOD}','completed','{q(USDT_WALLET)}','{txhash()}','{p['ts']}','{p['ts']}','{p['ts']}');")
             a(f"  INSERT INTO transactions (user_id,account_id,type,amount,balance_after,description,created_at)")
-            a(f"   VALUES (v_uid,v_acc,'withdrawal',{amt:.2f},{ba:.2f},'{q(p['for_month'])} profit withdrawal','{p['ts']}');")
+            a(f"   VALUES (v_uid,v_acc,'withdrawal',{amt:.2f},{ba:.2f},'{q(p['for_month'])} profit withdrawal (USDT)','{p['ts']}');")
 
     a("")
     a("  RAISE NOTICE 'Seeded % % (account %): balance %', '" + q(FIRST_NAME) + "','" + q(LAST_NAME) + "', v_accnum, " + f"{final_balance:.2f};")
