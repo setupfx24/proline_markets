@@ -1,0 +1,1948 @@
+import React, { useState, useEffect, useContext } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+  RefreshControl,
+  ActivityIndicator,
+  Alert,
+  Modal,
+  TextInput,
+} from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import HeaderLogo from "../components/HeaderLogo";
+import * as SecureStore from 'expo-secure-store';
+import { API_URL } from '../config/api';
+import { getApiError } from '../utils/authApi';
+import { useTheme } from '../context/ThemeContext';
+
+const AccountsScreen = ({ navigation, route }) => {
+  const { colors, isDark } = useTheme();
+  const [user, setUser] = useState(null);
+  const [accounts, setAccounts] = useState([]);
+  const [challengeAccounts, setChallengeAccounts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [showOpenAccountModal, setShowOpenAccountModal] = useState(false);
+  const [accountTypes, setAccountTypes] = useState([]);
+  const [loadingAccountTypes, setLoadingAccountTypes] = useState(false);
+  const [openingAccount, setOpeningAccount] = useState(false);
+  const [selectedAccountType, setSelectedAccountType] = useState(null);
+  const [activeTab, setActiveTab] = useState('live'); // 'live', 'demo', 'challenge', 'archive'
+  
+  // Challenge states
+  const [availableChallenges, setAvailableChallenges] = useState([]);
+  const [showBuyChallengeModal, setShowBuyChallengeModal] = useState(false);
+  const [buyingChallenge, setBuyingChallenge] = useState(false);
+  const [challengeModeEnabled, setChallengeModeEnabled] = useState(false);
+  
+  // Transfer states
+  const [walletBalance, setWalletBalance] = useState(0);
+  const [showTransferModal, setShowTransferModal] = useState(false);
+  const [showWithdrawModal, setShowWithdrawModal] = useState(false);
+  const [showWithdrawRequestModal, setShowWithdrawRequestModal] = useState(false);
+  const [showAccountTransferModal, setShowAccountTransferModal] = useState(false);
+  const [selectedAccount, setSelectedAccount] = useState(null);
+  const [targetAccount, setTargetAccount] = useState(null);
+  const [transferAmount, setTransferAmount] = useState('');
+  const [isTransferring, setIsTransferring] = useState(false);
+  
+  // Withdrawal request states
+  const [withdrawMethod, setWithdrawMethod] = useState('Bank'); // 'Bank', 'UPI'
+  const [bankDetails, setBankDetails] = useState({
+    bankName: '',
+    accountNumber: '',
+    ifscCode: '',
+    accountHolderName: '',
+  });
+  const [upiId, setUpiId] = useState('');
+  
+  // Handle incoming route params for deposit/withdraw action
+  const [pendingAction, setPendingAction] = useState(null);
+
+  useEffect(() => {
+    loadUser();
+  }, []);
+
+  useEffect(() => {
+    if (user) {
+      // Fetch all data and then set loading false
+      const loadData = async () => {
+        try {
+          await Promise.all([
+            fetchAccounts(),
+            fetchChallengeAccounts(),
+            fetchWalletBalance(),
+            fetchChallengeStatus()
+          ]);
+        } catch (e) {
+          console.error('Error loading accounts data:', e);
+        } finally {
+          setLoading(false);
+        }
+      };
+      loadData();
+    }
+  }, [user]);
+  
+  // Handle route params to auto-open deposit/withdraw modal
+  useEffect(() => {
+    if (route?.params?.action && route?.params?.accountId && accounts.length > 0) {
+      const account = accounts.find(a => a._id === route.params.accountId);
+      if (account) {
+        setSelectedAccount(account);
+        setTransferAmount('');
+        if (route.params.action === 'deposit') {
+          fetchWalletBalance();
+          setShowTransferModal(true);
+        } else if (route.params.action === 'withdraw') {
+          setShowWithdrawModal(true);
+        }
+        // Clear the params to prevent re-triggering
+        navigation.setParams({ action: null, accountId: null });
+      }
+    }
+  }, [route?.params, accounts]);
+
+  // Handle route params to switch to specific tab (e.g., challenge tab from failed challenge)
+  useEffect(() => {
+    if (route?.params?.activeTab) {
+      setActiveTab(route.params.activeTab);
+      // Clear the param to prevent re-triggering
+      navigation.setParams({ activeTab: null });
+    }
+  }, [route?.params?.activeTab]);
+
+  // Handle refresh after buying challenge
+  useEffect(() => {
+    if (route?.params?.refreshChallengeAccounts && user) {
+      // Switch to challenge tab and refresh
+      setActiveTab('challenge');
+      fetchChallengeAccounts();
+      // Clear the param to prevent re-triggering
+      navigation.setParams({ refreshChallengeAccounts: null });
+    }
+  }, [route?.params?.refreshChallengeAccounts, user]);
+
+  const fetchWalletBalance = async () => {
+    try {
+      const res = await fetch(`${API_URL}/wallet/summary`, {
+        headers: { Authorization: `Bearer ${user.token || ''}` },
+      });
+      const data = await res.json();
+      setWalletBalance(Number(data.balance ?? data.total_live_balance) || 0);
+    } catch (e) {
+      console.error('Error fetching wallet:', e);
+    }
+  };
+
+  const loadUser = async () => {
+    try {
+      const userData = await SecureStore.getItemAsync('user');
+      if (userData) {
+        setUser(JSON.parse(userData));
+      } else {
+        navigation.replace('Login');
+      }
+    } catch (e) {
+      console.error('Error loading user:', e);
+    }
+  };
+
+  const fetchChallengeAccounts = async () => {
+    if (!user) return;
+    try {
+      const res = await fetch(`${API_URL}/prop/my-accounts/${user._id}`);
+      const data = await res.json();
+      console.log('AccountsScreen - Fetched challenge accounts:', data.accounts?.length);
+      setChallengeAccounts(data.accounts || []);
+    } catch (e) {
+      console.error('Error fetching challenge accounts:', e);
+    }
+  };
+
+  // Fetch challenge status separately (like web version)
+  const fetchChallengeStatus = async () => {
+    try {
+      const res = await fetch(`${API_URL}/prop/status`);
+      const data = await res.json();
+      console.log('AccountsScreen - Challenge status:', data.enabled);
+      if (data.success) {
+        setChallengeModeEnabled(data.enabled);
+      }
+    } catch (e) {
+      console.error('Error fetching challenge status:', e);
+    }
+  };
+
+  const fetchAvailableChallenges = async () => {
+    try {
+      const res = await fetch(`${API_URL}/prop/challenges`);
+      const data = await res.json();
+      console.log('AccountsScreen - Fetched available challenges:', data.challenges?.length, 'enabled:', data.enabled);
+      setAvailableChallenges(data.challenges || []);
+      // Also update challenge mode from this endpoint as backup
+      if (data.enabled !== undefined) {
+        setChallengeModeEnabled(data.enabled);
+      }
+    } catch (e) {
+      console.error('Error fetching available challenges:', e);
+    }
+  };
+
+  const buyChallenge = async (challenge) => {
+    if (buyingChallenge) return;
+    
+    const challengeFee = challenge.challengeFee || 0;
+    if (walletBalance < challengeFee) {
+      Alert.alert('Insufficient Balance', `You need $${challengeFee} to purchase this challenge. Your wallet balance is $${walletBalance.toFixed(2)}.`);
+      return;
+    }
+
+    Alert.alert(
+      'Confirm Purchase',
+      `Purchase ${challenge.name} for $${challengeFee}?\n\nFund Size: $${(challenge.fundSize || 0).toLocaleString()}\nYour wallet balance: $${walletBalance.toFixed(2)}`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { 
+          text: 'Buy Challenge', 
+          onPress: async () => {
+            setBuyingChallenge(true);
+            try {
+              const res = await fetch(`${API_URL}/prop/buy`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  userId: user._id,
+                  challengeId: challenge._id
+                })
+              });
+              const data = await res.json();
+              if (data.success) {
+                Alert.alert('Success', `Challenge purchased! Account ID: ${data.account?.accountId}`);
+                setShowBuyChallengeModal(false);
+                fetchChallengeAccounts();
+                fetchWalletBalance();
+              } else {
+                Alert.alert('Error', data.message || 'Failed to purchase challenge');
+              }
+            } catch (e) {
+              Alert.alert('Error', 'Network error: ' + e.message);
+            } finally {
+              setBuyingChallenge(false);
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  const fetchAccounts = async () => {
+    if (!user) return;
+    try {
+      const res = await fetch(`${API_URL}/accounts`, {
+        headers: { Authorization: `Bearer ${user.token || ''}` },
+      });
+      const data = await res.json();
+      // Normalize gateway accounts ({items:[{id,account_number,balance,...}]})
+      // into the field names this screen's cards already render.
+      const items = (data.items || []).map((a) => ({
+        ...a,
+        _id: a.id,
+        accountId: a.account_number,
+        accountType: a.account_group?.name || 'Standard',
+        balance: Number(a.balance) || 0,
+        credit: Number(a.credit) || 0,
+        equity: Number(a.equity) || 0,
+        leverage: `1:${a.leverage || 100}`,
+        currency: a.currency || 'USD',
+        isDemo: !!a.is_demo,
+        status: 'Active',
+      }));
+      console.log('AccountsScreen - Accounts loaded:', items.length);
+      setAccounts(items);
+    } catch (e) {
+      console.warn('AccountsScreen - Error fetching accounts:', e.message);
+    }
+  };
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await Promise.all([fetchAccounts(), fetchChallengeAccounts(), fetchWalletBalance(), fetchChallengeStatus()]);
+    setRefreshing(false);
+  };
+
+
+  const handleDeposit = (account) => {
+    console.log('Opening deposit modal for account:', account.accountId, account._id);
+    setSelectedAccount(account);
+    setTransferAmount('');
+    fetchWalletBalance(); // Refresh wallet balance
+    setShowTransferModal(true);
+  };
+
+  const handleWithdraw = (account) => {
+    console.log('Opening withdraw modal for account:', account.accountId, account._id);
+    setSelectedAccount(account);
+    setTransferAmount('');
+    setShowWithdrawModal(true);
+  };
+
+  const handleAccountTransfer = (account) => {
+    setSelectedAccount(account);
+    setTargetAccount(null);
+    setTransferAmount('');
+    setShowAccountTransferModal(true);
+  };
+
+  // Transfer from wallet to account
+  const handleTransferFunds = async () => {
+    if (!selectedAccount || !selectedAccount._id) {
+      Alert.alert('Error', 'No account selected');
+      return;
+    }
+    if (!transferAmount || parseFloat(transferAmount) <= 0) {
+      Alert.alert('Error', 'Please enter a valid amount');
+      return;
+    }
+    if (parseFloat(transferAmount) > walletBalance) {
+      Alert.alert('Error', 'Insufficient wallet balance');
+      return;
+    }
+
+    setIsTransferring(true);
+    try {
+      console.log('Transfer request:', {
+        url: `${API_URL}/trading-accounts/${selectedAccount._id}/transfer`,
+        userId: user._id,
+        amount: parseFloat(transferAmount),
+        direction: 'deposit'
+      });
+      
+      const res = await fetch(`${API_URL}/trading-accounts/${selectedAccount._id}/transfer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: user._id,
+          amount: parseFloat(transferAmount),
+          direction: 'deposit',
+        })
+      });
+      const data = await res.json();
+      console.log('Transfer response:', res.status, data);
+      
+      if (res.ok) {
+        // Fetch updated data first, then close modal
+        await Promise.all([fetchAccounts(), fetchWalletBalance()]);
+        setShowTransferModal(false);
+        setTransferAmount('');
+        setSelectedAccount(null);
+        Alert.alert('Success', 'Funds transferred successfully!');
+      } else {
+        Alert.alert('Error', data.message || 'Transfer failed');
+      }
+    } catch (e) {
+      console.error('Transfer error:', e);
+      Alert.alert('Error', 'Error transferring funds: ' + e.message);
+    }
+    setIsTransferring(false);
+  };
+
+  // Withdraw from account to wallet
+  const handleWithdrawFromAccount = async () => {
+    if (!transferAmount || parseFloat(transferAmount) <= 0) {
+      Alert.alert('Error', 'Please enter a valid amount');
+      return;
+    }
+    if (!selectedAccount) {
+      Alert.alert('Error', 'No account selected');
+      return;
+    }
+    if (parseFloat(transferAmount) > (selectedAccount.balance || 0)) {
+      Alert.alert('Error', 'Insufficient account balance');
+      return;
+    }
+
+    setIsTransferring(true);
+    try {
+      const res = await fetch(`${API_URL}/trading-accounts/${selectedAccount._id}/transfer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: user._id,
+          amount: parseFloat(transferAmount),
+          direction: 'withdraw',
+        })
+      });
+      const data = await res.json();
+      
+      if (res.ok) {
+        // Fetch updated data first, then close modal
+        await Promise.all([fetchAccounts(), fetchWalletBalance()]);
+        setShowWithdrawModal(false);
+        setTransferAmount('');
+        setSelectedAccount(null);
+        Alert.alert('Success', 'Funds withdrawn to main wallet!');
+      } else {
+        Alert.alert('Error', data.message || 'Withdrawal failed');
+      }
+    } catch (e) {
+      Alert.alert('Error', 'Error withdrawing funds');
+    }
+    setIsTransferring(false);
+  };
+
+  // Submit withdrawal request to admin (from wallet to bank/UPI)
+  const handleWithdrawRequest = async () => {
+    if (!transferAmount || parseFloat(transferAmount) <= 0) {
+      Alert.alert('Error', 'Please enter a valid amount');
+      return;
+    }
+    if (parseFloat(transferAmount) > walletBalance) {
+      Alert.alert('Error', 'Insufficient wallet balance');
+      return;
+    }
+
+    // Validate payment details
+    if (withdrawMethod === 'Bank') {
+      if (!bankDetails.bankName || !bankDetails.accountNumber || !bankDetails.ifscCode || !bankDetails.accountHolderName) {
+        Alert.alert('Error', 'Please fill all bank details');
+        return;
+      }
+    } else if (withdrawMethod === 'UPI') {
+      if (!upiId) {
+        Alert.alert('Error', 'Please enter UPI ID');
+        return;
+      }
+    }
+
+    setIsTransferring(true);
+    try {
+      const bankAccountDetails = withdrawMethod === 'Bank' 
+        ? {
+            type: 'Bank',
+            bankName: bankDetails.bankName,
+            accountNumber: bankDetails.accountNumber,
+            ifscCode: bankDetails.ifscCode,
+            accountHolderName: bankDetails.accountHolderName,
+          }
+        : {
+            type: 'UPI',
+            upiId: upiId,
+          };
+
+      const res = await fetch(`${API_URL}/wallet/withdraw`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: user._id,
+          amount: parseFloat(transferAmount),
+          paymentMethod: withdrawMethod === 'Bank' ? 'Bank Transfer' : 'UPI',
+          bankAccountDetails,
+        })
+      });
+      const data = await res.json();
+      
+      if (res.ok) {
+        Alert.alert('Success', 'Withdrawal request submitted! Admin will process it shortly.');
+        setShowWithdrawRequestModal(false);
+        setTransferAmount('');
+        setBankDetails({ bankName: '', accountNumber: '', ifscCode: '', accountHolderName: '' });
+        setUpiId('');
+        fetchWalletBalance();
+      } else {
+        Alert.alert('Error', data.message || 'Withdrawal request failed');
+      }
+    } catch (e) {
+      Alert.alert('Error', 'Error submitting withdrawal request');
+    }
+    setIsTransferring(false);
+  };
+
+  // Transfer between accounts
+  const handleAccountToAccountTransfer = async () => {
+    if (!transferAmount || parseFloat(transferAmount) <= 0) {
+      Alert.alert('Error', 'Please enter a valid amount');
+      return;
+    }
+    if (!targetAccount) {
+      Alert.alert('Error', 'Please select a target account');
+      return;
+    }
+    if (parseFloat(transferAmount) > selectedAccount.balance) {
+      Alert.alert('Error', 'Insufficient account balance');
+      return;
+    }
+
+    setIsTransferring(true);
+    try {
+      const res = await fetch(`${API_URL}/trading-accounts/account-transfer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: user._id,
+          fromAccountId: selectedAccount._id,
+          toAccountId: targetAccount._id,
+          amount: parseFloat(transferAmount),
+        })
+      });
+      const data = await res.json();
+      
+      if (res.ok) {
+        // Fetch updated data first, then close modal
+        await fetchAccounts();
+        setShowAccountTransferModal(false);
+        setTransferAmount('');
+        setSelectedAccount(null);
+        setTargetAccount(null);
+        Alert.alert('Success', `$${transferAmount} transferred successfully!`);
+      } else {
+        Alert.alert('Error', data.message || 'Transfer failed');
+      }
+    } catch (e) {
+      Alert.alert('Error', 'Error transferring funds');
+    }
+    setIsTransferring(false);
+  };
+
+  const selectAccountForTrading = async (account) => {
+    // Save selected account to SecureStore BEFORE navigating
+    await SecureStore.setItemAsync('selectedAccountId', account._id);
+    // Navigate to MainTrading with selected account
+    navigation.navigate('MainTrading', { selectedAccountId: account._id });
+  };
+
+  if (loading) {
+    return (
+      <View style={[styles.centered, { backgroundColor: colors.bgPrimary }]}>
+        <ActivityIndicator size="large" color={colors.accent} />
+      </View>
+    );
+  }
+
+  // Fetch account types for opening new account.
+  // Gateway: GET /accounts/available-groups (auth required). Returns the
+  // admin-managed account groups appropriate to this user (demo groups for a
+  // demo user, live groups for a live user) as { items: [...] }.
+  const fetchAccountTypes = async () => {
+    setLoadingAccountTypes(true);
+    setAccountTypes([]); // Clear previous data
+
+    try {
+      const token = await SecureStore.getItemAsync('token');
+
+      // Create a promise that rejects after 15 seconds
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('timeout')), 15000)
+      );
+
+      const fetchPromise = fetch(`${API_URL}/accounts/available-groups`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+
+      // Race between fetch and timeout
+      const res = await Promise.race([fetchPromise, timeoutPromise]);
+      const data = await res.json();
+
+      // Gateway returns { items: [...] }; tolerate a plain array too.
+      const items = Array.isArray(data) ? data : (data.items || data.accountTypes || []);
+
+      if (items.length > 0) {
+        // Map gateway group shape → the shape this screen's modal renders.
+        const mapped = items.map((g) => ({
+          _id: g.id || g._id,
+          name: g.name,
+          description: g.description,
+          minDeposit: g.minimum_deposit ?? g.minDeposit ?? 0,
+          leverage: g.leverage_default ? `1:${g.leverage_default}` : (g.leverage || '1:100'),
+          isDemo: g.is_demo ?? g.isDemo ?? false,
+        }));
+        setAccountTypes(mapped);
+      } else {
+        setAccountTypes([]); // Will show "No account types" message
+      }
+    } catch (e) {
+      console.error('Error fetching account types:', e);
+      setAccountTypes([]); // Will show "No account types" message
+    }
+    setLoadingAccountTypes(false);
+  };
+
+  const openNewAccount = async (accountType) => {
+    if (openingAccount || !accountType) return;
+    
+    setOpeningAccount(true);
+    try {
+      const token = await SecureStore.getItemAsync('token');
+      console.log('Creating account with group:', accountType._id);
+      // Gateway: POST /accounts/open (auth) with { account_group_id }.
+      const res = await fetch(`${API_URL}/accounts/open`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          account_group_id: accountType._id,
+        })
+      });
+      const text = await res.text();
+      console.log('Create account raw response:', text);
+      let data;
+      try {
+        data = text ? JSON.parse(text) : {};
+      } catch (parseErr) {
+        console.error('Failed to parse response:', text);
+        Alert.alert('Error', 'Server error: ' + text.substring(0, 100));
+        return;
+      }
+      console.log('Create account response:', data);
+      if (res.ok) {
+        Alert.alert('Success', `Account ${data.account_number || data.accountId || ''} created successfully!`);
+        setShowOpenAccountModal(false);
+        setSelectedAccountType(null);
+        fetchAccounts();
+      } else {
+        const msg = getApiError(data) || data.message || 'Failed to create account';
+        Alert.alert(
+          'Error',
+          msg === 'KYC_REQUIRED'
+            ? 'Please complete KYC verification before opening a live account.'
+            : msg
+        );
+      }
+    } catch (e) {
+      console.error('Error creating account:', e.message);
+      Alert.alert('Error', 'Network error: ' + e.message);
+    } finally {
+      setOpeningAccount(false);
+    }
+  };
+
+  // Filter accounts based on active tab (matching web version logic)
+  const liveAccounts = accounts.filter(a => !a.accountTypeId?.isDemo && !a.isDemo && a.status === 'Active');
+  const demoAccounts = accounts.filter(a => (a.accountTypeId?.isDemo || a.isDemo) && a.status === 'Active');
+  const archivedAccounts = accounts.filter(a => a.status === 'Archived' || a.status !== 'Active');
+  const activeChallengeAccounts = challengeAccounts.filter(a => a.status !== 'FAILED' && a.status !== 'ARCHIVED');
+
+  const getTabAccounts = () => {
+    switch (activeTab) {
+      case 'live': return liveAccounts;
+      case 'demo': return demoAccounts;
+      case 'challenge': return activeChallengeAccounts;
+      case 'archive': return archivedAccounts;
+      default: return liveAccounts;
+    }
+  };
+
+  const renderChallengeAccount = (account) => (
+    <View key={account._id} style={[styles.accountCard, { backgroundColor: colors.bgCard, borderColor: colors.border }]}>
+      <View style={styles.accountHeader}>
+        <View style={[styles.accountIconContainer, { backgroundColor: '#22c55e20' }]}>
+          <Ionicons name="trophy-outline" size={24} color="#22c55e" />
+        </View>
+        <View style={styles.accountInfo}>
+          <Text style={[styles.accountId, { color: colors.textPrimary }]}>{account.accountId}</Text>
+          <Text style={[styles.accountType, { color: colors.textMuted }]}>{account.challengeId?.name || 'Challenge'}</Text>
+        </View>
+        <View style={[styles.statusBadge, { backgroundColor: getStatusColor(account.status) + '20' }]}>
+          <Text style={[styles.statusText, { color: getStatusColor(account.status) }]}>{account.status}</Text>
+        </View>
+      </View>
+
+      <View style={[styles.balanceSection, { backgroundColor: colors.bgSecondary }]}>
+        <View style={styles.balanceRow}>
+          <View style={styles.balanceItem}>
+            <Text style={[styles.balanceLabel, { color: colors.textMuted }]}>Balance</Text>
+            <Text style={[styles.balanceValue, { color: colors.textPrimary }]}>${(account.currentBalance || 0).toFixed(2)}</Text>
+          </View>
+          <View style={styles.balanceItem}>
+            <Text style={[styles.balanceLabel, { color: colors.textMuted }]}>Equity</Text>
+            <Text style={[styles.balanceValue, { color: colors.textPrimary }]}>${(account.currentEquity || 0).toFixed(2)}</Text>
+          </View>
+          <View style={styles.balanceItem}>
+            <Text style={[styles.balanceLabel, { color: colors.textMuted }]}>Step</Text>
+            <Text style={[styles.balanceValue, { color: colors.textPrimary }]}>{account.currentStep || 1}/{account.challengeId?.stepsCount || 2}</Text>
+          </View>
+        </View>
+      </View>
+
+      {/* Challenge Progress */}
+      <View style={[styles.challengeProgress, { backgroundColor: colors.bgSecondary }]}>
+        <View style={styles.progressRow}>
+          <Text style={[styles.progressLabel, { color: colors.textMuted }]}>Daily Drawdown</Text>
+          <Text style={[styles.progressValue, { color: colors.textPrimary }, (account.currentDailyDrawdownPercent || 0) > (account.challengeId?.rules?.maxDailyDrawdownPercent || account.maxDailyDrawdownPercent || 5) * 0.8 && { color: '#ef4444' }]}>
+            {(account.currentDailyDrawdownPercent || 0).toFixed(2)}% / {account.challengeId?.rules?.maxDailyDrawdownPercent || account.maxDailyDrawdownPercent || 5}%
+          </Text>
+        </View>
+        <View style={styles.progressRow}>
+          <Text style={[styles.progressLabel, { color: colors.textMuted }]}>Overall Drawdown</Text>
+          <Text style={[styles.progressValue, { color: colors.textPrimary }, (account.currentOverallDrawdownPercent || 0) > (account.challengeId?.rules?.maxOverallDrawdownPercent || account.maxOverallDrawdownPercent || 10) * 0.8 && { color: '#ef4444' }]}>
+            {(account.currentOverallDrawdownPercent || 0).toFixed(2)}% / {account.challengeId?.rules?.maxOverallDrawdownPercent || account.maxOverallDrawdownPercent || 10}%
+          </Text>
+        </View>
+        <View style={styles.progressRow}>
+          <Text style={[styles.progressLabel, { color: colors.textMuted }]}>Profit Target</Text>
+          <Text style={[styles.progressValue, { color: (account.currentProfitPercent || 0) >= 0 ? '#22c55e' : '#ef4444' }]}>
+            {(account.currentProfitPercent || 0).toFixed(2)}% / {account.challengeId?.rules?.profitTargetPhase1Percent || account.profitTargetPercent || 10}%
+          </Text>
+        </View>
+      </View>
+
+      {account.status === 'ACTIVE' && (
+        <TouchableOpacity 
+          style={[styles.tradeBtn, { backgroundColor: '#22c55e' }]}
+          onPress={() => selectChallengeAccountForTrading(account)}
+        >
+          <Ionicons name="trending-up" size={18} color="#fff" />
+          <Text style={[styles.tradeBtnText, { color: '#fff' }]}>Trade Challenge</Text>
+        </TouchableOpacity>
+      )}
+    </View>
+  );
+
+  const getStatusColor = (status) => {
+    switch (status) {
+      case 'ACTIVE': return '#22c55e';
+      case 'PASSED': return '#22c55e';
+      case 'FAILED': return '#ef4444';
+      case 'FUNDED': return '#22c55e';
+      default: return '#888';
+    }
+  };
+
+  const selectChallengeAccountForTrading = async (account) => {
+    // For challenge accounts, navigate with challenge account info
+    await SecureStore.setItemAsync('selectedChallengeAccountId', account._id);
+    navigation.navigate('MainTrading', { challengeAccountId: account._id });
+  };
+
+  return (
+    <View style={[styles.container, { backgroundColor: colors.bgPrimary }]}>
+      {/* Header */}
+      <View style={[styles.header, { backgroundColor: colors.bgPrimary }]}>
+        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
+          <Ionicons name="arrow-back" size={24} color={colors.textPrimary} />
+        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <HeaderLogo size={28} />
+          <Text style={[styles.headerTitle, { color: colors.textPrimary }]}>My Accounts</Text>
+        </View>
+        <TouchableOpacity 
+          style={[styles.openAccountBtn, { backgroundColor: colors.accent, borderRadius: 20 }]} 
+          onPress={() => { fetchAccountTypes(); setShowOpenAccountModal(true); }}
+        >
+          <Ionicons name="add" size={20} color="#fff" />
+        </TouchableOpacity>
+      </View>
+
+      {/* Account Type Tabs */}
+      <View style={[styles.tabsContainer, { backgroundColor: colors.bgSecondary, borderBottomColor: colors.border }]}>
+        <TouchableOpacity 
+          style={[styles.tab, activeTab === 'live' && { backgroundColor: colors.accent }]}
+          onPress={() => setActiveTab('live')}
+        >
+          <Text style={[styles.tabText, { color: colors.textMuted }, activeTab === 'live' && styles.tabTextActive]}>Live ({liveAccounts.length})</Text>
+        </TouchableOpacity>
+        <TouchableOpacity 
+          style={[styles.tab, activeTab === 'demo' && { backgroundColor: colors.accent }]}
+          onPress={() => setActiveTab('demo')}
+        >
+          <Text style={[styles.tabText, { color: colors.textMuted }, activeTab === 'demo' && styles.tabTextActive]}>Demo ({demoAccounts.length})</Text>
+        </TouchableOpacity>
+        <TouchableOpacity 
+          style={[styles.tab, activeTab === 'challenge' && { backgroundColor: colors.accent }]}
+          onPress={() => setActiveTab('challenge')}
+        >
+          <Text style={[styles.tabText, { color: colors.textMuted }, activeTab === 'challenge' && styles.tabTextActive]}>Challenge ({activeChallengeAccounts.length})</Text>
+        </TouchableOpacity>
+        <TouchableOpacity 
+          style={[styles.tab, activeTab === 'archive' && { backgroundColor: colors.accent }]}
+          onPress={() => setActiveTab('archive')}
+        >
+          <Text style={[styles.tabText, { color: colors.textMuted }, activeTab === 'archive' && styles.tabTextActive]}>Archive ({archivedAccounts.length})</Text>
+        </TouchableOpacity>
+      </View>
+
+      <ScrollView
+        style={styles.content}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />}
+      >
+        {/* Wallet Card */}
+        <View style={[styles.walletCard, { backgroundColor: colors.bgCard, borderColor: colors.border }]}>
+          <View style={styles.walletHeader}>
+            <View style={[styles.walletIconContainer, { backgroundColor: colors.accent + '20' }]}>
+              <Ionicons name="wallet-outline" size={24} color={colors.accent} />
+            </View>
+            <View style={styles.walletInfo}>
+              <Text style={[styles.walletTitle, { color: colors.textMuted }]}>Main Wallet</Text>
+              <Text style={[styles.walletBalanceText, { color: colors.textPrimary }]}>${walletBalance.toFixed(2)}</Text>
+            </View>
+          </View>
+          <TouchableOpacity 
+            style={[styles.walletWithdrawBtn, { backgroundColor: colors.accent }]}
+            onPress={() => { setTransferAmount(''); setShowWithdrawRequestModal(true); }}
+          >
+            <Ionicons name="arrow-up-circle-outline" size={18} color="#fff" />
+            <Text style={styles.walletWithdrawBtnText}>Withdraw</Text>
+          </TouchableOpacity>
+        </View>
+
+        {activeTab === 'challenge' ? (
+          <>
+            {/* Buy Challenge Button */}
+            <TouchableOpacity 
+              style={[styles.buyChallengeBtn, { backgroundColor: colors.accent }]}
+              onPress={() => navigation.navigate('BuyChallenge')}
+            >
+              <Ionicons name="add-circle" size={20} color="#fff" />
+              <Text style={[styles.buyChallengeBtnText, { color: '#fff' }]}>Buy New Challenge</Text>
+            </TouchableOpacity>
+
+            {activeChallengeAccounts.length === 0 ? (
+              <View style={styles.emptyState}>
+                <Ionicons name="trophy-outline" size={64} color={colors.accent} />
+                <Text style={[styles.emptyTitle, { color: colors.textPrimary }]}>No Challenge Accounts</Text>
+                <Text style={[styles.emptyText, { color: colors.textMuted }]}>Purchase a challenge to start your prop trading journey.</Text>
+              </View>
+            ) : (
+              activeChallengeAccounts.map(renderChallengeAccount)
+            )}
+          </>
+        ) : getTabAccounts().length === 0 ? (
+          <View style={styles.emptyState}>
+            <Ionicons name="wallet-outline" size={64} color={colors.textMuted} />
+            <Text style={[styles.emptyTitle, { color: colors.textPrimary }]}>No {activeTab.charAt(0).toUpperCase() + activeTab.slice(1)} Accounts</Text>
+            <Text style={[styles.emptyText, { color: colors.textMuted }]}>You don't have any {activeTab} accounts yet.</Text>
+          </View>
+        ) : (
+          getTabAccounts().map((account) => {
+            return (
+              <View key={account._id} style={[styles.accountCard, { backgroundColor: colors.bgCard, borderColor: colors.border }]}>
+                {/* Account Header */}
+                <TouchableOpacity 
+                  style={styles.accountHeader}
+                  onPress={() => selectAccountForTrading(account)}
+                >
+                  <View style={[styles.accountIconContainer, { backgroundColor: colors.accent + '20' }]}>
+                    <Ionicons name="briefcase-outline" size={24} color={colors.accent} />
+                  </View>
+                  <View style={styles.accountInfo}>
+                    <Text style={[styles.accountId, { color: colors.textPrimary }]}>{account.accountId}</Text>
+                    <Text style={[styles.accountType, { color: colors.textMuted }]}>{account.accountTypeId?.name || account.accountType || 'Standard'}</Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
+                </TouchableOpacity>
+
+                {/* Balance Info */}
+                <View style={styles.balanceSection}>
+                  <View style={styles.balanceRow}>
+                    <View style={styles.balanceItem}>
+                      <Text style={[styles.balanceLabel, { color: colors.textMuted }]}>Balance</Text>
+                      <Text style={[styles.balanceValue, { color: colors.textPrimary }]}>${(account.balance || 0).toFixed(2)}</Text>
+                    </View>
+                    <View style={styles.balanceItem}>
+                      <Text style={[styles.balanceLabel, { color: colors.textMuted }]}>Equity</Text>
+                      <Text style={[styles.balanceValue, { color: colors.textPrimary }]}>${((account.balance || 0) + (account.credit || 0)).toFixed(2)}</Text>
+                    </View>
+                    <View style={styles.balanceItem}>
+                      <Text style={[styles.balanceLabel, { color: colors.textMuted }]}>Leverage</Text>
+                      <Text style={[styles.balanceValue, { color: colors.textPrimary }]}>{account.leverage || '1:100'}</Text>
+                    </View>
+                  </View>
+                </View>
+
+                {/* Action Buttons */}
+                <View style={styles.actionButtons}>
+                  {account.isDemo || account.accountTypeId?.isDemo ? (
+                    <TouchableOpacity 
+                      style={[styles.depositBtn, { backgroundColor: '#eab308', flex: 1 }]}
+                      onPress={() => {
+                        Alert.alert(
+                          'Reset Demo Account',
+                          'Are you sure you want to reset this demo account? All open trades will be closed and balance will be reset.',
+                          [
+                            { text: 'Cancel', style: 'cancel' },
+                            { text: 'Reset', style: 'destructive', onPress: async () => {
+                              try {
+                                const res = await fetch(`${API_URL}/trading-accounts/${account._id}/reset-demo`, {
+                                  method: 'POST',
+                                  headers: { 'Content-Type': 'application/json' }
+                                });
+                                const data = await res.json();
+                                if (data.success) {
+                                  Alert.alert('Success', data.message || 'Demo account reset successfully!');
+                                  fetchAccounts();
+                                } else {
+                                  Alert.alert('Error', data.message || 'Failed to reset demo account');
+                                }
+                              } catch (error) {
+                                Alert.alert('Error', 'Error resetting demo account');
+                              }
+                            }}
+                          ]
+                        );
+                      }}
+                    >
+                      <Ionicons name="refresh-outline" size={18} color="#000" />
+                      <Text style={[styles.depositBtnText, { color: '#000' }]}>Reset</Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <>
+                      <TouchableOpacity 
+                        style={[styles.depositBtn, { backgroundColor: colors.accent }]}
+                        onPress={() => handleDeposit(account)}
+                      >
+                        <Ionicons name="arrow-down-circle-outline" size={18} color="#000" />
+                        <Text style={styles.depositBtnText}>Deposit</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity 
+                        style={[styles.withdrawBtn, { backgroundColor: colors.bgSecondary, borderColor: colors.border }]}
+                        onPress={() => handleWithdraw(account)}
+                      >
+                        <Ionicons name="arrow-up-circle-outline" size={18} color={colors.textPrimary} />
+                        <Text style={[styles.withdrawBtnText, { color: colors.textPrimary }]}>Withdraw</Text>
+                      </TouchableOpacity>
+                    </>
+                  )}
+                </View>
+
+                {/* Trade Button */}
+                <TouchableOpacity 
+                  style={[styles.tradeBtn, { backgroundColor: colors.accent }]}
+                  onPress={() => selectAccountForTrading(account)}
+                >
+                  <Ionicons name="trending-up" size={18} color="#000" />
+                  <Text style={styles.tradeBtnText}>Trade with this Account</Text>
+                </TouchableOpacity>
+              </View>
+            );
+          })
+        )}
+      </ScrollView>
+
+      {/* Open Account Modal */}
+      <Modal visible={showOpenAccountModal} animationType="slide" transparent onRequestClose={() => { setShowOpenAccountModal(false); setSelectedAccountType(null); }}>
+        <View style={styles.modalOverlay}>
+          <TouchableOpacity style={styles.modalBackdrop} onPress={() => { setShowOpenAccountModal(false); setSelectedAccountType(null); }} />
+          <View style={[styles.modalContent, { backgroundColor: colors.bgCard }]}>
+            <View style={styles.modalHeader}>
+              <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Open New Account</Text>
+              <TouchableOpacity onPress={() => { setShowOpenAccountModal(false); setSelectedAccountType(null); }}>
+                <Ionicons name="close" size={24} color={colors.textMuted} />
+              </TouchableOpacity>
+            </View>
+            
+            <ScrollView style={styles.accountTypesList}>
+                {loadingAccountTypes ? (
+                  <View style={styles.loadingTypes}>
+                    <ActivityIndicator size="small" color={colors.accent} />
+                    <Text style={[styles.loadingText, { color: colors.textMuted }]}>Loading account types...</Text>
+                  </View>
+                ) : accountTypes.length === 0 ? (
+                  <View style={styles.loadingTypes}>
+                    <Ionicons name="briefcase-outline" size={48} color={colors.textMuted} />
+                    <Text style={[styles.loadingText, { color: colors.textPrimary, marginTop: 10, fontWeight: '600' }]}>No Account Types Available</Text>
+                    <Text style={[styles.loadingText, { color: colors.textMuted, marginTop: 5, fontSize: 13 }]}>Please contact support or try again later</Text>
+                    <TouchableOpacity onPress={fetchAccountTypes} style={{ marginTop: 15, paddingVertical: 10, paddingHorizontal: 20, backgroundColor: colors.accent, borderRadius: 8 }}>
+                      <Text style={{ color: '#fff', fontWeight: '600' }}>Retry</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  accountTypes.map(type => (
+                    <TouchableOpacity 
+                      key={type._id}
+                      style={[styles.accountTypeItem, { backgroundColor: colors.bgSecondary }, openingAccount && styles.buttonDisabled]}
+                      onPress={() => openNewAccount(type)}
+                      disabled={openingAccount}
+                    >
+                      <View style={[styles.accountTypeIcon, { backgroundColor: colors.accent + '20' }]}>
+                        <Ionicons name={type.isDemo ? "flask" : "briefcase"} size={24} color={colors.accent} />
+                      </View>
+                      <View style={styles.accountTypeInfo}>
+                        <Text style={[styles.accountTypeName, { color: colors.textPrimary }]}>{type.name}</Text>
+                        <Text style={[styles.accountTypeDesc, { color: colors.textMuted }]}>{type.description || 'Standard trading account'}</Text>
+                        <View style={styles.accountTypeDetails}>
+                          <Text style={[styles.accountTypeDetail, { color: colors.textSecondary }]}>Min: ${type.minDeposit || 0}</Text>
+                          <Text style={[styles.accountTypeDetail, { color: colors.textSecondary }]}>Leverage: {type.leverage || '1:100'}</Text>
+                          {type.isDemo && <Text style={[styles.accountTypeDetail, {color: colors.accent}]}>Demo</Text>}
+                        </View>
+                      </View>
+                      <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
+                    </TouchableOpacity>
+                  ))
+                )}
+              </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Buy Challenge Modal */}
+      <Modal visible={showBuyChallengeModal} animationType="slide" transparent onRequestClose={() => setShowBuyChallengeModal(false)}>
+        <View style={styles.modalOverlay}>
+          <TouchableOpacity style={styles.modalBackdrop} onPress={() => setShowBuyChallengeModal(false)} />
+          <View style={[styles.modalContent, { backgroundColor: colors.bgCard }]}>
+            <View style={styles.modalHeader}>
+              <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Buy Challenge</Text>
+              <TouchableOpacity onPress={() => setShowBuyChallengeModal(false)}>
+                <Ionicons name="close" size={24} color={colors.textMuted} />
+              </TouchableOpacity>
+            </View>
+            
+            <View style={[styles.walletBalanceRow, { backgroundColor: colors.bgSecondary, borderColor: colors.border }]}>
+              <Text style={[styles.walletBalanceLabel, { color: colors.textMuted }]}>Wallet Balance:</Text>
+              <Text style={[styles.walletBalanceValue, { color: colors.textPrimary }]}>${walletBalance.toFixed(2)}</Text>
+            </View>
+
+            <ScrollView style={styles.challengesList}>
+              {!challengeModeEnabled ? (
+                <View style={styles.loadingTypes}>
+                  <Ionicons name="lock-closed-outline" size={48} color={colors.textMuted} />
+                  <Text style={[styles.loadingText, { color: colors.textMuted }]}>Challenge mode is currently disabled</Text>
+                </View>
+              ) : availableChallenges.length === 0 ? (
+                <View style={styles.loadingTypes}>
+                  <ActivityIndicator size="small" color={colors.accent} />
+                  <Text style={[styles.loadingText, { color: colors.textMuted }]}>Loading challenges...</Text>
+                </View>
+              ) : (
+                availableChallenges.map(challenge => (
+                  <TouchableOpacity 
+                    key={challenge._id}
+                    style={[styles.challengeItem, { backgroundColor: colors.bgSecondary, borderColor: colors.border }, buyingChallenge && styles.buttonDisabled]}
+                    onPress={() => buyChallenge(challenge)}
+                    disabled={buyingChallenge}
+                  >
+                    <View style={[styles.challengeIcon, { backgroundColor: colors.accent + '20' }]}>
+                      <Ionicons name="trophy" size={24} color={colors.accent} />
+                    </View>
+                    <View style={styles.challengeInfo}>
+                      <Text style={[styles.challengeName, { color: colors.textPrimary }]}>{challenge.name}</Text>
+                      <Text style={[styles.challengeDesc, { color: colors.textMuted }]}>Fund Size: ${(challenge.fundSize || 0).toLocaleString()}</Text>
+                      <View style={styles.challengeDetails}>
+                        <Text style={[styles.challengeDetail, { color: colors.textSecondary }]}>Steps: {challenge.stepsCount || 2}</Text>
+                        <Text style={[styles.challengeDetail, { color: colors.textSecondary }]}>Profit: {challenge.profitTarget || 10}%</Text>
+                        <Text style={[styles.challengeDetail, { color: colors.accent }]}>Fee: ${challenge.challengeFee || 0}</Text>
+                      </View>
+                    </View>
+                    <View style={[styles.buyBtnSmall, { backgroundColor: colors.accent }]}>
+                      <Text style={styles.buyBtnSmallText}>Buy</Text>
+                    </View>
+                  </TouchableOpacity>
+                ))
+              )}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Deposit Modal - Transfer from Wallet to Account */}
+      <Modal visible={showTransferModal} animationType="slide" transparent onRequestClose={() => setShowTransferModal(false)}>
+        <View style={styles.modalOverlay}>
+          <TouchableOpacity style={styles.modalBackdrop} onPress={() => setShowTransferModal(false)} />
+          <View style={[styles.transferModalContent, { backgroundColor: colors.bgCard }]}>
+            <View style={styles.modalHeader}>
+              <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Deposit to Account</Text>
+              <TouchableOpacity onPress={() => setShowTransferModal(false)}>
+                <Ionicons name="close" size={24} color={colors.textMuted} />
+              </TouchableOpacity>
+            </View>
+            
+            <View style={[styles.transferInfo, { backgroundColor: colors.bgSecondary }]}>
+              <View style={[styles.transferInfoRow, { borderBottomColor: colors.border }]}>
+                <Text style={[styles.transferLabel, { color: colors.textMuted }]}>From</Text>
+                <Text style={[styles.transferValue, { color: colors.textPrimary }]}>Main Wallet</Text>
+              </View>
+              <View style={[styles.transferInfoRow, { borderBottomColor: colors.border }]}>
+                <Text style={[styles.transferLabel, { color: colors.textMuted }]}>Available</Text>
+                <Text style={[styles.transferValueGold, { color: colors.primary }]}>${walletBalance.toFixed(2)}</Text>
+              </View>
+              <View style={[styles.transferInfoRow, { borderBottomColor: colors.border }]}>
+                <Text style={[styles.transferLabel, { color: colors.textMuted }]}>To</Text>
+                <Text style={[styles.transferValue, { color: colors.textPrimary }]}>{selectedAccount?.accountId}</Text>
+              </View>
+            </View>
+
+            <Text style={[styles.inputLabel, { color: colors.textMuted }]}>Amount (USD)</Text>
+            <TextInput
+              style={[styles.transferInput, { backgroundColor: colors.bgSecondary, borderColor: colors.border, color: colors.textPrimary }]}
+              value={transferAmount}
+              onChangeText={setTransferAmount}
+              placeholder="Enter amount"
+              placeholderTextColor={colors.textMuted}
+              keyboardType="numeric"
+            />
+
+            <TouchableOpacity 
+              style={[styles.transferSubmitBtn, isTransferring && styles.btnDisabled]}
+              onPress={handleTransferFunds}
+              disabled={isTransferring}
+            >
+              {isTransferring ? (
+                <ActivityIndicator color="#000" />
+              ) : (
+                <Text style={styles.transferSubmitBtnText}>Transfer to Account</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Withdraw Modal - Transfer from Account to Wallet */}
+      <Modal visible={showWithdrawModal} animationType="slide" transparent onRequestClose={() => setShowWithdrawModal(false)}>
+        <View style={styles.modalOverlay}>
+          <TouchableOpacity style={styles.modalBackdrop} onPress={() => setShowWithdrawModal(false)} />
+          <View style={[styles.transferModalContent, { backgroundColor: colors.bgCard }]}>
+            <View style={styles.modalHeader}>
+              <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Withdraw to Wallet</Text>
+              <TouchableOpacity onPress={() => setShowWithdrawModal(false)}>
+                <Ionicons name="close" size={24} color={colors.textMuted} />
+              </TouchableOpacity>
+            </View>
+            
+            <View style={[styles.transferInfo, { backgroundColor: colors.bgSecondary }]}>
+              <View style={[styles.transferInfoRow, { borderBottomColor: colors.border }]}>
+                <Text style={[styles.transferLabel, { color: colors.textMuted }]}>From</Text>
+                <Text style={[styles.transferValue, { color: colors.textPrimary }]}>{selectedAccount?.accountId}</Text>
+              </View>
+              <View style={[styles.transferInfoRow, { borderBottomColor: colors.border }]}>
+                <Text style={[styles.transferLabel, { color: colors.textMuted }]}>Available</Text>
+                <Text style={[styles.transferValueGold, { color: colors.primary }]}>${(selectedAccount?.balance || 0).toFixed(2)}</Text>
+              </View>
+              <View style={[styles.transferInfoRow, { borderBottomColor: colors.border }]}>
+                <Text style={[styles.transferLabel, { color: colors.textMuted }]}>To</Text>
+                <Text style={[styles.transferValue, { color: colors.textPrimary }]}>Main Wallet</Text>
+              </View>
+            </View>
+
+            <Text style={[styles.inputLabel, { color: colors.textMuted }]}>Amount (USD)</Text>
+            <TextInput
+              style={[styles.transferInput, { backgroundColor: colors.bgSecondary, borderColor: colors.border, color: colors.textPrimary }]}
+              value={transferAmount}
+              onChangeText={setTransferAmount}
+              placeholder="Enter amount"
+              placeholderTextColor={colors.textMuted}
+              keyboardType="numeric"
+            />
+
+            <TouchableOpacity 
+              style={[styles.withdrawSubmitBtn, { backgroundColor: colors.primary }, isTransferring && styles.btnDisabled]}
+              onPress={handleWithdrawFromAccount}
+              disabled={isTransferring}
+            >
+              {isTransferring ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.withdrawSubmitBtnText}>Withdraw to Wallet</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Withdrawal Request Modal - To Bank/UPI */}
+      <Modal visible={showWithdrawRequestModal} animationType="slide" transparent onRequestClose={() => setShowWithdrawRequestModal(false)}>
+        <View style={styles.modalOverlay}>
+          <TouchableOpacity style={styles.modalBackdrop} onPress={() => setShowWithdrawRequestModal(false)} />
+          <ScrollView style={{ flex: 1 }} contentContainerStyle={{ justifyContent: 'flex-end', flexGrow: 1 }}>
+            <View style={[styles.transferModalContent, { backgroundColor: colors.bgCard, maxHeight: '90%' }]}>
+              <View style={styles.modalHeader}>
+                <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Withdraw Funds</Text>
+                <TouchableOpacity onPress={() => setShowWithdrawRequestModal(false)}>
+                  <Ionicons name="close" size={24} color={colors.textMuted} />
+                </TouchableOpacity>
+              </View>
+              
+              <View style={[styles.transferInfo, { backgroundColor: colors.bgSecondary }]}>
+                <View style={[styles.transferInfoRow, { borderBottomColor: colors.border }]}>
+                  <Text style={[styles.transferLabel, { color: colors.textMuted }]}>Wallet Balance</Text>
+                  <Text style={[styles.transferValueGold, { color: colors.primary }]}>${walletBalance.toFixed(2)}</Text>
+                </View>
+              </View>
+
+              <Text style={[styles.inputLabel, { color: colors.textMuted }]}>Amount (USD)</Text>
+              <TextInput
+                style={[styles.transferInput, { backgroundColor: colors.bgSecondary, borderColor: colors.border, color: colors.textPrimary }]}
+                value={transferAmount}
+                onChangeText={setTransferAmount}
+                placeholder="Enter amount"
+                placeholderTextColor={colors.textMuted}
+                keyboardType="numeric"
+              />
+
+              <Text style={[styles.inputLabel, { color: colors.textMuted }]}>Payment Method</Text>
+              <View style={styles.methodRow}>
+                <TouchableOpacity
+                  style={[styles.methodBtn, { backgroundColor: colors.bgSecondary, borderColor: colors.border }, withdrawMethod === 'Bank' && { backgroundColor: `${colors.primary}20`, borderColor: colors.primary }]}
+                  onPress={() => setWithdrawMethod('Bank')}
+                >
+                  <Ionicons name="business-outline" size={20} color={withdrawMethod === 'Bank' ? colors.primary : colors.textMuted} />
+                  <Text style={[styles.methodBtnText, { color: withdrawMethod === 'Bank' ? colors.primary : colors.textMuted }]}>Bank Transfer</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.methodBtn, { backgroundColor: colors.bgSecondary, borderColor: colors.border }, withdrawMethod === 'UPI' && { backgroundColor: `${colors.primary}20`, borderColor: colors.primary }]}
+                  onPress={() => setWithdrawMethod('UPI')}
+                >
+                  <Ionicons name="phone-portrait-outline" size={20} color={withdrawMethod === 'UPI' ? colors.primary : colors.textMuted} />
+                  <Text style={[styles.methodBtnText, { color: withdrawMethod === 'UPI' ? colors.primary : colors.textMuted }]}>UPI</Text>
+                </TouchableOpacity>
+              </View>
+
+              {withdrawMethod === 'Bank' && (
+                <View>
+                  <Text style={[styles.inputLabel, { color: colors.textMuted }]}>Account Holder Name</Text>
+                  <TextInput
+                    style={[styles.transferInput, { backgroundColor: colors.bgSecondary, borderColor: colors.border, color: colors.textPrimary }]}
+                    value={bankDetails.accountHolderName}
+                    onChangeText={(text) => setBankDetails({ ...bankDetails, accountHolderName: text })}
+                    placeholder="Enter account holder name"
+                    placeholderTextColor={colors.textMuted}
+                  />
+                  
+                  <Text style={[styles.inputLabel, { color: colors.textMuted }]}>Bank Name</Text>
+                  <TextInput
+                    style={[styles.transferInput, { backgroundColor: colors.bgSecondary, borderColor: colors.border, color: colors.textPrimary }]}
+                    value={bankDetails.bankName}
+                    onChangeText={(text) => setBankDetails({ ...bankDetails, bankName: text })}
+                    placeholder="Enter bank name"
+                    placeholderTextColor={colors.textMuted}
+                  />
+                  
+                  <Text style={[styles.inputLabel, { color: colors.textMuted }]}>Account Number</Text>
+                  <TextInput
+                    style={[styles.transferInput, { backgroundColor: colors.bgSecondary, borderColor: colors.border, color: colors.textPrimary }]}
+                    value={bankDetails.accountNumber}
+                    onChangeText={(text) => setBankDetails({ ...bankDetails, accountNumber: text })}
+                    placeholder="Enter account number"
+                    placeholderTextColor={colors.textMuted}
+                    keyboardType="numeric"
+                  />
+                  
+                  <Text style={[styles.inputLabel, { color: colors.textMuted }]}>IFSC Code</Text>
+                  <TextInput
+                    style={[styles.transferInput, { backgroundColor: colors.bgSecondary, borderColor: colors.border, color: colors.textPrimary }]}
+                    value={bankDetails.ifscCode}
+                    onChangeText={(text) => setBankDetails({ ...bankDetails, ifscCode: text.toUpperCase() })}
+                    placeholder="Enter IFSC code"
+                    placeholderTextColor={colors.textMuted}
+                    autoCapitalize="characters"
+                  />
+                </View>
+              )}
+
+              {withdrawMethod === 'UPI' && (
+                <View>
+                  <Text style={[styles.inputLabel, { color: colors.textMuted }]}>UPI ID</Text>
+                  <TextInput
+                    style={[styles.transferInput, { backgroundColor: colors.bgSecondary, borderColor: colors.border, color: colors.textPrimary }]}
+                    value={upiId}
+                    onChangeText={setUpiId}
+                    placeholder="Enter UPI ID (e.g., name@upi)"
+                    placeholderTextColor={colors.textMuted}
+                    autoCapitalize="none"
+                  />
+                </View>
+              )}
+
+              <TouchableOpacity 
+                style={[styles.withdrawSubmitBtn, { backgroundColor: colors.primary }, isTransferring && styles.btnDisabled]}
+                onPress={handleWithdrawRequest}
+                disabled={isTransferring}
+              >
+                {isTransferring ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.withdrawSubmitBtnText}>Submit Withdrawal Request</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </ScrollView>
+        </View>
+      </Modal>
+
+      {/* Account to Account Transfer Modal */}
+      <Modal visible={showAccountTransferModal} animationType="slide" transparent onRequestClose={() => setShowAccountTransferModal(false)}>
+        <View style={styles.modalOverlay}>
+          <TouchableOpacity style={styles.modalBackdrop} onPress={() => setShowAccountTransferModal(false)} />
+          <View style={[styles.transferModalContent, { backgroundColor: colors.bgCard }]}>
+            <View style={styles.modalHeader}>
+              <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Transfer Between Accounts</Text>
+              <TouchableOpacity onPress={() => setShowAccountTransferModal(false)}>
+                <Ionicons name="close" size={24} color={colors.textMuted} />
+              </TouchableOpacity>
+            </View>
+            
+            <View style={[styles.transferInfo, { backgroundColor: colors.bgSecondary }]}>
+              <View style={[styles.transferInfoRow, { borderBottomColor: colors.border }]}>
+                <Text style={[styles.transferLabel, { color: colors.textMuted }]}>From</Text>
+                <Text style={[styles.transferValue, { color: colors.textPrimary }]}>{selectedAccount?.accountId}</Text>
+              </View>
+              <View style={[styles.transferInfoRow, { borderBottomColor: colors.border }]}>
+                <Text style={[styles.transferLabel, { color: colors.textMuted }]}>Available</Text>
+                <Text style={[styles.transferValueGold, { color: colors.primary }]}>${(selectedAccount?.balance || 0).toFixed(2)}</Text>
+              </View>
+            </View>
+
+            <Text style={[styles.inputLabel, { color: colors.textMuted }]}>Select Target Account</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.accountsScroll}>
+              {accounts.filter(a => a._id !== selectedAccount?._id).map(account => (
+                <TouchableOpacity
+                  key={account._id}
+                  style={[styles.accountSelectCard, { backgroundColor: colors.bgSecondary, borderColor: colors.border }, targetAccount?._id === account._id && styles.accountSelectCardActive]}
+                  onPress={() => setTargetAccount(account)}
+                >
+                  <Text style={[styles.accountSelectId, { color: colors.textPrimary }, targetAccount?._id === account._id && { color: '#fff' }]}>{account.accountId}</Text>
+                  <Text style={[styles.accountSelectBalance, { color: colors.textMuted }]}>${(account.balance || 0).toFixed(2)}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+
+            <Text style={[styles.inputLabel, { color: colors.textMuted }]}>Amount (USD)</Text>
+            <TextInput
+              style={[styles.transferInput, { backgroundColor: colors.bgSecondary, borderColor: colors.border, color: colors.textPrimary }]}
+              value={transferAmount}
+              onChangeText={setTransferAmount}
+              placeholder="Enter amount"
+              placeholderTextColor={colors.textMuted}
+              keyboardType="numeric"
+            />
+
+            <TouchableOpacity 
+              style={[styles.transferSubmitBtn, { backgroundColor: colors.primary }, isTransferring && styles.btnDisabled]}
+              onPress={handleAccountToAccountTransfer}
+              disabled={isTransferring}
+            >
+              {isTransferring ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.transferSubmitBtnText}>Transfer</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+    </View>
+  );
+};
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+  },
+  centered: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: 50,
+    paddingHorizontal: 16,
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#000000',
+  },
+  backBtn: {
+    width: 40,
+    height: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  headerTitle: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  content: {
+    flex: 1,
+    padding: 16,
+  },
+  emptyState: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 60,
+  },
+  emptyTitle: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: '600',
+    marginTop: 16,
+  },
+  emptyText: {
+    color: '#666',
+    fontSize: 14,
+    marginTop: 8,
+  },
+  accountCard: {
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#000000',
+  },
+  primaryCard: {
+    borderColor: '#22c55e',
+    borderWidth: 2,
+  },
+  primaryBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#22c55e',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+    alignSelf: 'flex-start',
+    marginBottom: 12,
+    gap: 4,
+  },
+  primaryBadgeText: {
+    color: '#000',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  accountHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  accountIconContainer: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#22c55e20',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  accountInfo: {
+    flex: 1,
+    marginLeft: 12,
+  },
+  accountId: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  accountType: {
+    color: '#666',
+    fontSize: 13,
+    marginTop: 2,
+  },
+  balanceSection: {
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 16,
+  },
+  balanceRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  balanceItem: {
+    alignItems: 'center',
+  },
+  balanceLabel: {
+    color: '#666',
+    fontSize: 12,
+    marginBottom: 4,
+  },
+  balanceValue: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  actionButtons: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 12,
+  },
+  depositBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 12,
+    backgroundColor: '#22c55e',
+    borderRadius: 10,
+  },
+  depositBtnText: {
+    color: '#000',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  withdrawBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  withdrawBtnText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  setPrimaryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 10,
+    marginBottom: 12,
+  },
+  setPrimaryBtnText: {
+    color: '#22c55e',
+    fontSize: 14,
+  },
+  tradeBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 14,
+    backgroundColor: '#22c55e',
+    borderRadius: 10,
+  },
+  tradeBtnText: {
+    color: '#000',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  openAccountBtn: {
+    width: 40,
+    height: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  // Tabs Styles
+  tabsContainer: {
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1a1a1a',
+  },
+  tab: {
+    flex: 1,
+    paddingVertical: 8,
+    alignItems: 'center',
+    borderRadius: 8,
+  },
+  tabActive: {
+    backgroundColor: '#22c55e',
+  },
+  tabText: {
+    color: '#888',
+    fontSize: 11,
+    fontWeight: '500',
+  },
+  tabTextActive: {
+    color: '#000',
+    fontWeight: '600',
+  },
+  // Buy Challenge Styles
+  buyChallengeBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    borderRadius: 12,
+    marginBottom: 16,
+    marginHorizontal: 16,
+  },
+  buyChallengeBtnText: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  walletBalanceRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: '#0a0a0a',
+    marginHorizontal: 16,
+    borderRadius: 12,
+    marginBottom: 8,
+  },
+  walletBalanceLabel: {
+    color: '#888',
+    fontSize: 14,
+  },
+  walletBalanceValue: {
+    color: '#22c55e',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  challengesList: {
+    paddingHorizontal: 16,
+    paddingBottom: 40,
+  },
+  challengeItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 16,
+    marginVertical: 6,
+    backgroundColor: '#0a0a0a',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#1a1a1a',
+  },
+  challengeIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#22c55e20',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  challengeInfo: {
+    flex: 1,
+  },
+  challengeName: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  challengeDesc: {
+    color: '#888',
+    fontSize: 12,
+    marginTop: 2,
+  },
+  challengeDetails: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 6,
+  },
+  challengeDetail: {
+    color: '#666',
+    fontSize: 11,
+  },
+  buyBtnSmall: {
+    backgroundColor: '#22c55e',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  buyBtnSmallText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  // Challenge Account Styles
+  statusBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  statusText: {
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  challengeProgress: {
+    backgroundColor: '#0a0a0a',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 16,
+  },
+  progressRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 6,
+  },
+  progressLabel: {
+    color: '#888',
+    fontSize: 12,
+  },
+  progressValue: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  modalOverlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  modalBackdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+  },
+  modalContent: {
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    maxHeight: '70%',
+    paddingTop: 16,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+    paddingHorizontal: 16,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  accountTypesList: {
+    paddingHorizontal: 16,
+    paddingBottom: 40,
+  },
+  loadingTypes: {
+    alignItems: 'center',
+    paddingVertical: 40,
+  },
+  loadingText: {
+    color: '#666',
+    marginTop: 12,
+  },
+  accountTypeItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 16,
+    marginVertical: 6,
+    borderRadius: 12,
+  },
+  accountTypeIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#22c55e20',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  accountTypeInfo: {
+    flex: 1,
+  },
+  accountTypeName: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  accountTypeDesc: {
+    color: '#666',
+    fontSize: 12,
+    marginTop: 2,
+  },
+  accountTypeDetails: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 6,
+  },
+  accountTypeDetail: {
+    color: '#888',
+    fontSize: 11,
+  },
+  backToTypesBtn: {
+    flex: 1,
+    backgroundColor: '#333',
+    paddingVertical: 16,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  backToTypesBtnText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  buttonDisabled: {
+    opacity: 0.6,
+  },
+  createAccountBtn: {
+    flex: 1,
+    backgroundColor: '#22c55e',
+    paddingVertical: 16,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  createAccountBtnText: {
+    color: '#000',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  btnDisabled: {
+    opacity: 0.5,
+  },
+  
+  // Transfer Modal Styles
+  transferModalContent: {
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 20,
+    paddingBottom: 40,
+  },
+  transferInfo: {
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 20,
+  },
+  transferInfoRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+  },
+  transferLabel: {
+    color: '#888',
+    fontSize: 14,
+  },
+  transferValue: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  transferValueGold: {
+    color: '#22c55e',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  inputLabel: {
+    color: '#888',
+    fontSize: 12,
+    marginBottom: 8,
+    marginTop: 8,
+  },
+  transferInput: {
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 16,
+    fontSize: 18,
+    textAlign: 'center',
+  },
+  transferSubmitBtn: {
+    backgroundColor: '#22c55e',
+    paddingVertical: 16,
+    borderRadius: 12,
+    alignItems: 'center',
+    marginTop: 20,
+  },
+  transferSubmitBtnText: {
+    color: '#000',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  withdrawSubmitBtn: {
+    backgroundColor: '#22c55e',
+    paddingVertical: 16,
+    borderRadius: 12,
+    alignItems: 'center',
+    marginTop: 20,
+  },
+  withdrawSubmitBtnText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  accountsScroll: {
+    marginVertical: 8,
+  },
+  accountSelectCard: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 12,
+    marginRight: 10,
+    alignItems: 'center',
+    minWidth: 100,
+    borderWidth: 1,
+  },
+  accountSelectCardActive: {
+    backgroundColor: '#22c55e',
+    borderColor: '#22c55e',
+  },
+  accountSelectId: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  accountSelectBalance: {
+    color: '#888',
+    fontSize: 12,
+    marginTop: 4,
+  },
+  // Wallet Card Styles
+  walletCard: {
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  walletHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  walletIconContainer: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  walletInfo: {
+    flex: 1,
+  },
+  walletTitle: {
+    fontSize: 12,
+    marginBottom: 2,
+  },
+  walletBalanceText: {
+    fontSize: 20,
+    fontWeight: 'bold',
+  },
+  walletWithdrawBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 10,
+    gap: 6,
+  },
+  walletWithdrawBtnText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  // Method Selection Styles
+  methodRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 16,
+  },
+  methodBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    gap: 8,
+  },
+  methodBtnText: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+});
+
+export default AccountsScreen;
