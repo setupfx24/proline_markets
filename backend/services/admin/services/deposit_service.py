@@ -10,7 +10,11 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.common.src.models import User, TradingAccount, Deposit, Withdrawal, Transaction, BonusOffer
-from packages.common.src.notify import create_notification
+from packages.common.src.notify import (
+    create_notification,
+    send_deposit_confirmation_email,
+    send_withdrawal_status_email,
+)
 from packages.common.src.admin_schemas import DepositOut, WithdrawalOut, PaginatedResponse
 from dependencies import write_audit_log
 
@@ -219,7 +223,12 @@ async def approve_deposit(
         action_url="/wallet",
         commit=False,
     )
+    _email = user_row.email
+    _amt = f"{float(deposit.amount):,.2f}"
+    _cur = deposit.currency or "USD"
     await db.commit()
+    if _email:
+        await send_deposit_confirmation_email(_email, _amt, _cur, "approved")
     return {"message": f"Deposit approved successfully{bonus_msg}"}
 
 
@@ -255,7 +264,12 @@ async def reject_deposit(
         action_url="/wallet",
         commit=False,
     )
+    _email = await db.scalar(select(User.email).where(User.id == deposit.user_id))
+    _amt = f"{float(deposit.amount):,.2f}"
+    _cur = deposit.currency or "USD"
     await db.commit()
+    if _email:
+        await send_deposit_confirmation_email(_email, _amt, _cur, "rejected")
     return {"message": "Deposit rejected"}
 
 
@@ -335,7 +349,12 @@ async def approve_withdrawal(
         action_url="/wallet",
         commit=False,
     )
+    _email = await db.scalar(select(User.email).where(User.id == withdrawal.user_id))
+    _amt = f"{float(withdrawal.amount):,.2f}"
+    _cur = withdrawal.currency or "USD"
     await db.commit()
+    if _email:
+        await send_withdrawal_status_email(_email, _amt, _cur, "approved")
     return {"message": "Withdrawal approved successfully"}
 
 
@@ -371,7 +390,12 @@ async def reject_withdrawal(
         action_url="/wallet",
         commit=False,
     )
+    _email = await db.scalar(select(User.email).where(User.id == withdrawal.user_id))
+    _amt = f"{float(withdrawal.amount):,.2f}"
+    _cur = withdrawal.currency or "USD"
     await db.commit()
+    if _email:
+        await send_withdrawal_status_email(_email, _amt, _cur, "rejected")
     return {"message": "Withdrawal rejected"}
 
 

@@ -187,6 +187,41 @@ async def send_margin_call_email(to: str, margin_level: str, account_number: str
     return await send_email(to, subject, html, text)
 
 
+async def send_daily_summary_email(
+    to: str, balance: float, equity: float, day_pnl: float,
+    open_positions: int, date_str: str,
+) -> bool:
+    """End-of-day account statement sent to each client."""
+    pnl_color = "#16a34a" if day_pnl >= 0 else "#e53935"
+    pnl_sign = "+" if day_pnl >= 0 else ""
+    subject = f"Proline Markets — Daily Statement ({date_str})"
+    html = f"""
+    <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;">
+        <h2 style="color:#1a73e8;">Daily Account Statement</h2>
+        <p style="color:#666;">{date_str}</p>
+        <table style="width:100%;border-collapse:collapse;margin-top:12px;">
+            <tr><td style="padding:8px 0;color:#666;">Balance</td>
+                <td style="padding:8px 0;text-align:right;"><strong>${balance:,.2f}</strong></td></tr>
+            <tr><td style="padding:8px 0;color:#666;">Equity</td>
+                <td style="padding:8px 0;text-align:right;"><strong>${equity:,.2f}</strong></td></tr>
+            <tr><td style="padding:8px 0;color:#666;">Today's P&amp;L</td>
+                <td style="padding:8px 0;text-align:right;color:{pnl_color};">
+                    <strong>{pnl_sign}${day_pnl:,.2f}</strong></td></tr>
+            <tr><td style="padding:8px 0;color:#666;">Open Positions</td>
+                <td style="padding:8px 0;text-align:right;"><strong>{open_positions}</strong></td></tr>
+        </table>
+        <p style="color:#666;font-size:13px;margin-top:16px;">
+            Log in to your dashboard for full details. Thank you for trading with Proline Markets.</p>
+    </div>
+    """
+    text = (
+        f"Daily Statement {date_str}\n"
+        f"Balance: ${balance:,.2f}\nEquity: ${equity:,.2f}\n"
+        f"Today's P&L: {pnl_sign}${day_pnl:,.2f}\nOpen Positions: {open_positions}"
+    )
+    return await send_email(to, subject, html, text)
+
+
 async def send_kyc_status_email(to: str, status: str, reason: str | None = None) -> bool:
     subject = f"Proline Markets — KYC Verification {status.title()}"
     reason_line = f"<p>Reason: {reason}</p>" if reason else ""

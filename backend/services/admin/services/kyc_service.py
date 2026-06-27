@@ -9,7 +9,7 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.common.src.models import User, KYCDocument
-from packages.common.src.notify import create_notification
+from packages.common.src.notify import create_notification, send_kyc_status_email
 from dependencies import write_audit_log
 
 
@@ -190,7 +190,10 @@ async def approve_kyc(
         action_url="/profile",
         commit=False,
     )
+    _email = user.email
     await db.commit()
+    if _email:
+        await send_kyc_status_email(_email, "approved")
     return {"message": "KYC approved successfully"}
 
 
@@ -235,5 +238,8 @@ async def reject_kyc(
         action_url="/profile",
         commit=False,
     )
+    _email = user.email
     await db.commit()
+    if _email:
+        await send_kyc_status_email(_email, "rejected", reason_str or None)
     return {"message": "KYC rejected"}

@@ -10,6 +10,7 @@ Runs every 60 seconds inside the gateway lifespan.
 import asyncio
 import logging
 import math
+import os
 from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import UUID
@@ -20,7 +21,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from packages.common.src.database import AsyncSessionLocal
 from packages.common.src.models import (
     MasterAccount, TradingAccount, TradeHistory, InvestorAllocation, Transaction,
+    User, Position,
 )
+from packages.common.src.notify import send_daily_summary_email
 from packages.common.src.admin_fees import credit_admin_fee
 
 logging.basicConfig(level=logging.INFO)
@@ -28,12 +31,15 @@ logger = logging.getLogger("stats-engine")
 
 STATS_INTERVAL = 60  # seconds
 MGMT_FEE_INTERVAL = 86400  # collect management fee once per day (seconds)
+# Hour (UTC) at/after which the end-of-day client statement emails are sent (once/day).
+DAILY_SUMMARY_HOUR_UTC = int(os.getenv("DAILY_SUMMARY_HOUR_UTC", "21"))
 
 
 class StatsEngine:
     def __init__(self):
         self._running = False
         self._mgmt_fee_last_run: float = 0
+        self._daily_summary_last_date: str = ""
 
     async def start(self):
         self._running = True
@@ -62,6 +68,17 @@ class StatsEngine:
                     self._mgmt_fee_last_run = now
                 except Exception as e:
                     logger.error("Management fee collection error: %s", e, exc_info=True)
+
+            # End-of-day client statement emails (once per UTC day, after the cutoff hour)
+            now_utc = datetime.now(timezone.utc)
+            today_str = now_utc.strftime("%Y-%m-%d")
+            if now_utc.hour >= DAILY_SUMMARY_HOUR_UTC and self._daily_summary_last_date != today_str:
+                try:
+                    async with AsyncSessionLocal() as db:
+                        await self._send_daily_summaries(db)
+                    self._daily_summary_last_date = today_str
+                except Exception as e:
+                    logger.error("Daily summary email error: %s", e, exc_info=True)
 
             await asyncio.sleep(STATS_INTERVAL)
 
@@ -241,6 +258,51 @@ class StatsEngine:
                     "Mgmt fee collected: investor=%s amount=%s master_share=%s admin=%s",
                     alloc.investor_account_id, fee, master_share, admin_fee,
                 )
+
+
+    async def _send_daily_summaries(self, db: AsyncSession):
+        """Email an end-of-day account statement to every client with a live account."""
+        now_utc = datetime.now(timezone.utc)
+        day_start = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
+        date_str = now_utc.strftime("%d %b %Y")
+
+        rows = (await db.execute(
+            select(TradingAccount, User.email)
+            .join(User, User.id == TradingAccount.user_id)
+            .where(TradingAccount.is_active == True, TradingAccount.is_demo == False)  # noqa: E712
+        )).all()
+
+        # Aggregate accounts per client email
+        by_email: dict[str, dict] = {}
+        for acc, email in rows:
+            if not email:
+                continue
+            d = by_email.setdefault(email, {"balance": 0.0, "equity": 0.0, "acc_ids": []})
+            d["balance"] += float(acc.balance or 0)
+            d["equity"] += float(acc.equity or 0)
+            d["acc_ids"].append(acc.id)
+
+        sent = 0
+        for email, info in by_email.items():
+            acc_ids = info["acc_ids"]
+            day_pnl = float((await db.execute(
+                select(func.coalesce(func.sum(TradeHistory.profit), 0))
+                .where(TradeHistory.account_id.in_(acc_ids), TradeHistory.closed_at >= day_start)
+            )).scalar() or 0)
+            open_count = int((await db.execute(
+                select(func.count(Position.id))
+                .where(Position.account_id.in_(acc_ids), Position.status == "open")
+            )).scalar() or 0)
+            try:
+                ok = await send_daily_summary_email(
+                    email, info["balance"], info["equity"], day_pnl, open_count, date_str,
+                )
+                if ok:
+                    sent += 1
+            except Exception as e:
+                logger.error("Daily summary email failed for %s: %s", email, e)
+
+        logger.info("Daily summary emails sent: %d/%d", sent, len(by_email))
 
 
 stats_engine = StatsEngine()

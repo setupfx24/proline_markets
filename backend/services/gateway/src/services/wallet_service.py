@@ -13,7 +13,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from packages.common.src.models import (
     BankAccount, BonusOffer, Deposit, Transaction, TradingAccount, User, Withdrawal,
 )
-from packages.common.src.notify import create_notification
+from packages.common.src.notify import (
+    create_notification,
+    send_withdrawal_status_email,
+    send_deposit_confirmation_email,
+)
 from packages.common.src.config import get_settings
 from packages.common.src.path_safety import PathTraversalError, safe_join_under_base
 from . import oxapay_service
@@ -164,7 +168,11 @@ async def create_deposit(req, user_id: UUID, db: AsyncSession) -> dict:
             message=f"${float(req.amount):,.2f} deposit via {req.method} is pending approval",
             notif_type="deposit", action_url="/wallet",
         )
+        _email = await db.scalar(select(User.email).where(User.id == user_id))
+        _amt = f"{float(req.amount):,.2f}"
         await db.commit()
+        if _email:
+            await send_deposit_confirmation_email(_email, _amt, "USD", "received (pending approval)")
     except Exception:
         logger.exception("create_notification failed after deposit (deposit already saved) user_id=%s", user_id)
         try:
@@ -431,7 +439,11 @@ async def create_withdrawal(req, user_id: UUID, db: AsyncSession) -> dict:
         message=f"${float(req.amount):,.2f} withdrawal via {req.method} is pending approval",
         notif_type="withdrawal", action_url="/wallet",
     )
+    _email = user_row.email
+    _amt = f"{float(req.amount):,.2f}"
     await db.commit()
+    if _email:
+        await send_withdrawal_status_email(_email, _amt, "USD", "submitted (pending approval)")
 
     return {"id": str(withdrawal.id), "status": "pending", "amount": float(withdrawal.amount)}
 

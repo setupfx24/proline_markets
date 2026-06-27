@@ -13,7 +13,7 @@ from packages.common.src.models import User, UserSession, KYCDocument
 from packages.common.src.auth import hash_password, verify_password
 from packages.common.src.config import get_settings
 from packages.common.src.path_safety import PathTraversalError, safe_join_under_base
-from packages.common.src.notify import create_notification
+from packages.common.src.notify import create_notification, send_kyc_status_email
 
 logger = logging.getLogger("profile_service")
 
@@ -310,9 +310,12 @@ async def submit_kyc(
             action_url="/profile",
             commit=False,
         )
+        _email = user.email
         await db.commit()
         for d in saved_docs:
             await db.refresh(d)
+        if _email:
+            await send_kyc_status_email(_email, "submitted")
     except IntegrityError as e:
         await db.rollback()
         logger.exception("KYC database constraint failed (run migration 005_kyc_document_types.sql?): %s", e)
