@@ -12,7 +12,7 @@ export default function TradingPage() {
     <>
       <PageHeader
         badge="Platform"
-        headline="Use NextGen. Get Exclusive Experience."
+        headline="Use Proline Terminal/App. Get Exclusive Experience."
         sub="Trade on the Desktop Terminal, Web Terminal, iOS iPhone and Android. All platforms sync in real-time with the same execution engine and pricing."
       />
 
