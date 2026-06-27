@@ -187,6 +187,27 @@ async def send_margin_call_email(to: str, margin_level: str, account_number: str
     return await send_email(to, subject, html, text)
 
 
+async def send_welcome_email(to: str, first_name: str | None = None) -> bool:
+    """Welcome email sent when a new account is created (registration)."""
+    name = (first_name or "").strip() or "Trader"
+    subject = "Welcome to Proline Markets"
+    html = f"""
+    <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;">
+        <h2 style="color:#1a73e8;">Welcome, {name}!</h2>
+        <p>Your Proline Markets account has been created successfully.</p>
+        <p>You can now log in, complete your KYC verification, fund your wallet,
+           and start trading.</p>
+        <p style="color:#666;font-size:13px;">If you didn't create this account,
+           please contact our support team.</p>
+    </div>
+    """
+    text = (
+        f"Welcome, {name}!\nYour Proline Markets account has been created successfully.\n"
+        "Log in to complete KYC, fund your wallet, and start trading."
+    )
+    return await send_email(to, subject, html, text)
+
+
 async def send_daily_summary_email(
     to: str, balance: float, equity: float, day_pnl: float,
     open_positions: int, date_str: str,

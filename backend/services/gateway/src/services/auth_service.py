@@ -266,7 +266,15 @@ async def register_user(
         if ib_profile:
             db.add(Referral(referrer_id=ib_profile.user_id, referred_id=user.id, ib_profile_id=ib_profile.id))
 
-    return await issue_auth_json_response(user, request, db, status_code=201, user_audit_action="REGISTER")
+    _email = email
+    _first_name = first_name
+    resp = await issue_auth_json_response(user, request, db, status_code=201, user_audit_action="REGISTER")
+    try:
+        from packages.common.src.notify import send_welcome_email
+        await send_welcome_email(_email, _first_name)
+    except Exception:
+        pass
+    return resp
 
 
 # ─── Login ────────────────────────────────────────────────────────────────
