@@ -147,7 +147,7 @@ def _email_layout(heading: str, inner_html: str, accent: str = BRAND_ACCENT) -> 
       <table role="presentation" width="600" cellpadding="0" cellspacing="0"
              style="max-width:600px;width:100%;background:#ffffff;border-radius:14px;overflow:hidden;
                     border:1px solid #e3e7ec;box-shadow:0 1px 3px rgba(16,24,40,.06);">
-        <tr><td style="background:{BRAND_DARK};padding:22px 32px;">
+        <tr><td align="center" style="background:{BRAND_DARK};padding:22px 32px;text-align:center;">
           <span style="font-family:Arial,Helvetica,sans-serif;font-size:21px;font-weight:800;letter-spacing:.3px;color:#ffffff;">Proline</span><span style="font-family:Arial,Helvetica,sans-serif;font-size:21px;font-weight:800;letter-spacing:.3px;color:{accent};">Markets</span>
         </td></tr>
         <tr><td style="height:4px;background:{accent};font-size:0;line-height:0;">&nbsp;</td></tr>
@@ -155,7 +155,7 @@ def _email_layout(heading: str, inner_html: str, accent: str = BRAND_ACCENT) -> 
           <h1 style="margin:0 0 18px;font-size:22px;font-weight:700;color:{BRAND_DARK};">{heading}</h1>
           {inner_html}
         </td></tr>
-        <tr><td style="padding:20px 32px;background:#f7f9fb;border-top:1px solid #eceff3;
+        <tr><td align="center" style="padding:20px 32px;background:#f7f9fb;border-top:1px solid #eceff3;text-align:center;
                        font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:1.6;color:#8a94a6;">
           <p style="margin:0 0 4px;font-weight:600;color:#6b7585;">Proline Markets — Forex · Metals · Indices · Crypto</p>
           <p style="margin:0;">Need help? Email <a href="mailto:{SUPPORT_EMAIL}" style="color:{accent};text-decoration:none;">{SUPPORT_EMAIL}</a></p>
