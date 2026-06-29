@@ -247,7 +247,7 @@ async def send_margin_call_email(to: str, margin_level: str, account_number: str
 async def send_verification_email(to: str, first_name: str | None, code: str) -> bool:
     """Sent on signup: welcome + the 6-digit verification code ONLY."""
     name = (first_name or "").strip() or "Trader"
-    subject = "Verify your email — Proline Markets"
+    subject = f"Proline Markets — Your verification code is {code}"
     inner = f"""
         <p>Hi {name}, your Proline Markets <strong>profile</strong> has been created successfully — welcome aboard!</p>
         <p style="margin:18px 0 6px;">Enter this 6-digit verification code on the signup screen to activate your account:</p>
@@ -273,7 +273,7 @@ async def send_welcome_email(
 ) -> bool:
     """Sent AFTER email verification: the login details + next steps."""
     name = (first_name or "").strip() or "Trader"
-    subject = "Welcome to Proline Markets 🎉"
+    subject = f"Welcome to Proline Markets, {name}! 🎉"
 
     creds_html = ""
     if login_email:
