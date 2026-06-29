@@ -77,6 +77,7 @@ class User(Base):
     status = Column(String(20), default="active")
     kyc_status = Column(String(20), default="pending")
     is_demo = Column(Boolean, default=False)
+    email_verified = Column(Boolean, default=False, server_default="false")
     two_factor_enabled = Column(Boolean, default=False)
     two_factor_secret = Column(String(255))
     language = Column(String(10), default="en")

@@ -59,6 +59,29 @@ def hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
+def create_email_verify_token(user_id: str, hours: int = 48) -> str:
+    """Stateless signed token for email verification (no DB row needed)."""
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": str(user_id),
+        "purpose": "verify_email",
+        "exp": now + timedelta(hours=hours),
+        "iat": now,
+    }
+    return jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
+
+
+def decode_email_verify_token(token: str) -> Optional[str]:
+    """Return the user_id from a valid verify-email token, else None."""
+    try:
+        payload = jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
+    except jwt.InvalidTokenError:
+        return None
+    if payload.get("purpose") != "verify_email":
+        return None
+    return payload.get("sub")
+
+
 def _extract_bearer_token(
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials],

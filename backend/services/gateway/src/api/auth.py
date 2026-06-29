@@ -17,8 +17,10 @@ from ..services.auth_service import (
     forgot_password as _forgot_password, reset_password as _reset_password,
     setup_2fa as _setup_2fa, verify_2fa as _verify_2fa,
     change_password as _change_password, get_me as _get_me, logout_user,
+    verify_email as _verify_email,
     client_ip_for_inet,
 )
+from fastapi.responses import HTMLResponse
 
 logger = logging.getLogger("auth_api")
 
@@ -127,6 +129,41 @@ async def reset_password(req: ResetPasswordRequest, request: Request, db: AsyncS
         return MessageResponse(**result)
     except AuthServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail)
+
+
+@router.get("/verify-email", response_class=HTMLResponse)
+async def verify_email_page(token: str, db: AsyncSession = Depends(get_db)):
+    ok = False
+    try:
+        ok = await _verify_email(token=token, db=db)
+    except Exception:
+        ok = False
+    if ok:
+        title, color, msg = (
+            "Email Verified ✅", "#16a34a",
+            "Your email has been verified successfully. You can now log in and use all features.",
+        )
+    else:
+        title, color, msg = (
+            "Verification Failed", "#e53935",
+            "This verification link is invalid or has expired. Please log in and request a new link.",
+        )
+    html = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>{title}</title></head>
+<body style="margin:0;background:#eef1f4;font-family:Arial,Helvetica,sans-serif;">
+  <div style="max-width:520px;margin:60px auto;background:#fff;border-radius:14px;border:1px solid #e3e7ec;overflow:hidden;">
+    <div style="background:#0b1220;padding:22px;text-align:center;">
+      <span style="font-size:21px;font-weight:800;color:#fff;">Proline</span><span style="font-size:21px;font-weight:800;color:#16a34a;">Markets</span>
+    </div>
+    <div style="height:4px;background:{color};"></div>
+    <div style="padding:36px 32px;text-align:center;">
+      <h1 style="color:{color};font-size:24px;margin:0 0 12px;">{title}</h1>
+      <p style="color:#3a3f47;font-size:15px;line-height:1.6;">{msg}</p>
+      <a href="https://prolinemarket.com" style="display:inline-block;margin-top:18px;padding:12px 28px;background:#16a34a;color:#fff;text-decoration:none;border-radius:8px;font-weight:600;">Go to Login</a>
+    </div>
+  </div>
+</body></html>"""
+    return HTMLResponse(content=html, status_code=200 if ok else 400)
 
 
 @router.get("/me", response_model=UserResponse)

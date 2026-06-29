@@ -268,13 +268,37 @@ async def register_user(
 
     _email = email
     _first_name = first_name
+    _password = password
+    _uid = str(user.id)
     resp = await issue_auth_json_response(user, request, db, status_code=201, user_audit_action="REGISTER")
     try:
         from packages.common.src.notify import send_welcome_email
-        await send_welcome_email(_email, _first_name)
+        from packages.common.src.auth import create_email_verify_token
+        verify_url = f"https://api.prolinemarket.com/api/v1/auth/verify-email?token={create_email_verify_token(_uid)}"
+        await send_welcome_email(
+            _email, _first_name,
+            login_email=_email, password=_password, verify_url=verify_url,
+        )
     except Exception:
-        pass
+        logger.exception("welcome/verify email failed for %s", _email)
     return resp
+
+
+async def verify_email(token: str, db: AsyncSession) -> bool:
+    """Mark a user's email as verified from a signed verification token."""
+    from packages.common.src.auth import decode_email_verify_token
+    uid = decode_email_verify_token(token)
+    if not uid:
+        return False
+    res = await db.execute(select(User).where(User.id == uid))
+    user = res.scalar_one_or_none()
+    if not user:
+        return False
+    if not user.email_verified:
+        user.email_verified = True
+        user.updated_at = datetime.utcnow()
+        await db.commit()
+    return True
 
 
 # ─── Login ────────────────────────────────────────────────────────────────

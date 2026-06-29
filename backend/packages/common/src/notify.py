@@ -244,25 +244,61 @@ async def send_margin_call_email(to: str, margin_level: str, account_number: str
     return await send_email(to, subject, html, text)
 
 
-async def send_welcome_email(to: str, first_name: str | None = None) -> bool:
-    """Welcome email sent when a new account is created (registration)."""
+async def send_welcome_email(
+    to: str,
+    first_name: str | None = None,
+    login_email: str | None = None,
+    password: str | None = None,
+    verify_url: str | None = None,
+) -> bool:
+    """Welcome email sent when a new user PROFILE is created (registration).
+
+    Includes the login details and an email-verification button.
+    """
     name = (first_name or "").strip() or "Trader"
     subject = "Welcome to Proline Markets 🎉"
+
+    creds_html = ""
+    if login_email:
+        creds_html = f"""
+        <p style="margin:18px 0 8px;font-weight:700;color:#0b1220;">Your Profile Login Details</p>
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+               style="background:#f7f9fb;border:1px solid #e6ebf1;border-radius:10px;">
+            <tr><td style="padding:12px 16px;color:#7a8494;font-size:14px;width:120px;">User (email)</td>
+                <td style="padding:12px 16px;color:#0b1220;font-size:15px;font-weight:600;">{login_email}</td></tr>
+            <tr><td style="padding:12px 16px;color:#7a8494;font-size:14px;border-top:1px solid #eef1f4;">Password</td>
+                <td style="padding:12px 16px;color:#0b1220;font-size:15px;font-weight:600;border-top:1px solid #eef1f4;">{password or '(the password you chose)'}</td></tr>
+        </table>
+        <p style="margin:8px 0 0;color:#8a94a6;font-size:12px;">For your security, please change your password after your first login.</p>
+        """
+
+    verify_html = ""
+    if verify_url:
+        verify_html = f"""
+        <p style="margin:18px 0 4px;">Please verify your email address to activate all features:</p>
+        {_btn(verify_url, "Verify Email")}
+        """
+
     inner = f"""
-        <p>Hi {name}, your Proline Markets account has been created successfully — welcome aboard!</p>
-        <p>Here's how to get started:</p>
+        <p>Hi {name}, your Proline Markets <strong>profile</strong> has been created successfully — welcome aboard!</p>
+        {verify_html}
+        {creds_html}
+        <p style="margin:18px 0 6px;">Next steps:</p>
         <ul style="margin:0 0 8px;padding-left:20px;color:#3a3f47;">
             <li style="margin:6px 0;">Complete your <strong>KYC verification</strong></li>
-            <li style="margin:6px 0;">Fund your <strong>wallet</strong></li>
+            <li style="margin:6px 0;">Open a trading account &amp; fund your <strong>wallet</strong></li>
             <li style="margin:6px 0;">Start <strong>trading</strong> Forex, Metals, Indices &amp; Crypto</li>
         </ul>
-        {_btn(TRADER_URL, "Log In to Your Account")}
-        <p style="color:#8a94a6;font-size:13px;">If you didn't create this account, please contact our support team.</p>
+        {_btn(TRADER_URL, "Log In to Your Profile")}
+        <p style="color:#8a94a6;font-size:13px;">If you didn't create this profile, please contact our support team.</p>
     """
     html = _email_layout(f"Welcome, {name}!", inner)
+    cred_text = f"\nUser (email): {login_email}\nPassword: {password or '(the password you chose)'}\n" if login_email else ""
+    verify_text = f"\nVerify your email: {verify_url}\n" if verify_url else ""
     text = (
-        f"Welcome, {name}!\nYour Proline Markets account has been created successfully.\n"
-        "Log in to complete KYC, fund your wallet, and start trading."
+        f"Welcome, {name}!\nYour Proline Markets profile has been created successfully."
+        f"{verify_text}{cred_text}"
+        "\nLog in to complete KYC, open a trading account, fund your wallet, and start trading."
     )
     return await send_email(to, subject, html, text)
 
