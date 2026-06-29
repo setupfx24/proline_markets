@@ -16,7 +16,6 @@ type Props = {
 export function ProlineMarketsWordmark({
   href = '/dashboard',
   className,
-  textClassName,
   variant = 'default',
 }: Props) {
   if (variant === 'rail') {
@@ -36,18 +35,8 @@ export function ProlineMarketsWordmark({
   }
 
   const mark = (
-    <span className={cn('inline-flex items-center gap-2 select-none', className)}>
-      <img src="/images/logo1.png" alt="ProlineMarketsFX" className="w-8 h-8 object-contain shrink-0" />
-      <span
-        className={cn(
-          'inline-flex items-baseline font-bold italic tracking-tight',
-          'text-xl sm:text-2xl drop-shadow-[0_0_20px_rgba(34,197,94,0.12)]',
-          textClassName,
-        )}
-      >
-        <span className="text-text-primary">Proline</span>
-        <span className="text-[#22c55e]">Markets</span>
-      </span>
+    <span className={cn('inline-flex items-center select-none', className)}>
+      <img src="/images/logo1.png" alt="Proline Markets" className="h-12 sm:h-14 w-auto object-contain shrink-0" />
     </span>
   );
 
