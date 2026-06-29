@@ -34,7 +34,7 @@ interface AuthState {
     phone?: string;
     referral_code?: string;
   }) => Promise<void>;
-  verifyEmailCode: (email: string, code: string) => Promise<void>;
+  verifyEmailCode: (email: string, code: string, password?: string) => Promise<void>;
   logout: () => void;
   loadUser: () => Promise<void>;
   setInitialized: (val: boolean) => void;
@@ -93,8 +93,8 @@ export const useAuthStore = create<AuthState>()((set) => ({
     }
   },
 
-  verifyEmailCode: async (email, code) => {
-    await api.post<{ message: string }>('/auth/verify-code', { email, code });
+  verifyEmailCode: async (email, code, password) => {
+    await api.post<{ message: string }>('/auth/verify-code', { email, code, password });
     const user = await api.get<User>('/auth/me');
     set({ user, isAuthenticated: true, token: null });
   },

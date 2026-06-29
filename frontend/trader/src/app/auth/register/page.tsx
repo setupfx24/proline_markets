@@ -133,7 +133,7 @@ function RegisterContent() {
     if (otp.length !== 6) return;
     setVerifying(true);
     try {
-      await verifyEmailCode(form.email, otp);
+      await verifyEmailCode(form.email, otp, form.password);
       toast.success('Email verified!');
       router.push('/dashboard');
     } catch (err: any) {

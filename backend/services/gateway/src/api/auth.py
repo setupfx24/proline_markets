@@ -28,6 +28,7 @@ from pydantic import BaseModel
 class VerifyCodeRequest(BaseModel):
     email: str
     code: str
+    password: str | None = None
 
 
 logger = logging.getLogger("auth_api")
@@ -176,10 +177,19 @@ async def verify_email_page(token: str, db: AsyncSession = Depends(get_db)):
 
 @router.post("/verify-code", response_model=MessageResponse)
 async def verify_code(req: VerifyCodeRequest, db: AsyncSession = Depends(get_db)):
-    """Validate the 6-digit signup verification code."""
-    ok = await _verify_email_code(email=req.email, code=req.code, db=db)
-    if not ok:
+    """Validate the 6-digit signup verification code; then email the login details."""
+    result = await _verify_email_code(email=req.email, code=req.code, db=db)
+    if not result:
         raise HTTPException(status_code=400, detail="Invalid or expired verification code")
+    verified_email, first_name = result
+    try:
+        from packages.common.src.notify import send_welcome_email
+        await send_welcome_email(
+            verified_email, first_name,
+            login_email=verified_email, password=req.password,
+        )
+    except Exception:
+        logger.exception("welcome (details) email failed for %s", verified_email)
     return MessageResponse(message="Email verified successfully")
 
 

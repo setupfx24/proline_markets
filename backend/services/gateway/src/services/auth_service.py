@@ -273,43 +273,40 @@ async def register_user(
 
     _email = email
     _first_name = first_name
-    _password = password
     resp = await issue_auth_json_response(user, request, db, status_code=201, user_audit_action="REGISTER")
     try:
-        from packages.common.src.notify import send_welcome_email
-        await send_welcome_email(
-            _email, _first_name,
-            login_email=_email, password=_password, code=code,
-        )
+        from packages.common.src.notify import send_verification_email
+        await send_verification_email(_email, _first_name, code)
     except Exception:
-        logger.exception("welcome email failed for %s", _email)
+        logger.exception("verification email failed for %s", _email)
     return resp
 
 
-async def verify_email_code(email: str, code: str, db: AsyncSession) -> bool:
-    """Validate a 6-digit signup verification code and mark the email verified."""
+async def verify_email_code(email: str, code: str, db: AsyncSession) -> tuple[str, str] | None:
+    """Validate a 6-digit signup code; on success return (email, first_name)."""
     res = await db.execute(select(User).where(User.email == email))
     user = res.scalar_one_or_none()
     if not user:
-        return False
+        return None
+    fname = user.first_name or ""
     if user.email_verified:
-        return True
+        return (user.email, fname)
     if not user.email_verify_code or not code:
-        return False
+        return None
     if str(user.email_verify_code).strip() != str(code).strip():
-        return False
+        return None
     exp = user.email_verify_expires
     if exp is not None:
         if exp.tzinfo is None:
             exp = exp.replace(tzinfo=timezone.utc)
         if exp < datetime.now(timezone.utc):
-            return False
+            return None
     user.email_verified = True
     user.email_verify_code = None
     user.email_verify_expires = None
     user.updated_at = datetime.utcnow()
     await db.commit()
-    return True
+    return (user.email, fname)
 
 
 async def verify_email(token: str, db: AsyncSession) -> bool:
