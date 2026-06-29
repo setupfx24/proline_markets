@@ -293,7 +293,7 @@ async def send_welcome_email(
             <li style="margin:6px 0;">Open a trading account &amp; fund your <strong>wallet</strong></li>
             <li style="margin:6px 0;">Start <strong>trading</strong> Forex, Metals, Indices &amp; Crypto</li>
         </ul>
-        {_btn(TRADER_URL, "Log In to Your Profile")}
+        {_btn(f"{TRADER_URL}/auth/login", "Log In to Your Profile")}
         <p style="color:#8a94a6;font-size:13px;">If you didn't create this profile, please contact our support team.</p>
     """
     html = _email_layout(f"Welcome, {name}!", inner)
