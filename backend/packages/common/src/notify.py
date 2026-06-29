@@ -134,6 +134,7 @@ BRAND_DARK = "#0b1220"
 BRAND_ACCENT = "#16a34a"
 SUPPORT_EMAIL = "info@prolinemarket.com"
 TRADER_URL = "https://prolinemarket.com"
+BRAND_LOGO_URL = "https://prolinemarket.com/prolinemarket%20logo%20landscap%20png.png"
 
 
 def _email_layout(heading: str, inner_html: str, accent: str = BRAND_ACCENT) -> str:
@@ -147,8 +148,9 @@ def _email_layout(heading: str, inner_html: str, accent: str = BRAND_ACCENT) -> 
       <table role="presentation" width="600" cellpadding="0" cellspacing="0"
              style="max-width:600px;width:100%;background:#ffffff;border-radius:14px;overflow:hidden;
                     border:1px solid #e3e7ec;box-shadow:0 1px 3px rgba(16,24,40,.06);">
-        <tr><td align="center" style="background:{BRAND_DARK};padding:22px 32px;text-align:center;">
-          <span style="font-family:Arial,Helvetica,sans-serif;font-size:21px;font-weight:800;letter-spacing:.3px;color:#ffffff;">Proline</span><span style="font-family:Arial,Helvetica,sans-serif;font-size:21px;font-weight:800;letter-spacing:.3px;color:{accent};">Markets</span>
+        <tr><td align="center" style="background:#ffffff;padding:24px 32px 18px;text-align:center;">
+          <img src="{BRAND_LOGO_URL}" alt="Proline Markets" height="44"
+               style="height:44px;width:auto;max-width:240px;display:inline-block;border:0;outline:none;text-decoration:none;" />
         </td></tr>
         <tr><td style="height:4px;background:{accent};font-size:0;line-height:0;">&nbsp;</td></tr>
         <tr><td style="padding:32px;font-family:Arial,Helvetica,sans-serif;color:#2b2f36;font-size:15px;line-height:1.6;">
