@@ -36,7 +36,7 @@ export function ProlineMarketsWordmark({
 
   const mark = (
     <span className={cn('inline-flex items-center select-none', className)}>
-      <img src="/images/logo1.png" alt="Proline Markets" className="h-12 sm:h-14 w-auto object-contain shrink-0" />
+      <img src="/images/logowhite.png" alt="Proline Markets" className="h-9 sm:h-11 w-auto object-contain shrink-0" />
     </span>
   );
 
