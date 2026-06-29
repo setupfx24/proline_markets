@@ -29,14 +29,14 @@ export function ProlineMarketsWordmark({
           className,
         )}
       >
-        <img src="/images/logo1.png" alt="ProlineMarketsFX" className="w-7 h-7 object-contain" />
+        <img src="/images/logo1.png" alt="ProlineMarketsFX" draggable={false} className="w-7 h-7 object-contain" />
       </Link>
     );
   }
 
   const mark = (
     <span className={cn('inline-flex items-center select-none', className)}>
-      <img src="/images/logowhite.png" alt="Proline Markets" className="h-9 sm:h-11 w-auto object-contain shrink-0" />
+      <img src="/images/logowhite.png" alt="Proline Markets" draggable={false} className="h-9 sm:h-11 w-auto object-contain shrink-0" />
     </span>
   );
 
