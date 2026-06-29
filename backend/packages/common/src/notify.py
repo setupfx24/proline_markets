@@ -249,14 +249,14 @@ async def send_welcome_email(
     first_name: str | None = None,
     login_email: str | None = None,
     password: str | None = None,
-    verify_url: str | None = None,
+    code: str | None = None,
 ) -> bool:
     """Welcome email sent when a new user PROFILE is created (registration).
 
-    Includes the login details and an email-verification button.
+    Includes the 6-digit verification code and the login details.
     """
     name = (first_name or "").strip() or "Trader"
-    subject = "Welcome to Proline Markets 🎉"
+    subject = "Verify your email — Proline Markets"
 
     creds_html = ""
     if login_email:
@@ -273,10 +273,14 @@ async def send_welcome_email(
         """
 
     verify_html = ""
-    if verify_url:
+    if code:
         verify_html = f"""
-        <p style="margin:18px 0 4px;">Please verify your email address to activate all features:</p>
-        {_btn(verify_url, "Verify Email")}
+        <p style="margin:18px 0 6px;">Enter this 6-digit verification code on the signup screen to activate your account:</p>
+        <table role="presentation" cellpadding="0" cellspacing="0" style="margin:6px 0 4px;"><tr><td
+            style="background:#0b1220;border-radius:10px;padding:14px 26px;">
+            <span style="font-family:'Courier New',monospace;font-size:30px;font-weight:800;letter-spacing:10px;color:#16a34a;">{code}</span>
+        </td></tr></table>
+        <p style="margin:6px 0 0;color:#8a94a6;font-size:12px;">This code expires in 15 minutes.</p>
         """
 
     inner = f"""
@@ -294,7 +298,7 @@ async def send_welcome_email(
     """
     html = _email_layout(f"Welcome, {name}!", inner)
     cred_text = f"\nUser (email): {login_email}\nPassword: {password or '(the password you chose)'}\n" if login_email else ""
-    verify_text = f"\nVerify your email: {verify_url}\n" if verify_url else ""
+    verify_text = f"\nYour verification code: {code} (expires in 15 minutes)\n" if code else ""
     text = (
         f"Welcome, {name}!\nYour Proline Markets profile has been created successfully."
         f"{verify_text}{cred_text}"

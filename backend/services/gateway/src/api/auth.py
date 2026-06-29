@@ -18,9 +18,17 @@ from ..services.auth_service import (
     setup_2fa as _setup_2fa, verify_2fa as _verify_2fa,
     change_password as _change_password, get_me as _get_me, logout_user,
     verify_email as _verify_email,
+    verify_email_code as _verify_email_code,
     client_ip_for_inet,
 )
 from fastapi.responses import HTMLResponse
+from pydantic import BaseModel
+
+
+class VerifyCodeRequest(BaseModel):
+    email: str
+    code: str
+
 
 logger = logging.getLogger("auth_api")
 
@@ -164,6 +172,15 @@ async def verify_email_page(token: str, db: AsyncSession = Depends(get_db)):
   </div>
 </body></html>"""
     return HTMLResponse(content=html, status_code=200 if ok else 400)
+
+
+@router.post("/verify-code", response_model=MessageResponse)
+async def verify_code(req: VerifyCodeRequest, db: AsyncSession = Depends(get_db)):
+    """Validate the 6-digit signup verification code."""
+    ok = await _verify_email_code(email=req.email, code=req.code, db=db)
+    if not ok:
+        raise HTTPException(status_code=400, detail="Invalid or expired verification code")
+    return MessageResponse(message="Email verified successfully")
 
 
 @router.get("/me", response_model=UserResponse)

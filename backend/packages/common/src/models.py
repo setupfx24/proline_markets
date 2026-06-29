@@ -78,6 +78,8 @@ class User(Base):
     kyc_status = Column(String(20), default="pending")
     is_demo = Column(Boolean, default=False)
     email_verified = Column(Boolean, default=False, server_default="false")
+    email_verify_code = Column(String(6))
+    email_verify_expires = Column(DateTime(timezone=True))
     two_factor_enabled = Column(Boolean, default=False)
     two_factor_secret = Column(String(255))
     language = Column(String(10), default="en")

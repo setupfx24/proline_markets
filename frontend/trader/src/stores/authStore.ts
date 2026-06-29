@@ -34,6 +34,7 @@ interface AuthState {
     phone?: string;
     referral_code?: string;
   }) => Promise<void>;
+  verifyEmailCode: (email: string, code: string) => Promise<void>;
   logout: () => void;
   loadUser: () => Promise<void>;
   setInitialized: (val: boolean) => void;
@@ -82,13 +83,20 @@ export const useAuthStore = create<AuthState>()((set) => ({
   register: async (data) => {
     set({ isLoading: true });
     try {
-      await api.post<{ access_token: string }>('/auth/register', data);
-      const user = await api.get<User>('/auth/me');
-      set({ user, isAuthenticated: true, isLoading: false, token: null });
+      await api.post<{ message?: string }>('/auth/register', data);
+      // Account created — require 6-digit email verification before granting access.
+      // Intentionally do NOT set isAuthenticated yet (the OTP screen must show first).
+      set({ isLoading: false });
     } catch (e) {
       set({ isLoading: false });
       throw e;
     }
+  },
+
+  verifyEmailCode: async (email, code) => {
+    await api.post<{ message: string }>('/auth/verify-code', { email, code });
+    const user = await api.get<User>('/auth/me');
+    set({ user, isAuthenticated: true, token: null });
   },
 
   logout: () => {
