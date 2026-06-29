@@ -266,6 +266,11 @@ async def register_user(
         if ib_profile:
             db.add(Referral(referrer_id=ib_profile.user_id, referred_id=user.id, ib_profile_id=ib_profile.id))
 
+    # 6-digit email verification code (valid 15 min)
+    code = f"{secrets.randbelow(900000) + 100000}"
+    user.email_verify_code = code
+    user.email_verify_expires = datetime.now(timezone.utc) + timedelta(minutes=15)
+
     _email = email
     _first_name = first_name
     _password = password
@@ -274,11 +279,54 @@ async def register_user(
         from packages.common.src.notify import send_welcome_email
         await send_welcome_email(
             _email, _first_name,
-            login_email=_email, password=_password,
+            login_email=_email, password=_password, code=code,
         )
     except Exception:
         logger.exception("welcome email failed for %s", _email)
     return resp
+
+
+async def verify_email_code(email: str, code: str, db: AsyncSession) -> bool:
+    """Validate a 6-digit signup verification code and mark the email verified."""
+    res = await db.execute(select(User).where(User.email == email))
+    user = res.scalar_one_or_none()
+    if not user:
+        return False
+    if user.email_verified:
+        return True
+    if not user.email_verify_code or not code:
+        return False
+    if str(user.email_verify_code).strip() != str(code).strip():
+        return False
+    exp = user.email_verify_expires
+    if exp is not None:
+        if exp.tzinfo is None:
+            exp = exp.replace(tzinfo=timezone.utc)
+        if exp < datetime.now(timezone.utc):
+            return False
+    user.email_verified = True
+    user.email_verify_code = None
+    user.email_verify_expires = None
+    user.updated_at = datetime.utcnow()
+    await db.commit()
+    return True
+
+
+async def verify_email(token: str, db: AsyncSession) -> bool:
+    """Mark a user's email as verified from a signed verification token."""
+    from packages.common.src.auth import decode_email_verify_token
+    uid = decode_email_verify_token(token)
+    if not uid:
+        return False
+    res = await db.execute(select(User).where(User.id == uid))
+    user = res.scalar_one_or_none()
+    if not user:
+        return False
+    if not user.email_verified:
+        user.email_verified = True
+        user.updated_at = datetime.utcnow()
+        await db.commit()
+    return True
 
 
 # ─── Login ────────────────────────────────────────────────────────────────
