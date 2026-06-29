@@ -74,7 +74,7 @@ export default function RegisterPage() {
 function RegisterContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { register, verifyEmailCode, isLoading } = useAuthStore();
+  const { register, isLoading } = useAuthStore();
 
   const [form, setForm] = useState({
     email: '', password: '', confirmPassword: '',
@@ -84,9 +84,6 @@ function RegisterContent() {
   const [showConfirmPass, setShowConfirmPass] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
-  const [step, setStep] = useState<'form' | 'otp'>('form');
-  const [otp, setOtp] = useState('');
-  const [verifying, setVerifying] = useState(false);
 
   useEffect(() => {
     const ref = searchParams.get('ref');
@@ -119,27 +116,12 @@ function RegisterContent() {
         phone: form.phone || undefined,
         referral_code: form.referral_code || undefined,
       });
-      toast.success('Verification code sent to your email');
-      setStep('otp');
+      toast.success('Account created successfully!');
+      router.push('/accounts');
     } catch (err: any) {
       toast.error(err.message || 'Registration failed');
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleVerify = async (ev: React.FormEvent) => {
-    ev.preventDefault();
-    if (otp.length !== 6) return;
-    setVerifying(true);
-    try {
-      await verifyEmailCode(form.email, otp);
-      toast.success('Email verified!');
-      router.push('/dashboard');
-    } catch (err: any) {
-      toast.error(err?.message || 'Invalid or expired code');
-    } finally {
-      setVerifying(false);
     }
   };
 
@@ -206,34 +188,6 @@ function RegisterContent() {
                 transition={{ duration: 0.28, ease: 'easeInOut' }}
                 style={{ width: '100%', maxWidth: 380 }}
               >
-                {step === 'otp' ? (
-                <form className="auth-form" onSubmit={handleVerify} noValidate>
-                  <motion.div {...fadeUp(0.2)} className="flex justify-center mb-2">
-                    <img src="/images/logo1.png" alt="ProlineMarketsFX" className="w-16 h-16 object-contain" />
-                  </motion.div>
-                  <motion.div {...fadeUp(0.3)}>
-                    <h2 className="auth-form__title">Verify Your Email</h2>
-                    <p className="auth-form__subtitle">Enter the 6-digit code we sent to {form.email}.</p>
-                  </motion.div>
-                  <motion.div {...fadeUp(0.37)}>
-                    <AuthInput
-                      label="Verification Code"
-                      placeholder="6-digit code"
-                      value={otp}
-                      onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                    />
-                  </motion.div>
-                  <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ delay: 0.4, duration: 0.4 }}>
-                    <button type="submit" className="auth-btn" disabled={verifying || otp.length !== 6}>
-                      {verifying ? <Loader2 size={18} className="auth-spinner" /> : 'Verify & Continue'}
-                    </button>
-                  </motion.div>
-                  <motion.p className="auth-footer" {...fadeUp(0.5)}>
-                    Entered the wrong email?{' '}
-                    <a onClick={() => setStep('form')}>Go back</a>
-                  </motion.p>
-                </form>
-                ) : (
                 <form className="auth-form" onSubmit={handleSubmit} noValidate>
                   <motion.div {...fadeUp(0.2)} className="flex justify-center mb-2">
                     <img src="/images/logo1.png" alt="ProlineMarketsFX" className="w-16 h-16 object-contain" />
@@ -339,7 +293,6 @@ function RegisterContent() {
                     <a onClick={() => router.push('/auth/login')}>Log in</a>
                   </motion.p>
                 </form>
-                )}
               </motion.div>
             </AnimatePresence>
           </div>
