@@ -86,7 +86,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       <AdminSidebar />
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Top bar — glass effect */}
-        <div className="flex items-center h-14 px-5 glass border-b border-border-primary/30">
+        <div className="relative z-40 flex items-center h-14 px-5 glass border-b border-border-primary/30">
           <div className="relative flex-1 max-w-md">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-tertiary" />
             <input
