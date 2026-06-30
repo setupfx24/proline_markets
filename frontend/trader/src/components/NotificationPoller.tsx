@@ -16,7 +16,7 @@ export default function NotificationPoller() {
       return;
     }
     void fetchUnreadCount();
-    const interval = setInterval(() => void fetchUnreadCount(), 15_000);
+    const interval = setInterval(() => void fetchUnreadCount(), 5_000);
     const onFocus = () => void fetchUnreadCount();
     window.addEventListener('focus', onFocus);
     return () => {

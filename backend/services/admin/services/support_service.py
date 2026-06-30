@@ -7,6 +7,7 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.common.src.models import User, SupportTicket, TicketMessage
+from packages.common.src.notify import create_notification
 from packages.common.src.admin_schemas import (
     TicketOut, TicketDetailOut, TicketMessageOut, PaginatedResponse,
     TicketReplyRequest, TicketStatusUpdate, TicketAssignRequest,
@@ -135,6 +136,14 @@ async def reply_to_ticket(
         new_values={"message_length": len(body.message)},
         ip_address=ip_address,
     )
+    await create_notification(
+        db, ticket.user_id,
+        title="Support replied to your ticket",
+        message=f"Our team replied to your ticket “{ticket.subject}”.",
+        notif_type="support",
+        action_url="/support",
+        commit=False,
+    )
     await db.commit()
     return {"message": "Reply sent successfully"}
 
@@ -191,5 +200,14 @@ async def update_ticket_status(
         new_values={"status": body.status},
         ip_address=ip_address,
     )
+    if body.status != old_status:
+        await create_notification(
+            db, ticket.user_id,
+            title="Support ticket updated",
+            message=f"Your ticket “{ticket.subject}” is now {body.status.replace('_', ' ')}.",
+            notif_type="support",
+            action_url="/support",
+            commit=False,
+        )
     await db.commit()
     return {"message": "Ticket status updated"}
