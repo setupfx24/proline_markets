@@ -71,7 +71,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (isInitialized) {
-      const isAuthPage = pathname?.startsWith('/auth') || pathname === '/investor';
+      const isAuthPage = pathname?.startsWith('/auth');
+      const isInvestorLogin = pathname === '/investor';
       const isLandingPage =
         pathname === '/' ||
         pathname?.startsWith('/company') ||
@@ -80,7 +81,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         ['/platforms/web', '/platforms/copy-trading', '/platforms/prop-trading', '/platforms/ib-management', '/platforms/super-admin'].includes(pathname || '') ||
         ['/accounts/standard', '/accounts/pro', '/accounts/demo'].includes(pathname || '');
       const isSharePage = pathname?.startsWith('/s/');
-      const isPublic = isLandingPage || isSharePage || pathname === '/privacy' || pathname === '/terms' || pathname === '/risk' || pathname === '/about' || pathname === '/contact' || pathname === '/platforms' || pathname === '/white-label';
+      const isPublic = isLandingPage || isSharePage || isInvestorLogin || pathname === '/privacy' || pathname === '/terms' || pathname === '/risk' || pathname === '/about' || pathname === '/contact' || pathname === '/platforms' || pathname === '/white-label';
 
       if (!isAuthenticated && !isAuthPage && !isPublic) {
         router.push('/auth/login');
@@ -88,7 +89,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // Do not redirect authenticated users away from public share pages —
         // the short link should open the same card regardless of auth state.
         if (!isSharePage) router.push('/accounts');
-      } else if (isAuthenticated && user?.role === 'investor' && !isSharePage) {
+      } else if (isAuthenticated && user?.role === 'investor' && !isSharePage && !isInvestorLogin) {
         // Read-only investor sessions may only see Accounts + Trading.
         const investorAllowed = pathname?.startsWith('/accounts') || pathname?.startsWith('/trading');
         if (!investorAllowed) router.push('/accounts');
@@ -98,7 +99,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   /* Skip loading screen for landing & auth pages — render immediately */
   if (!isInitialized) {
-    const isAuthPage = pathname?.startsWith('/auth') || pathname === '/investor';
+    const isAuthPage = pathname?.startsWith('/auth');
+    const isInvestorLogin = pathname === '/investor';
     const isLanding =
       pathname === '/' ||
       pathname?.startsWith('/company') ||
@@ -107,7 +109,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       ['/platforms/web', '/platforms/copy-trading', '/platforms/prop-trading', '/platforms/ib-management', '/platforms/super-admin'].includes(pathname || '') ||
       ['/accounts/standard', '/accounts/pro', '/accounts/demo'].includes(pathname || '');
     const isSharePage = pathname?.startsWith('/s/');
-    const isPublicPage = isLanding || isAuthPage || isSharePage || pathname === '/privacy' || pathname === '/terms' || pathname === '/risk' || pathname === '/about' || pathname === '/contact' || pathname === '/platforms' || pathname === '/white-label';
+    const isPublicPage = isLanding || isAuthPage || isInvestorLogin || isSharePage || pathname === '/privacy' || pathname === '/terms' || pathname === '/risk' || pathname === '/about' || pathname === '/contact' || pathname === '/platforms' || pathname === '/white-label';
 
     /* Already know maintenance is ON from persisted store → block immediately */
     if (!isPublicPage && maintenance) return <MaintenanceScreen />;
