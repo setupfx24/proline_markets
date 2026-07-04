@@ -17,6 +17,7 @@ from packages.common.src.config import get_settings
 from packages.common.src.models import (
     User, UserSession, TradingAccount, AccountGroup,
     IBProfile, Referral, PasswordResetToken, UserRefreshToken, UserAuditLog,
+    InvestorAccess,
 )
 from packages.common.src.schemas import TokenResponse
 from packages.common.src.auth import (
@@ -166,9 +167,16 @@ async def issue_auth_json_response(
     *,
     status_code: int = 200,
     user_audit_action: str | None = None,
+    role_override: str | None = None,
+    extra_claims: dict | None = None,
 ) -> JSONResponse:
-    """Create user_session + refresh row, commit, return JSON (+ HttpOnly cookies)."""
-    token, expires = create_access_token(str(user.id), user.role)
+    """Create user_session + refresh row, commit, return JSON (+ HttpOnly cookies).
+
+    role_override / extra_claims support read-only investor sessions: the token's
+    sub is still the account owner (so reads work), but role="investor" and
+    acct=<account_id> are stamped so writes are blocked and views are scoped."""
+    effective_role = role_override or user.role
+    token, expires = create_access_token(str(user.id), effective_role, extra_claims=extra_claims)
     db.add(
         UserSession(
             user_id=user.id,
@@ -204,7 +212,7 @@ async def issue_auth_json_response(
     body = TokenResponse(
         access_token=display_token,
         user_id=str(user.id),
-        role=user.role,
+        role=effective_role,
         expires_at=expires,
     )
     resp = JSONResponse(content=body.model_dump(mode="json"), status_code=status_code)
@@ -311,6 +319,44 @@ async def login_user(
             raise AuthServiceError("Invalid 2FA code", 401)
 
     return await issue_auth_json_response(user, request, db, user_audit_action="LOGIN")
+
+
+# ─── Investor (read-only) login ───────────────────────────────────────────
+
+async def investor_login(
+    email: str,
+    password: str,
+    request: Request,
+    db: AsyncSession,
+) -> JSONResponse:
+    """Log in a read-only investor credential (created by an admin, tied to one
+    account). Issues a normal session but with sub=<account owner>, role=investor,
+    acct=<account_id> so reads are scoped to that account and writes are blocked."""
+    rate_limit_http(request, "investor_login", 40, 60.0)
+    result = await db.execute(select(InvestorAccess).where(InvestorAccess.email == email))
+    inv = result.scalar_one_or_none()
+    if not inv or not inv.is_active or not verify_password(password, inv.password_hash):
+        raise AuthServiceError("Invalid credentials", 401)
+
+    acc_res = await db.execute(select(TradingAccount).where(TradingAccount.id == inv.account_id))
+    account = acc_res.scalar_one_or_none()
+    if not account or not account.is_active:
+        raise AuthServiceError("This investor login's account is unavailable", 403)
+
+    owner_res = await db.execute(select(User).where(User.id == account.user_id))
+    owner = owner_res.scalar_one_or_none()
+    if not owner:
+        raise AuthServiceError("Account owner not found", 404)
+    if owner.status in ("banned", "blocked"):
+        raise AuthServiceError("Account is not available", 403)
+
+    inv.last_login_at = datetime.now(timezone.utc)
+    return await issue_auth_json_response(
+        owner, request, db,
+        user_audit_action="INVESTOR_LOGIN",
+        role_override="investor",
+        extra_claims={"acct": str(account.id)},
+    )
 
 
 # ─── Demo login ───────────────────────────────────────────────────────────
@@ -539,11 +585,17 @@ async def change_password(user_id: UUID, old_password: str, new_password: str, d
 
 # ─── Get current user profile ─────────────────────────────────────────────
 
-async def get_me(user_id: UUID, db: AsyncSession) -> User:
+async def get_me(user_id: UUID, db: AsyncSession, effective_role: str | None = None) -> User:
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     if not user:
         raise AuthServiceError("User not found", 404)
+    # For investor (read-only) sessions the JWT role differs from the DB user's
+    # role. Reflect the token role so the frontend can gate the UI. Detach first
+    # so this in-memory change is never accidentally flushed to the DB.
+    if effective_role and effective_role != user.role:
+        db.expunge(user)
+        user.role = effective_role
     return user
 
 

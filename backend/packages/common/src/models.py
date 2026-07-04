@@ -135,6 +135,29 @@ class UserRefreshToken(Base):
     user = relationship("User", back_populates="refresh_tokens")
 
 
+class InvestorAccess(Base):
+    """A read-only "investor password" login, created by an admin, that grants
+    view-only access to exactly ONE trading account (MT-style investor login).
+
+    On login the gateway issues a JWT with sub=<account owner user_id>,
+    role="investor", acct=<account_id>. Reads are scoped to that one account;
+    all write actions (trade / withdraw / transfer) are blocked by role."""
+    __tablename__ = "investor_access"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    email = Column(String(255), unique=True, nullable=False, index=True)
+    password_hash = Column(String(255), nullable=False)
+    account_id = Column(UUID(as_uuid=True), ForeignKey("trading_accounts.id", ondelete="CASCADE"), nullable=False, index=True)
+    label = Column(String(120))
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
+    last_login_at = Column(DateTime(timezone=True))
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    account = relationship("TradingAccount", lazy="selectin")
+
+
 class KYCDocument(Base):
     __tablename__ = "kyc_documents"
 

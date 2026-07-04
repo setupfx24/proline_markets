@@ -697,6 +697,20 @@ class EmployeeUpdate(BaseModel):
     is_active: Optional[bool] = None
 
 
+class InvestorIn(BaseModel):
+    """Create a read-only investor login tied to one trading account."""
+    account_number: str
+    email: str
+    password: Optional[str] = None
+    label: Optional[str] = None
+
+
+class InvestorUpdate(BaseModel):
+    is_active: Optional[bool] = None
+    password: Optional[str] = None  # set to reset the login password
+    label: Optional[str] = None
+
+
 class EmployeeOut(BaseModel):
     id: str
     user_id: str

@@ -32,6 +32,7 @@ def create_access_token(
     user_id: str,
     role: str,
     expires_delta: Optional[timedelta] = None,
+    extra_claims: Optional[dict] = None,
 ) -> tuple[str, datetime]:
     # Timezone-aware UTC: avoids asyncpg/timestamptz issues and PyJWT edge cases with naive datetimes.
     now = datetime.now(timezone.utc)
@@ -42,6 +43,9 @@ def create_access_token(
         "exp": expires,
         "iat": now,
     }
+    # Optional extra claims (e.g. investor "acct" = the single account they may view).
+    if extra_claims:
+        payload.update(extra_claims)
     token = jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
     return token, expires
 
@@ -77,9 +81,13 @@ async def get_current_user(
     if not token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
     payload = decode_token(token)
+    acct = payload.get("acct")
     return {
         "user_id": UUID(payload["sub"]),
         "role": payload["role"],
+        # For an investor (read-only) session this is the single trading account
+        # they are allowed to view; None for every normal session.
+        "view_account_id": UUID(acct) if acct else None,
     }
 
 
@@ -87,6 +95,37 @@ async def require_admin(current_user: dict = Depends(get_current_user)) -> dict:
     if current_user["role"] not in ("admin", "super_admin"):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
     return current_user
+
+
+async def forbid_investor(current_user: dict = Depends(get_current_user)) -> dict:
+    """Block read-only investor sessions from any write/action endpoint.
+
+    Investor tokens carry sub=<real account owner>, so a missing guard would let
+    an investor act as the owner — attach this to every mutating route AND check
+    the role in the core service chokepoints as defense-in-depth."""
+    if current_user.get("role") == "investor":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Investor access is read-only",
+        )
+    return current_user
+
+
+def is_investor(current_user: dict) -> bool:
+    return current_user.get("role") == "investor"
+
+
+def assert_investor_can_view(current_user: dict, account_id) -> None:
+    """For an investor session, ensure the requested account is the one they are
+    linked to. No-op for normal sessions. Raises 403 otherwise."""
+    if current_user.get("role") != "investor":
+        return
+    allowed = current_user.get("view_account_id")
+    if allowed is None or str(account_id) != str(allowed):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Investor access is limited to a single account",
+        )
 
 
 async def require_super_admin(current_user: dict = Depends(get_current_user)) -> dict:

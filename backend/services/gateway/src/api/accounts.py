@@ -11,7 +11,7 @@ from packages.common.src.schemas import (
     OpenLiveAccountRequest,
     TradingAccountResponse,
 )
-from packages.common.src.auth import get_current_user
+from packages.common.src.auth import get_current_user, forbid_investor, assert_investor_can_view
 from ..services import account_service
 
 router = APIRouter()
@@ -31,7 +31,7 @@ async def list_openable_account_groups(
 @router.post("/open", status_code=status.HTTP_201_CREATED)
 async def open_live_account(
     req: OpenLiveAccountRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(forbid_investor),
     db: AsyncSession = Depends(get_db),
 ):
     """Create a live trading account from an admin-defined type. Optional internal funding from existing live balances."""
@@ -47,6 +47,7 @@ async def list_accounts(
 ):
     return await account_service.list_accounts(
         user_id=current_user["user_id"], db=db,
+        only_account_id=current_user.get("view_account_id"),
     )
 
 
@@ -56,6 +57,7 @@ async def get_account(
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    assert_investor_can_view(current_user, account_id)
     return await account_service.get_account(
         account_id=account_id, user_id=current_user["user_id"], db=db,
     )
@@ -67,6 +69,7 @@ async def get_account_summary(
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    assert_investor_can_view(current_user, account_id)
     return await account_service.get_account_summary(
         account_id=account_id, user_id=current_user["user_id"], db=db,
     )
@@ -79,6 +82,9 @@ async def delete_trading_account(
     db: AsyncSession = Depends(get_db),
 ):
     """Permanently remove a live trading account owned by the user (demo accounts are not removable)."""
+    if current_user.get("role") == "investor":
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="Investor access is read-only")
     return await account_service.delete_trading_account(
         account_id=account_id, user_id=current_user["user_id"], db=db,
     )
@@ -88,7 +94,7 @@ async def delete_trading_account(
 async def update_account_leverage(
     account_id: UUID,
     body: dict,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(forbid_investor),
     db: AsyncSession = Depends(get_db),
 ):
     """Let the user lower their account leverage (up to the admin-defined group max)."""

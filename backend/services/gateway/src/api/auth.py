@@ -13,6 +13,7 @@ from packages.common.src.auth import get_current_user
 from ..services.auth_service import (
     AuthServiceError,
     register_user, login_user, demo_login as _demo_login,
+    investor_login as _investor_login,
     refresh_token as _refresh_token, bootstrap_session as _bootstrap_session,
     forgot_password as _forgot_password, reset_password as _reset_password,
     setup_2fa as _setup_2fa, verify_2fa as _verify_2fa,
@@ -68,6 +69,17 @@ async def login(req: LoginRequest, request: Request, db: AsyncSession = Depends(
         return await login_user(
             email=req.email, password=req.password,
             totp_code=req.totp_code, request=request, db=db,
+        )
+    except AuthServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+
+
+@router.post("/investor/login")
+async def investor_login(req: LoginRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    """Read-only investor login (email + password created by an admin)."""
+    try:
+        return await _investor_login(
+            email=req.email, password=req.password, request=request, db=db,
         )
     except AuthServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail)
@@ -132,7 +144,11 @@ async def reset_password(req: ResetPasswordRequest, request: Request, db: AsyncS
 @router.get("/me", response_model=UserResponse)
 async def get_me(current_user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     try:
-        return await _get_me(user_id=current_user["user_id"], db=db)
+        # Pass the token role so investor (read-only) sessions report role="investor".
+        return await _get_me(
+            user_id=current_user["user_id"], db=db,
+            effective_role=current_user.get("role"),
+        )
     except AuthServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail)
 

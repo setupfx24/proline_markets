@@ -15,7 +15,7 @@ from packages.common.src.schemas import (
     TransferTradingToMainRequest,
     WithdrawalRequest,
 )
-from packages.common.src.auth import get_current_user
+from packages.common.src.auth import get_current_user, forbid_investor
 from ..services import wallet_service
 
 router = APIRouter()
@@ -24,7 +24,7 @@ router = APIRouter()
 @router.post("/deposit", status_code=201)
 async def create_deposit(
     req: DepositRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(forbid_investor),
     db: AsyncSession = Depends(get_db),
 ):
     return await wallet_service.create_deposit(
@@ -34,7 +34,7 @@ async def create_deposit(
 
 @router.post("/deposit/manual", status_code=201)
 async def create_manual_deposit(
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(forbid_investor),
     db: AsyncSession = Depends(get_db),
     account_id: Optional[UUID] = Form(default=None),
     amount: Decimal = Form(...),
@@ -52,7 +52,7 @@ async def create_manual_deposit(
 @router.post("/withdraw", status_code=201)
 async def create_withdrawal(
     req: WithdrawalRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(forbid_investor),
     db: AsyncSession = Depends(get_db),
 ):
     return await wallet_service.create_withdrawal(
@@ -62,7 +62,7 @@ async def create_withdrawal(
 
 @router.post("/withdraw/manual", status_code=201)
 async def create_manual_withdrawal(
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(forbid_investor),
     db: AsyncSession = Depends(get_db),
     amount: Decimal = Form(...),
     upi_id: str = Form(default=""),
@@ -80,7 +80,7 @@ async def create_manual_withdrawal(
 @router.post("/transfer-internal", status_code=200)
 async def internal_wallet_transfer(
     req: InternalWalletTransferRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(forbid_investor),
     db: AsyncSession = Depends(get_db),
 ):
     """Move funds between the user's own live trading accounts (available balance only)."""
@@ -92,7 +92,7 @@ async def internal_wallet_transfer(
 @router.post("/transfer-trading-to-main", status_code=200)
 async def transfer_trading_to_main(
     req: TransferTradingToMainRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(forbid_investor),
     db: AsyncSession = Depends(get_db),
 ):
     """Move available balance from a live trading account into the user's main wallet."""
@@ -104,7 +104,7 @@ async def transfer_trading_to_main(
 @router.post("/transfer-main-to-trading", status_code=200)
 async def transfer_main_to_trading(
     req: TransferMainToTradingRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(forbid_investor),
     db: AsyncSession = Depends(get_db),
 ):
     """Fund a live trading account from the main wallet."""

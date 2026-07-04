@@ -99,6 +99,7 @@ const DEMO_FUNDING_MSG =
 
 export default function AccountsPage() {
   const user = useAuthStore((s) => s.user);
+  const viewOnly = user?.role === 'investor';
   const setStoreAccounts = useTradingStore((s) => s.setAccounts);
   const setActiveAccount = useTradingStore((s) => s.setActiveAccount);
   const removeAccount = useTradingStore((s) => s.removeAccount);
@@ -567,8 +568,8 @@ export default function AccountsPage() {
               {(
                 [
                   { id: 'accounts' as const, label: 'Accounts' },
-                  { id: 'transfer' as const, label: 'Internal Transfer' },
-                ] as const
+                  ...(viewOnly ? [] : [{ id: 'transfer' as const, label: 'Internal Transfer' }]),
+                ]
               ).map((t) => {
                 const active = tab === t.id;
                 return (
@@ -619,7 +620,7 @@ export default function AccountsPage() {
                     </h1>
                     <p className="mt-1 text-sm text-text-secondary">Manage your trading accounts</p>
                   </div>
-                  {user?.is_demo ? (
+                  {!viewOnly && (user?.is_demo ? (
                     <button type="button" onClick={() => setDemoUpgradeOpen(true)} className={newAccountCtaClass}>
                       <span className="text-lg leading-none">+</span>
                       New Account
@@ -629,7 +630,7 @@ export default function AccountsPage() {
                       <span className="text-lg leading-none">+</span>
                       New Account
                     </button>
-                  )}
+                  ))}
                 </div>
 
                 {loading && (
@@ -655,7 +656,7 @@ export default function AccountsPage() {
                         ? 'No demo trading account is linked yet.'
                         : 'You do not have a trading account yet. Open one to start.'}
                     </p>
-                    {!user?.is_demo && (
+                    {!user?.is_demo && !viewOnly && (
                       <button
                         type="button"
                         onClick={handleOpenNewAccount}

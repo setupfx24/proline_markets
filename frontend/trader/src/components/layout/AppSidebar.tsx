@@ -3,6 +3,7 @@
 import { usePathname } from 'next/navigation';
 import Link from 'next/link';
 import { useShellStore } from '@/stores/shellStore';
+import { useViewOnly } from '@/stores/authStore';
 import { cn } from '@/lib/utils';
 import {
   LayoutGrid,
@@ -42,9 +43,18 @@ const NAV_ITEMS = [
   { label: 'Settings', href: '/profile', icon: Settings },
 ] as const;
 
+// Read-only investor sessions only see their account + trading.
+const INVESTOR_NAV = [
+  { label: 'Accounts', href: '/accounts', icon: LayoutGrid },
+  { label: 'Trading', href: '/trading', icon: TrendingUp },
+] as const;
+
 export default function AppSidebar() {
   const pathname = usePathname();
   const { sidebarOpen, setSidebarOpen } = useShellStore();
+  const viewOnly = useViewOnly();
+  const navItems = viewOnly ? INVESTOR_NAV : NAV_ITEMS;
+  const logoHref = viewOnly ? '/accounts' : '/dashboard';
 
   return (
     <>
@@ -65,7 +75,7 @@ export default function AppSidebar() {
         )}
       >
         <div className="flex items-center justify-between px-4 pt-4 pb-3 gap-2">
-          <Link href="/dashboard" className="flex items-center gap-2 min-w-0">
+          <Link href={logoHref} className="flex items-center gap-2 min-w-0">
             <img
               src="/images/logo2.png"
               alt="ProlineMarketsFX"
@@ -88,7 +98,7 @@ export default function AppSidebar() {
         </div>
 
         <nav className="flex-1 min-h-0 overflow-y-auto overscroll-contain py-2 px-2 sidebar-scroll">
-          {NAV_ITEMS.map((item) => {
+          {navItems.map((item) => {
             const itemPath = item.href.split('?')[0];
             const isActive = pathname === itemPath || pathname.startsWith(`${itemPath}/`);
             return (

@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.common.src.database import get_db
 from packages.common.src.schemas import ClosePositionRequest, ModifyPositionRequest
-from packages.common.src.auth import get_current_user
+from packages.common.src.auth import get_current_user, forbid_investor, assert_investor_can_view
 from ..services import trading_service
 
 router = APIRouter()
@@ -19,6 +19,7 @@ async def list_positions(
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    assert_investor_can_view(current_user, account_id)
     return await trading_service.list_positions(
         account_id=account_id, user_id=current_user["user_id"],
         status=status, db=db,
@@ -29,7 +30,7 @@ async def list_positions(
 async def modify_position(
     position_id: UUID,
     req: ModifyPositionRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(forbid_investor),
     db: AsyncSession = Depends(get_db),
 ):
     return await trading_service.modify_position(
@@ -42,7 +43,7 @@ async def modify_position(
 async def close_position(
     position_id: UUID,
     req: ClosePositionRequest = ClosePositionRequest(),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(forbid_investor),
     db: AsyncSession = Depends(get_db),
 ):
     return await trading_service.close_position(

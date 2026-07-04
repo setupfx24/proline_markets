@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useTradingStore, type Position, type InstrumentInfo } from '@/stores/tradingStore';
+import { useViewOnly } from '@/stores/authStore';
 import { clsx } from 'clsx';
 import api from '@/lib/api/client';
 import toast from 'react-hot-toast';
@@ -268,6 +269,7 @@ function TerminalPositionStaticCard({
         POSITION ID: {pos.id}
       </p>
 
+      {!useViewOnly() && (
       <div className="px-2.5 pb-2 pt-0.5 flex flex-col gap-1.5 border-t border-border-primary">
         <button
           type="button"
@@ -290,12 +292,14 @@ function TerminalPositionStaticCard({
           Partial close
         </button>
       </div>
+      )}
     </div>
   );
 }
 
 export default function PositionsPanel({ variant = 'default' }: PositionsPanelProps) {
   const isTerminal = variant === 'terminal';
+  const viewOnly = useViewOnly();
   const {
     positions,
     pendingOrders,
@@ -762,7 +766,7 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
                     </div>
                   </>
                 ) : null}
-                {isTerminal && activeTab === 'open' && (
+                {isTerminal && activeTab === 'open' && !viewOnly && (
                   <div className="flex items-center gap-1 shrink-0 pb-0.5 border-l border-border-primary ml-1 pl-2">
                     {positions.length > 0 && (
                       <div className="relative" ref={bulkMenuRef}>

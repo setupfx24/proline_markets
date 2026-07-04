@@ -125,6 +125,9 @@ class AdminApi {
   put<T>(path: string, body?: unknown) {
     return this.req<T>('PUT', path, body);
   }
+  patch<T>(path: string, body?: unknown) {
+    return this.req<T>('PATCH', path, body);
+  }
   delete<T>(path: string) {
     return this.req<T>('DELETE', path);
   }

@@ -10,7 +10,7 @@ import {
   Settings, Sliders, BarChart3, Gift, Image, HeadphonesIcon,
   UserCog, ChevronDown, ChevronRight, Network, Share2,
   DollarSign, Percent, ArrowLeftRight, PanelLeftClose, PanelLeft,
-  Receipt, Layers, ShieldCheck, ScrollText, BookOpen,
+  Receipt, Layers, ShieldCheck, ScrollText, BookOpen, Eye,
 } from 'lucide-react';
 
 interface NavItem {
@@ -62,6 +62,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'Bonus', href: '/bonus', icon: Gift, perm: 'bonus.view' },
   { label: 'Banners', href: '/banners', icon: Image, perm: 'banners.view' },
   { label: 'Support', href: '/support', icon: HeadphonesIcon, perm: 'tickets.view' },
+  { label: 'Investor Access', href: '/investor-access', icon: Eye, perm: '_super_admin' },
   { label: 'Employees', href: '/employees', icon: UserCog, perm: '_super_admin' },
   { label: 'Settings', href: '/settings', icon: Settings, perm: '_super_admin' },
 ];

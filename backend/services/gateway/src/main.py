@@ -109,6 +109,45 @@ app.add_middleware(
 
 add_middleware_stack(app)
 
+
+# ── Investor read-only guard ────────────────────────────────────────────────
+# An investor session's JWT has sub=<real account owner>, so without a global
+# gate a missed route would let an investor act as the owner (place trades,
+# withdraw, even change the owner's password). This blocks EVERY mutating
+# request for role=="investor" except the auth/session endpoints they need.
+from fastapi.responses import JSONResponse as _JSONResponse
+
+_INVESTOR_WRITE_ALLOWLIST = {
+    "/api/v1/auth/investor/login",
+    "/api/v1/auth/logout",
+    "/api/v1/auth/refresh",
+    "/api/v1/auth/bootstrap-session",
+}
+
+
+@app.middleware("http")
+async def investor_readonly_guard(request: Request, call_next):
+    if request.method in ("POST", "PUT", "PATCH", "DELETE"):
+        path = request.url.path
+        if path not in _INVESTOR_WRITE_ALLOWLIST:
+            token = None
+            auth = request.headers.get("authorization") or ""
+            if auth.lower().startswith("bearer "):
+                token = auth[7:].strip()
+            if not token:
+                token = request.cookies.get(settings.ACCESS_TOKEN_COOKIE_NAME)
+            if token:
+                try:
+                    if decode_token(token).get("role") == "investor":
+                        return _JSONResponse(
+                            {"detail": "Investor access is read-only"},
+                            status_code=403,
+                        )
+                except Exception:
+                    pass  # invalid/expired token → let the route's own auth handle it
+    return await call_next(request)
+
+
 # REST API Routes
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["Authentication"])
 app.include_router(accounts.router, prefix="/api/v1/accounts", tags=["Accounts"])

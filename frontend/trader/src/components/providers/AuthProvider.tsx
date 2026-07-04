@@ -71,7 +71,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (isInitialized) {
-      const isAuthPage = pathname?.startsWith('/auth');
+      const isAuthPage = pathname?.startsWith('/auth') || pathname === '/investor';
       const isLandingPage =
         pathname === '/' ||
         pathname?.startsWith('/company') ||
@@ -88,13 +88,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // Do not redirect authenticated users away from public share pages —
         // the short link should open the same card regardless of auth state.
         if (!isSharePage) router.push('/accounts');
+      } else if (isAuthenticated && user?.role === 'investor' && !isSharePage) {
+        // Read-only investor sessions may only see Accounts + Trading.
+        const investorAllowed = pathname?.startsWith('/accounts') || pathname?.startsWith('/trading');
+        if (!investorAllowed) router.push('/accounts');
       }
     }
-  }, [isInitialized, isAuthenticated, pathname, router]);
+  }, [isInitialized, isAuthenticated, user, pathname, router]);
 
   /* Skip loading screen for landing & auth pages — render immediately */
   if (!isInitialized) {
-    const isAuthPage = pathname?.startsWith('/auth');
+    const isAuthPage = pathname?.startsWith('/auth') || pathname === '/investor';
     const isLanding =
       pathname === '/' ||
       pathname?.startsWith('/company') ||

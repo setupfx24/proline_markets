@@ -153,12 +153,16 @@ async def open_live_account(
     }
 
 
-async def list_accounts(user_id: UUID, db: AsyncSession) -> dict:
-    result = await db.execute(
+async def list_accounts(user_id: UUID, db: AsyncSession, only_account_id: UUID | None = None) -> dict:
+    stmt = (
         select(TradingAccount)
         .options(selectinload(TradingAccount.account_group))
         .where(TradingAccount.user_id == user_id)
     )
+    # Investor (read-only) sessions may only ever see the single linked account.
+    if only_account_id is not None:
+        stmt = stmt.where(TradingAccount.id == only_account_id)
+    result = await db.execute(stmt)
     accounts = result.scalars().unique().all()
 
     items = []

@@ -13,6 +13,7 @@ import { getDigits } from '@/lib/utils';
 import { getMarketStatus } from '@/lib/marketHours';
 import { wsManager } from '@/lib/ws/wsManager';
 import OrderPanelSymbolPicker from '@/components/trading/OrderPanelSymbolPicker';
+import { useViewOnly } from '@/stores/authStore';
 
 type OrderSide = 'buy' | 'sell';
 type OrderType = 'market' | 'pending';
@@ -20,6 +21,7 @@ type OrderType = 'market' | 'pending';
 export default function OrderPanel() {
   const pathname = usePathname();
   const isTradingTerminal = Boolean(pathname?.startsWith('/trading/terminal'));
+  const viewOnly = useViewOnly();
   const {
     terminalMarketsOpen,
     toggleTerminalMarkets,
@@ -207,6 +209,16 @@ export default function OrderPanel() {
   const obPad = isTradingTerminal ? 'py-2' : 'py-3';
   const volBtn = isTradingTerminal ? 'w-8 h-8' : 'w-10 h-10';
   const volIn = isTradingTerminal ? 'py-1.5 text-sm' : 'py-2.5 text-base';
+
+  if (viewOnly) {
+    return (
+      <div className="h-full min-h-0 flex flex-col items-center justify-center gap-2 bg-bg-base p-6 text-center">
+        <div className="w-10 h-10 rounded-full bg-accent/10 border border-accent/25 flex items-center justify-center text-accent text-lg">👁</div>
+        <div className="text-sm font-semibold text-text-primary">View-only access</div>
+        <div className="text-xs text-text-tertiary max-w-[220px]">Investor accounts can watch charts and positions but cannot place or modify trades.</div>
+      </div>
+    );
+  }
 
   return (
     <div className="h-full min-h-0 flex flex-col overflow-hidden bg-bg-base">

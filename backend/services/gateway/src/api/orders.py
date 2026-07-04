@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.common.src.database import get_db
 from packages.common.src.schemas import PlaceOrderRequest, ModifyOrderRequest
-from packages.common.src.auth import get_current_user
+from packages.common.src.auth import get_current_user, forbid_investor, assert_investor_can_view
 from ..services.auth_service import client_ip_for_inet
 from ..services import trading_service
 
@@ -17,7 +17,7 @@ router = APIRouter()
 async def place_order(
     req: PlaceOrderRequest,
     request: Request,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(forbid_investor),
     db: AsyncSession = Depends(get_db),
 ):
     return await trading_service.place_order(
@@ -35,6 +35,7 @@ async def list_orders(
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    assert_investor_can_view(current_user, account_id)
     return await trading_service.list_orders(
         account_id=account_id, user_id=current_user["user_id"],
         status=status, db=db,
@@ -45,7 +46,7 @@ async def list_orders(
 async def modify_order(
     order_id: UUID,
     req: ModifyOrderRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(forbid_investor),
     db: AsyncSession = Depends(get_db),
 ):
     return await trading_service.modify_order(
@@ -56,7 +57,7 @@ async def modify_order(
 @router.delete("/{order_id}")
 async def cancel_order(
     order_id: UUID,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(forbid_investor),
     db: AsyncSession = Depends(get_db),
 ):
     return await trading_service.cancel_order(

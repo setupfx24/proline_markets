@@ -24,6 +24,7 @@ interface AuthState {
   isLoading: boolean;
   isInitialized: boolean;
   login: (email: string, password: string, totpCode?: string) => Promise<void>;
+  investorLogin: (email: string, password: string) => Promise<void>;
   demoLogin: () => Promise<void>;
   forgotPassword: (email: string) => Promise<void>;
   register: (data: {
@@ -54,6 +55,21 @@ export const useAuthStore = create<AuthState>()((set) => ({
         email,
         password,
         totp_code: totpCode,
+      });
+      const user = await api.get<User>('/auth/me');
+      set({ user, isAuthenticated: true, isLoading: false, token: null });
+    } catch (e) {
+      set({ isLoading: false });
+      throw e;
+    }
+  },
+
+  investorLogin: async (email, password) => {
+    set({ isLoading: true });
+    try {
+      await api.post<{ access_token: string; user_id: string; role: string }>('/auth/investor/login', {
+        email,
+        password,
       });
       const user = await api.get<User>('/auth/me');
       set({ user, isAuthenticated: true, isLoading: false, token: null });
@@ -128,3 +144,7 @@ export const useAuthStore = create<AuthState>()((set) => ({
 
   setInitialized: (val) => set({ isInitialized: val }),
 }));
+
+/** True when the current session is a read-only "Investor Access" login.
+ * Drives view-only gating across the app (hidden nav + disabled actions). */
+export const useViewOnly = () => useAuthStore((s) => s.user?.role === 'investor');
