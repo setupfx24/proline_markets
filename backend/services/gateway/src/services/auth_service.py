@@ -330,20 +330,15 @@ async def investor_login(
     db: AsyncSession,
 ) -> JSONResponse:
     """Log in a read-only investor credential (created by an admin, tied to one
-    account). Issues a normal session but with sub=<account owner>, role=investor,
-    acct=<account_id> so reads are scoped to that account and writes are blocked."""
+    platform user). Issues a normal session but with sub=<target user>, role=investor
+    so reads resolve to that user's accounts and every write action is blocked."""
     rate_limit_http(request, "investor_login", 40, 60.0)
     result = await db.execute(select(InvestorAccess).where(InvestorAccess.email == email))
     inv = result.scalar_one_or_none()
     if not inv or not inv.is_active or not verify_password(password, inv.password_hash):
         raise AuthServiceError("Invalid credentials", 401)
 
-    acc_res = await db.execute(select(TradingAccount).where(TradingAccount.id == inv.account_id))
-    account = acc_res.scalar_one_or_none()
-    if not account or not account.is_active:
-        raise AuthServiceError("This investor login's account is unavailable", 403)
-
-    owner_res = await db.execute(select(User).where(User.id == account.user_id))
+    owner_res = await db.execute(select(User).where(User.id == inv.user_id))
     owner = owner_res.scalar_one_or_none()
     if not owner:
         raise AuthServiceError("Account owner not found", 404)
@@ -355,7 +350,6 @@ async def investor_login(
         owner, request, db,
         user_audit_action="INVESTOR_LOGIN",
         role_override="investor",
-        extra_claims={"acct": str(account.id)},
     )
 
 

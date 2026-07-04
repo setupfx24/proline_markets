@@ -1,8 +1,9 @@
 """Admin service — manage read-only "Investor Access" logins.
 
-Each investor login is an email+password (created by an admin) tied to exactly
-ONE trading account. The gateway's /auth/investor/login issues a read-only
-session for that account; all write actions are blocked platform-wide."""
+Each investor login is tied to ONE platform user. The admin picks a user and a
+credential is generated (email = the user's email, random password). The gateway's
+/auth/investor/login issues a read-only session for that user; every write action
+is blocked platform-wide."""
 import secrets
 import uuid
 
@@ -11,9 +12,16 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.common.src.auth import hash_password
-from packages.common.src.models import User, TradingAccount, InvestorAccess
+from packages.common.src.models import User, InvestorAccess
 from packages.common.src.admin_schemas import InvestorIn, InvestorUpdate
 from dependencies import write_audit_log
+
+
+def _user_name(u: User | None) -> str | None:
+    if not u:
+        return None
+    name = f"{u.first_name or ''} {u.last_name or ''}".strip()
+    return name or (u.email.split("@")[0] if u.email else None)
 
 
 async def list_investors(db: AsyncSession) -> dict:
@@ -22,21 +30,16 @@ async def list_investors(db: AsyncSession) -> dict:
 
     items = []
     for inv in rows:
-        acc_q = await db.execute(select(TradingAccount).where(TradingAccount.id == inv.account_id))
-        acc = acc_q.scalar_one_or_none()
-        owner = None
-        if acc:
-            o_q = await db.execute(select(User).where(User.id == acc.user_id))
-            owner = o_q.scalar_one_or_none()
+        u_q = await db.execute(select(User).where(User.id == inv.user_id))
+        u = u_q.scalar_one_or_none()
         items.append({
             "id": str(inv.id),
             "email": inv.email,
             "label": inv.label,
             "is_active": inv.is_active,
-            "account_id": str(inv.account_id),
-            "account_number": acc.account_number if acc else None,
-            "owner_email": owner.email if owner else None,
-            "owner_name": (f"{owner.first_name or ''} {owner.last_name or ''}".strip() if owner else None),
+            "user_id": str(inv.user_id),
+            "user_email": u.email if u else None,
+            "user_name": _user_name(u),
             "last_login_at": inv.last_login_at.isoformat() if inv.last_login_at else None,
             "created_at": inv.created_at.isoformat() if inv.created_at else None,
         })
@@ -49,42 +52,54 @@ async def create_investor(
     ip_address: str | None,
     db: AsyncSession,
 ) -> dict:
-    acc_q = await db.execute(
-        select(TradingAccount).where(TradingAccount.account_number == body.account_number.strip())
-    )
-    account = acc_q.scalar_one_or_none()
-    if not account:
-        raise HTTPException(status_code=404, detail="No trading account found for that account number")
+    """Create — or regenerate the password for — the investor login of one user.
+    One investor login per user; clicking again just rotates the password."""
+    try:
+        target_id = uuid.UUID(str(body.user_id))
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid user id")
 
-    email = body.email.strip().lower()
-    exists_q = await db.execute(select(InvestorAccess).where(InvestorAccess.email == email))
-    if exists_q.scalar_one_or_none():
-        raise HTTPException(status_code=400, detail="An investor login with this email already exists")
+    u_q = await db.execute(select(User).where(User.id == target_id))
+    user = u_q.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
 
-    raw_password = body.password or secrets.token_urlsafe(10)
-    inv = InvestorAccess(
-        email=email,
-        password_hash=hash_password(raw_password),
-        account_id=account.id,
-        label=(body.label or None),
-        is_active=True,
-        created_by=admin.id,
-    )
-    db.add(inv)
+    raw_password = secrets.token_urlsafe(9)
+
+    existing_q = await db.execute(select(InvestorAccess).where(InvestorAccess.user_id == user.id))
+    inv = existing_q.scalar_one_or_none()
+    if inv:
+        inv.password_hash = hash_password(raw_password)
+        inv.is_active = True
+        if body.label is not None:
+            inv.label = body.label or None
+        action = "regenerate_investor_access"
+    else:
+        inv = InvestorAccess(
+            email=user.email,
+            password_hash=hash_password(raw_password),
+            user_id=user.id,
+            label=(body.label or None),
+            is_active=True,
+            created_by=admin.id,
+        )
+        db.add(inv)
+        action = "create_investor_access"
+
     await db.flush()
-
     await write_audit_log(
-        db, admin.id, "create_investor_access", "investor_access", inv.id,
-        new_values={"email": email, "account_number": account.account_number},
+        db, admin.id, action, "investor_access", inv.id,
+        new_values={"user_id": str(user.id), "email": user.email},
         ip_address=ip_address,
     )
     await db.commit()
     return {
-        "message": "Investor access created",
+        "message": "Investor access ready",
         "id": str(inv.id),
-        "email": email,
-        "account_number": account.account_number,
+        "email": user.email,       # the investor logs in with the user's email
         "password": raw_password,  # shown once to the admin
+        "user_name": _user_name(user),
+        "regenerated": action == "regenerate_investor_access",
     }
 
 

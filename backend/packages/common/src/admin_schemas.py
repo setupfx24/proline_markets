@@ -698,10 +698,9 @@ class EmployeeUpdate(BaseModel):
 
 
 class InvestorIn(BaseModel):
-    """Create a read-only investor login tied to one trading account."""
-    account_number: str
-    email: str
-    password: Optional[str] = None
+    """Create / regenerate a read-only investor login for one platform user.
+    Email defaults to the user's email; a random password is generated."""
+    user_id: str
     label: Optional[str] = None
 
 

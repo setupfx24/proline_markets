@@ -116,12 +116,15 @@ def is_investor(current_user: dict) -> bool:
 
 
 def assert_investor_can_view(current_user: dict, account_id) -> None:
-    """For an investor session, ensure the requested account is the one they are
-    linked to. No-op for normal sessions. Raises 403 otherwise."""
+    """For an investor session, enforce a per-account restriction IF one is set on
+    the token (acct claim). Per-user investors (no acct claim) may see all of the
+    linked user's accounts, so this is a no-op for them and for normal sessions."""
     if current_user.get("role") != "investor":
         return
     allowed = current_user.get("view_account_id")
-    if allowed is None or str(account_id) != str(allowed):
+    if allowed is None:
+        return  # per-user investor — the token's sub already scopes to their accounts
+    if str(account_id) != str(allowed):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Investor access is limited to a single account",
