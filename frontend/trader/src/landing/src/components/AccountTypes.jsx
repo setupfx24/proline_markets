@@ -100,13 +100,13 @@ export function AccountTypes() {
             <AccountCard key={acc.slug} acc={acc} i={i} />
           ))}
 
-          {/* Visual filler — image fills the empty 6th cell so the 5 cards form a clean 2×3 grid */}
+          {/* Visual banner — spans the full width on its own row below the cards */}
           <motion.div
             initial={{ opacity: 0, y: 24, filter: "blur(8px)" }}
             whileInView={{ opacity: 1, y: 0, filter: "blur(0px)" }}
             viewport={{ once: true, amount: 0.2 }}
             transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1], delay: 0.3 }}
-            className="md:col-span-1 liquid-glass rounded-2xl min-h-[480px] overflow-hidden"
+            className="md:col-span-3 liquid-glass rounded-2xl min-h-[300px] md:min-h-[460px] overflow-hidden"
           >
             <img
               src="/card_img1.png"
