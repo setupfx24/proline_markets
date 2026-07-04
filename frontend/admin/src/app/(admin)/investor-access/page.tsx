@@ -118,6 +118,15 @@ export default function InvestorAccessPage() {
     }
   };
 
+  const copyValue = async (val: string, label: string) => {
+    try {
+      await navigator.clipboard.writeText(val);
+      toast.success(`${label} copied`);
+    } catch {
+      toast.error('Could not copy — please copy manually');
+    }
+  };
+
   return (
     <>
       <div className="p-6 space-y-4">
@@ -232,9 +241,26 @@ export default function InvestorAccessPage() {
               <p className="text-xxs text-text-tertiary mt-0.5">Read-only access for {creds.name || creds.email}. Share these once — the password is not stored in plain text.</p>
             </div>
             <div className="px-5 py-4 space-y-2 text-xs">
-              <div className="flex justify-between gap-2"><span className="text-text-tertiary">Login URL</span><span className="font-mono text-text-primary text-right break-all">{investorLoginUrl}</span></div>
-              <div className="flex justify-between gap-2"><span className="text-text-tertiary">Email</span><span className="font-mono text-text-primary text-right break-all">{creds.email}</span></div>
-              <div className="flex justify-between gap-2"><span className="text-text-tertiary">Password</span><span className="font-mono text-accent text-right break-all">{creds.password}</span></div>
+              {[
+                { label: 'Login URL', value: investorLoginUrl, accent: false },
+                { label: 'Email', value: creds.email, accent: false },
+                { label: 'Password', value: creds.password, accent: true },
+              ].map((f) => (
+                <div key={f.label} className="flex items-center justify-between gap-2">
+                  <span className="text-text-tertiary shrink-0">{f.label}</span>
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <span className={cn('font-mono text-right break-all', f.accent ? 'text-accent' : 'text-text-primary')}>{f.value}</span>
+                    <button
+                      type="button"
+                      onClick={() => copyValue(f.value, f.label)}
+                      className="shrink-0 p-1 rounded border border-border-primary text-text-tertiary hover:text-text-primary hover:bg-bg-hover transition-fast"
+                      title={`Copy ${f.label}`}
+                    >
+                      <Copy size={11} />
+                    </button>
+                  </div>
+                </div>
+              ))}
             </div>
             <div className="px-5 py-3 border-t border-border-primary flex justify-end gap-2">
               <button onClick={copyCreds} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium bg-accent/15 text-accent border border-accent/30 hover:bg-accent/25 transition-fast">
