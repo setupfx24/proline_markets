@@ -17,7 +17,7 @@ export default function OpenAccountPage() {
     email: "",
     phone: "",
     country: "India",
-    accountType: "ECN Commission Free Ac",
+    accountType: "ECN",
   });
 
   const onChange = (e) =>
@@ -168,7 +168,7 @@ export default function OpenAccountPage() {
                         onChange={onChange}
                         className="liquid-glass rounded-full px-4 py-3 font-body text-sm text-foreground bg-transparent appearance-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                       >
-                        {["Pro Standard STP", "ECN Commission Free Ac", "Proline Premium Ac", "Try Demo Ac"].map((c) => (
+                        {["Cent", "ECN", "Islamic", "Standard", "Proline VIP AC", "Try Demo Ac"].map((c) => (
                           <option key={c} className="bg-background text-foreground">
                             {c}
                           </option>

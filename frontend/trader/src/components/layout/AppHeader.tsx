@@ -7,7 +7,7 @@ import { useShellStore } from '@/stores/shellStore';
 import { useAuthStore } from '@/stores/authStore';
 import { NotificationBell } from '@/components/NotificationListener';
 import api from '@/lib/api/client';
-import { Menu, ChevronDown, Wallet } from 'lucide-react';
+import { Menu, ChevronDown, Wallet, Download } from 'lucide-react';
 
 function formatUsd(n: number) {
   return new Intl.NumberFormat('en-US', {
@@ -90,6 +90,18 @@ export default function AppHeader() {
 
         {/* RIGHT â€” balance + bell + user */}
         <div className="flex items-center gap-1.5 sm:gap-3">
+          {/* Download Android app (APK) — served from trader public/ */}
+          <a
+            href="/proline_apk.apk"
+            download
+            title="Download Android App (APK)"
+            aria-label="Download Android App (APK)"
+            className="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1 sm:py-1.5 rounded-full border border-[#22c55e]/30 bg-[#22c55e]/5 hover:bg-[#22c55e]/10 transition-colors"
+          >
+            <Download size={14} className="text-[#22c55e] shrink-0" />
+            <span className="text-[#22c55e] text-xs sm:text-sm font-medium hidden sm:inline">APK</span>
+          </a>
+
           {/* Balance pill */}
           <Link
             href="/wallet"

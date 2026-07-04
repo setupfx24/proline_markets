@@ -12,7 +12,7 @@ export default function AccountsPage() {
       <PageHeader
         badge="Accounts"
         headline="Proline Markets Accounts."
-        sub="Choose between Pro Standard STP, ECN Commission Free Ac, Proline Premium Ac and a free Demo. Same execution, same liquidity, four ways to trade."
+        sub="Choose between Cent, ECN, Islamic, Standard, Proline VIP AC and a free Demo. Same execution, same liquidity, six ways to trade."
       />
 
       <section className="py-20 md:py-28">
@@ -20,7 +20,7 @@ export default function AccountsPage() {
           <SectionHeader
             badge="Account Types"
             headline="Choose Your Setup."
-            sub="ECN Commission Free is recommended for active traders. Demo is free for risk-free practice."
+            sub="ECN is recommended for active traders. Demo is free for risk-free practice."
           />
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">

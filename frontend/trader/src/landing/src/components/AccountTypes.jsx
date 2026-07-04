@@ -91,7 +91,7 @@ export function AccountTypes() {
             className="font-display uppercase text-4xl md:text-6xl leading-[0.9] tracking-tight max-w-[18ch]"
           />
           <p className="font-body text-foreground/60 max-w-xl">
-            Choose the account that fits your style — Pro Standard, ECN Commission Free or Premium.
+            Choose the account that fits your style — Cent, ECN, Islamic, Standard or Proline VIP.
           </p>
         </div>
 
@@ -100,13 +100,13 @@ export function AccountTypes() {
             <AccountCard key={acc.slug} acc={acc} i={i} />
           ))}
 
-          {/* Visual filler — image fills the empty cells next to Crest on the second row */}
+          {/* Visual filler — image fills the empty 6th cell so the 5 cards form a clean 2×3 grid */}
           <motion.div
             initial={{ opacity: 0, y: 24, filter: "blur(8px)" }}
             whileInView={{ opacity: 1, y: 0, filter: "blur(0px)" }}
             viewport={{ once: true, amount: 0.2 }}
             transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1], delay: 0.3 }}
-            className="md:col-span-2 liquid-glass rounded-2xl min-h-[480px] overflow-hidden"
+            className="md:col-span-1 liquid-glass rounded-2xl min-h-[480px] overflow-hidden"
           >
             <img
               src="/card_img1.png"
