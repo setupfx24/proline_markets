@@ -23,7 +23,7 @@ import {
 import DashboardShell from '@/components/layout/DashboardShell';
 import { Button } from '@/components/ui/Button';
 import api from '@/lib/api/client';
-import { useAuthStore } from '@/stores/authStore';
+import { useAuthStore, useViewOnly } from '@/stores/authStore';
 import { useTradingStore, type TradingAccount, type AccountGroupInfo } from '@/stores/tradingStore';
 import {
   getPersistedTradingAccountId,
@@ -540,6 +540,16 @@ export default function AccountsPage() {
           </div>
         </div>
       </Modal>
+      {viewOnly && (
+        <div className="mb-4 flex items-start gap-2.5 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3">
+          <span className="text-base leading-none mt-0.5" aria-hidden>👁️</span>
+          <p className="text-xs sm:text-sm text-amber-200/90 leading-relaxed">
+            <span className="font-semibold text-amber-300">Investor (view-only) mode.</span>{' '}
+            You can view this account and its trading, but you cannot place trades, deposit / withdraw, or make any account changes.
+          </p>
+        </div>
+      )}
+
       {/* Accounts / Internal Transfer — full-width edge-to-edge, straight top line
           meeting the sidebar's right border; only the active-tab indicator curves. */}
       <div className="relative -mx-4 md:-mx-6 -mt-4 md:-mt-6 mb-8">
@@ -1350,6 +1360,7 @@ function AccountCard({
   const [open, setOpen] = useState(initialExpanded);
   const [aliasDraft, setAliasDraft] = useState('');
   const [editingAlias, setEditingAlias] = useState(false);
+  const viewOnly = useViewOnly();
   const [closeModal, setCloseModal] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -1579,6 +1590,7 @@ function AccountCard({
                   Trade
                   <ExternalLink size={14} />
                 </Link>
+                {!viewOnly && (
                 <button
                   type="button"
                   onClick={(e) => { e.stopPropagation(); setCloseModal(true); }}
@@ -1587,6 +1599,7 @@ function AccountCard({
                   <Trash2 size={14} />
                   Close Account
                 </button>
+                )}
               </>
             ) : (
               <>
@@ -1606,6 +1619,7 @@ function AccountCard({
                   Trade
                   <ExternalLink size={13} />
                 </Link>
+                {!viewOnly && (
                 <button
                   type="button"
                   onClick={() => setCloseModal(true)}
@@ -1614,6 +1628,7 @@ function AccountCard({
                   <Trash2 size={14} />
                   Close Account
                 </button>
+                )}
               </>
             )}
           </div>
