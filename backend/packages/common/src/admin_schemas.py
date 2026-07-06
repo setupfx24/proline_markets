@@ -300,6 +300,11 @@ class BankAccountIn(BaseModel):
     ifsc_code: Optional[str] = None
     upi_id: Optional[str] = None
     qr_code_url: Optional[str] = None
+    # Crypto pay-to (manual USDT-style). method_type = 'bank' | 'crypto'.
+    method_type: str = "bank"
+    asset: Optional[str] = None
+    network: Optional[str] = None
+    wallet_address: Optional[str] = None
     tier: int = 1
     min_amount: float = 0
     max_amount: float = 999999999
@@ -315,6 +320,10 @@ class BankAccountOut(BaseModel):
     ifsc_code: Optional[str] = None
     upi_id: Optional[str] = None
     qr_code_url: Optional[str] = None
+    method_type: Optional[str] = "bank"
+    asset: Optional[str] = None
+    network: Optional[str] = None
+    wallet_address: Optional[str] = None
     tier: int
     min_amount: float
     max_amount: float

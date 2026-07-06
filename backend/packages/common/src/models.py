@@ -367,6 +367,11 @@ class BankAccount(Base):
     ifsc_code = Column(String(20))
     upi_id = Column(String(100))
     qr_code_url = Column(Text)
+    # Crypto (manual USDT-style) pay-to method. method_type = 'bank' | 'crypto'.
+    method_type = Column(String(10), default="bank", server_default="bank")
+    asset = Column(String(20))          # e.g. USDT
+    network = Column(String(30))        # e.g. TRC20
+    wallet_address = Column(Text)       # crypto deposit address
     tier = Column(Integer, default=1)
     min_amount = Column(Numeric(18, 2), default=0)
     max_amount = Column(Numeric(18, 2), default=999999999)

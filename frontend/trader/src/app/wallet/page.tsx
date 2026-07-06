@@ -121,7 +121,7 @@ function WalletPageContent() {
   const fundPanelRef = useRef<HTMLDivElement>(null);
 
   const [fundMainTab, setFundMainTab] = useState<'deposit' | 'withdraw'>('deposit');
-  const [depositUiSection, setDepositUiSection] = useState<'crypto' | 'manual'>('crypto');
+  const [depositUiSection, setDepositUiSection] = useState<'crypto' | 'usdt' | 'manual'>('crypto');
   const [withdrawUiSection, setWithdrawUiSection] = useState<'crypto' | 'bank'>('crypto');
   const [selectedCryptoDeposit, setSelectedCryptoDeposit] = useState<string>(CRYPTO_ASSETS[0].id);
   const [selectedCryptoWithdraw, setSelectedCryptoWithdraw] = useState<string>(CRYPTO_ASSETS[0].id);
@@ -131,6 +131,7 @@ function WalletPageContent() {
   const [depositTxId, setDepositTxId] = useState('');
   const [depositProofFile, setDepositProofFile] = useState<File | null>(null);
   const [manualBankInfo, setManualBankInfo] = useState<ManualBankDetailsResponse | null>(null);
+  const [cryptoInfo, setCryptoInfo] = useState<{ available: boolean; asset?: string; network?: string; wallet_address?: string; qr_code_url?: string } | null>(null);
   const [depositSubmitting, setDepositSubmitting] = useState(false);
 
   const [withdrawChannel, setWithdrawChannel] = useState<FundingChannel>('oxapay');
@@ -292,6 +293,15 @@ function WalletPageContent() {
     }
   }, [depositAmount]);
 
+  const loadCryptoDetails = useCallback(async () => {
+    try {
+      const d = await api.get<{ available: boolean; asset?: string; network?: string; wallet_address?: string; qr_code_url?: string }>('/wallet/deposit/crypto-details');
+      setCryptoInfo(d ?? null);
+    } catch {
+      setCryptoInfo(null);
+    }
+  }, []);
+
   const scrollToFundPanel = () => {
     requestAnimationFrame(() => {
       fundPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -331,6 +341,11 @@ function WalletPageContent() {
     if (fundMainTab !== 'deposit' || depositUiSection !== 'manual') return;
     void loadManualBankDetails();
   }, [fundMainTab, depositUiSection, loadManualBankDetails]);
+
+  useEffect(() => {
+    if (fundMainTab !== 'deposit' || depositUiSection !== 'usdt') return;
+    void loadCryptoDetails();
+  }, [fundMainTab, depositUiSection, loadCryptoDetails]);
 
   /** Open withdraw modal from main wallet (?action=withdraw); external payouts use main balance only. */
   useEffect(() => {
@@ -498,6 +513,7 @@ function WalletPageContent() {
       fd.append('amount', String(amt));
       fd.append('transaction_id', depositTxId.trim());
       fd.append('file', depositProofFile);
+      fd.append('method', depositUiSection === 'usdt' ? 'crypto_usdt' : 'manual');
       const token = api.getToken();
       const res = await fetch('/api/v1/wallet/deposit/manual', {
         method: 'POST',
@@ -897,7 +913,7 @@ function WalletPageContent() {
 
                   {/* Deposit Method Tabs */}
                   <div className="flex gap-2 border-b border-border-glass">
-                    {(['crypto', 'manual'] as const).map((method) => {
+                    {(['crypto', 'usdt', 'manual'] as const).map((method) => {
                       const active = depositUiSection === method;
                       return (
                         <button
@@ -905,13 +921,13 @@ function WalletPageContent() {
                           type="button"
                           onClick={() => setDepositUiSection(method)}
                           className={clsx(
-                            'px-4 py-2.5 text-sm font-semibold transition-all border-b-2',
+                            'px-3 sm:px-4 py-2.5 text-sm font-semibold transition-all border-b-2 whitespace-nowrap',
                             active
                               ? 'border-accent text-accent'
                               : 'border-transparent text-text-tertiary hover:text-text-primary'
                           )}
                         >
-                          {method === 'crypto' ? 'Crypto (OxaPay)' : 'Manual (Bank/UPI)'}
+                          {method === 'crypto' ? 'Crypto (OxaPay)' : method === 'usdt' ? 'USDT (TRC20)' : 'Manual (Bank/UPI)'}
                         </button>
                       );
                     })}
@@ -954,6 +970,125 @@ function WalletPageContent() {
                         )}
                       >
                         {depositSubmitting ? 'Processing…' : 'Pay with Crypto'}
+                      </button>
+                    </>
+                  ) : depositUiSection === 'usdt' ? (
+                    <>
+                      {/* USDT (TRC20) manual crypto deposit */}
+                      <div className="space-y-1">
+                        <label className="text-xs text-text-secondary">Amount (USD)</label>
+                        <div className="relative">
+                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-text-tertiary font-bold">$</span>
+                          <input
+                            type="number"
+                            min="1"
+                            step="0.01"
+                            value={depositAmount}
+                            onChange={(e) => setDepositAmount(e.target.value)}
+                            placeholder="0.00"
+                            className="w-full pl-7 pr-4 py-3 rounded-xl border border-border-primary bg-bg-secondary text-text-primary placeholder:text-text-tertiary outline-none focus:border-accent/50 font-mono font-bold text-lg"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="rounded-xl border border-border-primary bg-bg-secondary px-3 py-3 sm:px-4 space-y-3 min-w-0">
+                        <p className="text-xs font-bold text-text-primary">
+                          Send {cryptoInfo?.asset || 'USDT'} on {cryptoInfo?.network || 'TRC20'} to this address
+                        </p>
+                        {cryptoInfo?.available && cryptoInfo.wallet_address ? (
+                          <>
+                            <div className="flex items-center gap-2 min-w-0">
+                              <code className="flex-1 min-w-0 break-all text-[11px] sm:text-xs font-mono text-text-secondary bg-bg-base border border-border-primary rounded-lg px-2 py-2">
+                                {cryptoInfo.wallet_address}
+                              </code>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  navigator.clipboard.writeText(cryptoInfo.wallet_address || '')
+                                    .then(() => toast.success('Address copied'))
+                                    .catch(() => toast.error('Copy failed'));
+                                }}
+                                className="shrink-0 px-2.5 py-2 rounded-lg text-xs font-semibold text-accent border border-accent/30 hover:bg-accent/10"
+                              >
+                                Copy
+                              </button>
+                            </div>
+                            {cryptoInfo.qr_code_url ? (
+                              <div className="pt-1 flex justify-center">
+                                <img
+                                  src={cryptoInfo.qr_code_url}
+                                  alt="USDT deposit QR"
+                                  className="w-full max-w-[220px] max-h-52 object-contain rounded-lg border border-border-primary bg-white p-2"
+                                />
+                              </div>
+                            ) : null}
+                            <p className="text-[10px] text-amber-500/90 leading-relaxed">
+                              Send only {cryptoInfo.asset || 'USDT'} over the {cryptoInfo.network || 'TRC20'} network. Sending any other asset or network may cause permanent loss.
+                            </p>
+                          </>
+                        ) : (
+                          <p className="text-[11px] text-amber-500/90">
+                            No crypto deposit address configured yet. Please contact support.
+                          </p>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => void loadCryptoDetails()}
+                          className="text-[10px] font-semibold text-[#22c55e] hover:underline"
+                        >
+                          Refresh address
+                        </button>
+                      </div>
+
+                      <div className="space-y-1 min-w-0">
+                        <label className="text-xs text-text-secondary">
+                          Transaction hash (TxID) <span className="text-red-400">*</span>
+                        </label>
+                        <input
+                          type="text"
+                          value={depositTxId}
+                          onChange={(e) => setDepositTxId(e.target.value)}
+                          placeholder="Paste the TRC20 transaction hash"
+                          className="w-full px-4 py-3 rounded-xl border border-border-primary bg-bg-secondary text-text-primary placeholder:text-text-tertiary outline-none focus:border-accent/50 font-mono text-sm"
+                        />
+                      </div>
+
+                      <div className="space-y-1 min-w-0">
+                        <label className="text-xs text-text-secondary">
+                          Payment screenshot <span className="text-red-400">*</span>
+                        </label>
+                        <label
+                          className={clsx(
+                            'flex flex-col items-center justify-center w-full min-w-0 py-5 sm:py-6 px-2 rounded-xl border-2 border-dashed cursor-pointer transition-all',
+                            depositProofFile ? 'border-accent/40 bg-accent/5' : 'border-border-primary hover:border-accent/30',
+                          )}
+                        >
+                          <input
+                            type="file"
+                            accept=".jpg,.jpeg,.png,.pdf,.webp"
+                            className="hidden"
+                            onChange={(e) => setDepositProofFile(e.target.files?.[0] ?? null)}
+                          />
+                          {depositProofFile ? (
+                            <span className="text-sm font-medium text-[#22c55e] px-2 text-center">{depositProofFile.name}</span>
+                          ) : (
+                            <span className="text-xs text-[#666]">JPG, PNG, PDF, WEBP — max 10 MB</span>
+                          )}
+                        </label>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => void submitDeposit()}
+                        disabled={demoFundingBlocked || depositSubmitting || !depositAmount || !depositTxId.trim() || !depositProofFile}
+                        className={clsx(
+                          'w-full py-3.5 rounded-xl font-bold text-base transition-all active:scale-[0.99]',
+                          (demoFundingBlocked || depositSubmitting || !depositAmount || !depositTxId.trim() || !depositProofFile)
+                            ? 'bg-bg-hover text-text-tertiary cursor-not-allowed'
+                            : 'bg-accent text-white hover:bg-[#5cffb8] shadow-neon-green-lg',
+                        )}
+                      >
+                        {depositSubmitting ? 'Submitting…' : 'Submit USDT deposit'}
                       </button>
                     </>
                   ) : (

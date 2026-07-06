@@ -31,6 +31,10 @@ async def list_bank_accounts(db: AsyncSession) -> list:
             ifsc_code=b.ifsc_code,
             upi_id=b.upi_id,
             qr_code_url=b.qr_code_url,
+            method_type=b.method_type or "bank",
+            asset=b.asset,
+            network=b.network,
+            wallet_address=b.wallet_address,
             tier=b.tier or 1,
             min_amount=float(b.min_amount or 0),
             max_amount=float(b.max_amount or 999999999),
@@ -56,6 +60,10 @@ async def create_bank_account(
         ifsc_code=body.ifsc_code,
         upi_id=body.upi_id,
         qr_code_url=body.qr_code_url,
+        method_type=body.method_type or "bank",
+        asset=body.asset,
+        network=body.network,
+        wallet_address=body.wallet_address,
         tier=body.tier,
         min_amount=body.min_amount,
         max_amount=body.max_amount,
@@ -94,6 +102,10 @@ async def update_bank_account(
     bank.ifsc_code = body.ifsc_code
     bank.upi_id = body.upi_id
     bank.qr_code_url = body.qr_code_url
+    bank.method_type = body.method_type or "bank"
+    bank.asset = body.asset
+    bank.network = body.network
+    bank.wallet_address = body.wallet_address
     bank.tier = body.tier
     bank.min_amount = body.min_amount
     bank.max_amount = body.max_amount

@@ -40,13 +40,24 @@ async def create_manual_deposit(
     amount: Decimal = Form(...),
     transaction_id: str = Form(...),
     file: UploadFile = File(...),
+    method: str = Form(default="manual"),
 ):
-    """Bank / UPI manual deposit: user pays admin bank (see bank-details), uploads proof + reference."""
+    """Manual deposit with proof: 'manual' = bank/UPI (see /deposit/bank-details),
+    'crypto_usdt' = crypto (see /deposit/crypto-details); transaction_id is the tx hash."""
     return await wallet_service.create_manual_deposit(
         user_id=current_user["user_id"],
         account_id=account_id, amount=amount,
-        transaction_id=transaction_id, file=file, db=db,
+        transaction_id=transaction_id, file=file, db=db, method=method,
     )
+
+
+@router.get("/deposit/crypto-details")
+async def get_deposit_crypto_details(
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """The active admin-configured crypto (USDT TRC20) deposit wallet + QR."""
+    return await wallet_service.get_deposit_crypto_details(db=db)
 
 
 @router.post("/withdraw", status_code=201)

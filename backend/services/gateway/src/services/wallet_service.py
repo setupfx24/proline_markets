@@ -76,6 +76,7 @@ async def _get_bank_for_tier(amount: Decimal, db: AsyncSession) -> BankAccount |
     result = await db.execute(
         select(BankAccount).where(
             BankAccount.is_active == True,
+            BankAccount.method_type == "bank",
             BankAccount.min_amount <= amount,
             BankAccount.max_amount >= amount,
         ).order_by(BankAccount.last_used_at.asc().nullsfirst(), BankAccount.rotation_order)
@@ -84,6 +85,26 @@ async def _get_bank_for_tier(amount: Decimal, db: AsyncSession) -> BankAccount |
     if bank:
         bank.last_used_at = datetime.utcnow()
     return bank
+
+
+async def get_deposit_crypto_details(db: AsyncSession) -> dict:
+    """The active crypto (e.g. USDT TRC20) deposit wallet configured by admin."""
+    result = await db.execute(
+        select(BankAccount).where(
+            BankAccount.is_active == True,
+            BankAccount.method_type == "crypto",
+        ).order_by(BankAccount.rotation_order)
+    )
+    w = result.scalars().first()
+    if not w:
+        return {"available": False}
+    return {
+        "available": True,
+        "asset": w.asset or "USDT",
+        "network": w.network or "TRC20",
+        "wallet_address": (w.wallet_address or w.account_number or "").strip(),
+        "qr_code_url": w.qr_code_url,
+    }
 
 
 # ─── Deposits ─────────────────────────────────────────────────────────────
@@ -185,6 +206,7 @@ async def create_manual_deposit(
     transaction_id: str,
     file: UploadFile,
     db: AsyncSession,
+    method: str = "manual",
 ) -> dict:
     from packages.common.src.settings_store import get_bool_setting
     if not await get_bool_setting("allow_deposits", True):
@@ -193,9 +215,17 @@ async def create_manual_deposit(
     if amount <= 0:
         raise HTTPException(status_code=400, detail="Invalid amount")
 
+    # 'manual' = bank/UPI (needs a pay-to bank). 'crypto_*' = manual crypto (USDT etc.):
+    # the tx hash is the reference, no bank tier is attached.
+    method = (method or "manual").strip().lower()
+    is_crypto = method.startswith("crypto")
+    if not is_crypto:
+        method = "manual"
+
     tid = (transaction_id or "").strip()
     if not tid:
-        raise HTTPException(status_code=400, detail="Transaction / reference ID is required for manual deposits")
+        label = "Transaction hash" if is_crypto else "Transaction / reference ID"
+        raise HTTPException(status_code=400, detail=f"{label} is required for manual deposits")
 
     if account_id is not None:
         acct = await db.execute(
@@ -217,7 +247,7 @@ async def create_manual_deposit(
     if len(content) > MAX_PROOF_BYTES:
         raise HTTPException(status_code=400, detail="File too large (max 10 MB)")
 
-    bank = await _get_bank_for_tier(amount, db)
+    bank = None if is_crypto else await _get_bank_for_tier(amount, db)
     try:
         user_dir = safe_join_under_base(_wallet_upload_root(), "deposits", str(user_id))
     except PathTraversalError:
@@ -238,8 +268,9 @@ async def create_manual_deposit(
         user_id=user_id,
         account_id=account_id if account_id else None,
         amount=amount,
-        method="manual",
+        method=method,
         transaction_id=tid[:100],
+        crypto_tx_hash=tid[:255] if is_crypto else None,
         screenshot_url=str(out_path.resolve()),
         bank_account_id=bank.id if bank else None,
         status="pending",

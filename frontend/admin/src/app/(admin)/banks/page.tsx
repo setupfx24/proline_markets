@@ -25,6 +25,10 @@ interface Bank {
   upi_id: string;
   qr_code_url: string;
   is_active: boolean;
+  method_type?: string;   // 'bank' | 'crypto'
+  asset?: string;         // e.g. USDT
+  network?: string;       // e.g. TRC20
+  wallet_address?: string;
 }
 
 type BankForm = Omit<Bank, 'id'>;
@@ -37,6 +41,10 @@ const emptyForm: BankForm = {
   upi_id: '',
   qr_code_url: '',
   is_active: true,
+  method_type: 'bank',
+  asset: 'USDT',
+  network: 'TRC20',
+  wallet_address: '',
 };
 
 export default function BanksPage() {
@@ -90,6 +98,10 @@ export default function BanksPage() {
       upi_id: bank.upi_id,
       qr_code_url: bank.qr_code_url,
       is_active: bank.is_active,
+      method_type: bank.method_type || 'bank',
+      asset: bank.asset || 'USDT',
+      network: bank.network || 'TRC20',
+      wallet_address: bank.wallet_address || '',
     });
     setShowModal(true);
   };
@@ -101,18 +113,28 @@ export default function BanksPage() {
   };
 
   const handleSave = async () => {
-    if (!form.bank_name.trim() || !form.account_holder.trim() || !form.account_number.trim()) {
+    const isCrypto = form.method_type === 'crypto';
+    if (isCrypto) {
+      if (!(form.wallet_address || '').trim()) {
+        toast.error('Wallet address is required for a crypto method');
+        return;
+      }
+    } else if (!form.bank_name.trim() || !form.account_holder.trim() || !form.account_number.trim()) {
       toast.error('Bank name, account holder, and account number are required');
       return;
     }
 
     const payload = {
+      method_type: form.method_type || 'bank',
       account_name: form.account_holder,
       account_number: form.account_number,
       bank_name: form.bank_name,
       ifsc_code: form.ifsc_code,
       upi_id: form.upi_id,
       qr_code_url: form.qr_code_url,
+      asset: form.asset,
+      network: form.network,
+      wallet_address: form.wallet_address,
       is_active: form.is_active,
     };
 
@@ -349,28 +371,48 @@ export default function BanksPage() {
             </div>
 
             <div className="p-4 space-y-3">
+              {/* Method type: Bank/UPI vs Crypto */}
+              <div>
+                <label className="block text-xxs text-text-tertiary mb-1">Type</label>
+                <div className="flex gap-2">
+                  {(['bank', 'crypto'] as const).map((t) => (
+                    <button
+                      key={t}
+                      type="button"
+                      onClick={() => updateField('method_type', t)}
+                      className={cn(
+                        'flex-1 px-3 py-2 rounded-md text-xs font-medium border transition-fast',
+                        (form.method_type || 'bank') === t
+                          ? 'bg-buy/15 text-buy border-buy/30'
+                          : 'border-border-primary text-text-secondary hover:bg-bg-hover',
+                      )}
+                    >
+                      {t === 'bank' ? 'Bank / UPI' : 'Crypto (USDT)'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               {(
-                [
-                  { key: 'bank_name', label: 'Bank Name', placeholder: 'e.g. HDFC Bank' },
-                  {
-                    key: 'account_holder',
-                    label: 'Account Holder',
-                    placeholder: 'e.g. ProlineMarkets Pvt Ltd',
-                  },
-                  {
-                    key: 'account_number',
-                    label: 'Account Number',
-                    placeholder: 'e.g. 1234567890',
-                  },
-                  { key: 'ifsc_code', label: 'IFSC Code', placeholder: 'e.g. HDFC0001234' },
-                  { key: 'upi_id', label: 'UPI ID', placeholder: 'e.g. merchant@upi' },
-                ] as const
+                form.method_type === 'crypto'
+                  ? ([
+                      { key: 'asset', label: 'Asset', placeholder: 'e.g. USDT' },
+                      { key: 'network', label: 'Network', placeholder: 'e.g. TRC20' },
+                      { key: 'wallet_address', label: 'Wallet Address', placeholder: 'e.g. TXYZ...' },
+                    ] as const)
+                  : ([
+                      { key: 'bank_name', label: 'Bank Name', placeholder: 'e.g. HDFC Bank' },
+                      { key: 'account_holder', label: 'Account Holder', placeholder: 'e.g. ProlineMarkets Pvt Ltd' },
+                      { key: 'account_number', label: 'Account Number', placeholder: 'e.g. 1234567890' },
+                      { key: 'ifsc_code', label: 'IFSC Code', placeholder: 'e.g. HDFC0001234' },
+                      { key: 'upi_id', label: 'UPI ID', placeholder: 'e.g. merchant@upi' },
+                    ] as const)
               ).map((f) => (
                 <div key={f.key}>
                   <label className="block text-xxs text-text-tertiary mb-1">{f.label}</label>
                   <input
                     type="text"
-                    value={form[f.key] as string}
+                    value={(form[f.key] as string) || ''}
                     onChange={(e) => updateField(f.key, e.target.value)}
                     placeholder={f.placeholder}
                     className="w-full px-3 py-2 text-xs bg-bg-input border border-border-primary rounded-md placeholder:text-text-tertiary transition-fast focus:border-buy"
