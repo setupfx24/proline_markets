@@ -51,6 +51,7 @@ function OpenAccountCta({
 export default function TradingAccountPickerPage() {
   const router = useRouter();
   const user = useAuthStore((s) => s.user);
+  const viewOnly = user?.role === 'investor';
   const accounts = useTradingStore((s) => s.accounts);
   const removeAccount = useTradingStore((s) => s.removeAccount);
   const [accountToDelete, setAccountToDelete] = useState<TradingAccount | null>(null);
@@ -109,7 +110,7 @@ export default function TradingAccountPickerPage() {
             </p>
             {!isDemoUser ? (
               <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-1">
-                <OpenAccountCta href="/trading/open-account" label="Open account" />
+                {!viewOnly && <OpenAccountCta href="/trading/open-account" label="Open account" />}
               </div>
             ) : (
               <Link
@@ -205,7 +206,7 @@ export default function TradingAccountPickerPage() {
                     </div>
                     <div className="w-full flex flex-col gap-3 border-t border-border-glass/60 pt-4">
                       <div className="flex flex-wrap gap-2">
-                        {!a.is_demo ? (
+                        {!a.is_demo && !viewOnly ? (
                           <>
                             <Link
                               href={`/wallet?account=${encodeURIComponent(a.id)}`}
@@ -239,7 +240,7 @@ export default function TradingAccountPickerPage() {
           </ul>
         )}
 
-        {visibleAccounts.length > 0 && !isDemoUser ? (
+        {visibleAccounts.length > 0 && !isDemoUser && !viewOnly ? (
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pt-2 border-t border-border-glass">
             <OpenAccountCta href="/trading/open-account" label="Open another account" className="w-full sm:w-auto" />
             <Link

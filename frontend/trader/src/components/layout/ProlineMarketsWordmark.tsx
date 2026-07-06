@@ -45,8 +45,8 @@ export function ProlineMarketsWordmark({
           textClassName,
         )}
       >
-        <span className="text-text-primary">Trust</span>
-        <span className="text-[#22c55e]">Edge</span>
+        <span className="text-text-primary">Proline</span>
+        <span className="text-[#22c55e]">Markets</span>
       </span>
     </span>
   );
