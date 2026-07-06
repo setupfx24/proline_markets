@@ -121,7 +121,9 @@ function WalletPageContent() {
   const fundPanelRef = useRef<HTMLDivElement>(null);
 
   const [fundMainTab, setFundMainTab] = useState<'deposit' | 'withdraw'>('deposit');
-  const [depositUiSection, setDepositUiSection] = useState<'crypto' | 'usdt' | 'manual'>('crypto');
+  // Only USDT (TRC20) manual deposit is offered. Kept as a union for the
+  // submit/method logic, but the UI no longer switches methods.
+  const [depositUiSection, setDepositUiSection] = useState<'crypto' | 'usdt' | 'manual'>('usdt');
   const [withdrawUiSection, setWithdrawUiSection] = useState<'crypto' | 'bank'>('crypto');
   const [selectedCryptoDeposit, setSelectedCryptoDeposit] = useState<string>(CRYPTO_ASSETS[0].id);
   const [selectedCryptoWithdraw, setSelectedCryptoWithdraw] = useState<string>(CRYPTO_ASSETS[0].id);
@@ -316,7 +318,7 @@ function WalletPageContent() {
     setDepositAmount('');
     setDepositTxId('');
     setDepositProofFile(null);
-    setDepositUiSection('crypto');
+    setDepositUiSection('usdt');
     setManualBankInfo(null);
     setFundMainTab('deposit');
     scrollToFundPanel();
@@ -911,26 +913,9 @@ function WalletPageContent() {
                     </button>
                   </div>
 
-                  {/* Deposit Method Tabs */}
-                  <div className="flex gap-2 border-b border-border-glass">
-                    {(['crypto', 'usdt', 'manual'] as const).map((method) => {
-                      const active = depositUiSection === method;
-                      return (
-                        <button
-                          key={method}
-                          type="button"
-                          onClick={() => setDepositUiSection(method)}
-                          className={clsx(
-                            'px-3 sm:px-4 py-2.5 text-sm font-semibold transition-all border-b-2 whitespace-nowrap',
-                            active
-                              ? 'border-accent text-accent'
-                              : 'border-transparent text-text-tertiary hover:text-text-primary'
-                          )}
-                        >
-                          {method === 'crypto' ? 'Crypto (OxaPay)' : method === 'usdt' ? 'USDT (TRC20)' : 'Manual (Bank/UPI)'}
-                        </button>
-                      );
-                    })}
+                  {/* Deposit method: USDT (TRC20) only */}
+                  <div className="flex items-center gap-2 border-b border-border-glass pb-2.5">
+                    <span className="px-1 text-sm font-semibold text-accent border-b-2 border-accent -mb-2.5 pb-2.5">USDT (TRC20)</span>
                   </div>
 
                   {depositUiSection === 'crypto' ? (
