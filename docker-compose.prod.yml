@@ -48,6 +48,9 @@ services:
   risk-engine:
     restart: always
 
+  metaapi-worker:
+    restart: always
+
   # ── Frontends — build with production domain + restart ──────
   trader-frontend:
     build:

@@ -269,7 +269,7 @@ function TerminalPositionStaticCard({
         POSITION ID: {pos.id}
       </p>
 
-      {!useViewOnly() && (
+      {!useViewOnly() && pos.trade_type !== 'mt5_trade' && (
       <div className="px-2.5 pb-2 pt-0.5 flex flex-col gap-1.5 border-t border-border-primary">
         <button
           type="button"
@@ -993,8 +993,8 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
                             <div className="flex items-center gap-2">
                               <span className="text-sm font-bold text-text-primary">{pos.symbol}</span>
                               <span className={clsx('text-[10px] font-bold uppercase', pos.side === 'buy' ? 'text-buy' : 'text-sell')}>{pos.side}</span>
-                              <span className={clsx('text-[10px] px-1.5 py-0.5 rounded-sm font-medium', pos.trade_type === 'copy_trade' ? 'bg-info/15 text-info' : 'bg-success/15 text-success')}>
-                                {pos.trade_type === 'copy_trade' ? 'Copy' : 'Real'}
+                              <span className={clsx('text-[10px] px-1.5 py-0.5 rounded-sm font-medium', pos.trade_type === 'copy_trade' ? 'bg-info/15 text-info' : pos.trade_type === 'mt5_trade' ? 'bg-amber-500/15 text-amber-400' : 'bg-success/15 text-success')}>
+                                {pos.trade_type === 'copy_trade' ? 'Copy' : pos.trade_type === 'mt5_trade' ? 'MT5' : pos.trade_type === 'algo_trade' ? 'Algo' : 'Real'}
                               </span>
                             </div>
                             <span className="font-mono text-sm font-bold tabular-nums" style={{ color: net >= 0 ? '#2962FF' : '#FF2440' }}>
@@ -1038,9 +1038,9 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
                               >
                                 <Share2 className="w-4 h-4" />
                               </button>
-                              {pos.trade_type === 'copy_trade' ? (
-                                <span className="px-2 py-1.5 rounded-lg text-[10px] font-bold uppercase bg-info/15 text-info border border-info/30" title="MAM trade — only master can close">
-                                  MAM
+                              {pos.trade_type === 'copy_trade' || pos.trade_type === 'mt5_trade' ? (
+                                <span className="px-2 py-1.5 rounded-lg text-[10px] font-bold uppercase bg-info/15 text-info border border-info/30" title={pos.trade_type === 'mt5_trade' ? 'MT5 trade — manage in MT5' : 'MAM trade — only master can close'}>
+                                  {pos.trade_type === 'mt5_trade' ? 'MT5' : 'MAM'}
                                 </span>
                               ) : (
                                 <button type="button" onClick={() => setCloseModal({ id: pos.id, symbol: pos.symbol, side: pos.side, lots: pos.lots, closeLots: String(pos.lots) })} className="px-3 py-1.5 rounded-lg text-[11px] font-bold uppercase bg-sell/15 text-sell border border-sell/30 active:bg-sell/25">
@@ -1084,8 +1084,8 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
                             <td className={td}>{accountLabel(pos.account_id)}</td>
                             <td className={clsx(td, 'font-bold')}>{pos.symbol}</td>
                             <td className={td}>
-                              <span className={clsx('text-[10px] px-1.5 py-0.5 rounded-sm font-medium', pos.trade_type === 'copy_trade' ? 'bg-info/15 text-info' : 'bg-success/15 text-success')}>
-                                {pos.trade_type === 'copy_trade' ? 'Copy' : 'Real'}
+                              <span className={clsx('text-[10px] px-1.5 py-0.5 rounded-sm font-medium', pos.trade_type === 'copy_trade' ? 'bg-info/15 text-info' : pos.trade_type === 'mt5_trade' ? 'bg-amber-500/15 text-amber-400' : 'bg-success/15 text-success')}>
+                                {pos.trade_type === 'copy_trade' ? 'Copy' : pos.trade_type === 'mt5_trade' ? 'MT5' : pos.trade_type === 'algo_trade' ? 'Algo' : 'Real'}
                               </span>
                             </td>
                             <td className={td}>
@@ -1179,12 +1179,12 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
                                 >
                                   <Share2 className="w-3.5 h-3.5" />
                                 </button>
-                                {pos.trade_type === 'copy_trade' ? (
+                                {pos.trade_type === 'copy_trade' || pos.trade_type === 'mt5_trade' ? (
                                   <span
                                     className="px-2 py-1 rounded-md text-[9px] font-bold uppercase bg-info/15 text-info border border-info/30"
-                                    title="MAM trade — only master can close"
+                                    title={pos.trade_type === 'mt5_trade' ? 'MT5 trade — manage in MT5' : 'MAM trade — only master can close'}
                                   >
-                                    MAM
+                                    {pos.trade_type === 'mt5_trade' ? 'MT5' : 'MAM'}
                                   </span>
                                 ) : (
                                   <button

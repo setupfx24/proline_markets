@@ -343,6 +343,9 @@ class Position(Base):
     swap = Column(Numeric(18, 8), default=0)
     commission = Column(Numeric(18, 8), default=0)
     profit = Column(Numeric(18, 8), default=0)
+    # For externally-mirrored positions (e.g. MT5 via MetaApi): the broker's own
+    # current price, shown as-is instead of the platform's Redis-tick recompute.
+    external_price = Column(Numeric(18, 8))
     closed_at = Column(DateTime(timezone=True))
     comment = Column(Text)
     is_admin_modified = Column(Boolean, default=False)

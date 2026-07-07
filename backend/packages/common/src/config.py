@@ -81,6 +81,15 @@ class Settings(BaseSettings):
     CORECEN_BROKER_API_KEY: str = ""       # ck_... from Corecen broker API keys
     CORECEN_BROKER_API_SECRET: str = ""    # cs_... from Corecen broker API keys
 
+    # MetaApi (MT5 mirror). When enabled, the metaapi-worker streams one MetaApi
+    # account's live open positions + balance into the platform (read-only mirror)
+    # for the platform trading account whose account_number matches below.
+    METAAPI_ENABLED: bool = False
+    METAAPI_TOKEN: str = ""                        # MetaApi JWT (secret)
+    METAAPI_ACCOUNT_ID: str = ""                   # MetaApi provisioned MT5 account id
+    METAAPI_PLATFORM_ACCOUNT_NUMBER: str = ""      # platform account_number to mirror into
+    METAAPI_REGION: str = ""                       # optional: MetaApi region (e.g. new-york)
+
     MARGIN_CALL_LEVEL: float = 80.0
     STOP_OUT_LEVEL: float = 50.0
     MAX_OPEN_TRADES: int = 200
