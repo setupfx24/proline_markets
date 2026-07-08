@@ -74,13 +74,10 @@ async def create_notification(
             res = await db.execute(select(User.email).where(User.id == user_id))
             addr = res.scalar_one_or_none()
             if addr:
-                html = (
-                    '<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;">'
-                    f'<h2 style="color:#16a34a;">{title}</h2>'
-                    f'<p style="font-size:15px;color:#222;">{message}</p>'
-                    '<p style="color:#888;font-size:13px;">Log in to your Proline Markets account for details.</p>'
-                    '</div>'
-                )
+                html = brand_email(title, (
+                    f'<p style="font-size:15px;color:#374151;line-height:1.6;">{message}</p>'
+                    '<p style="color:#9ca3af;font-size:13px;">Log in to your Proline Markets account for details.</p>'
+                ))
                 await send_email(addr, f"Proline Markets — {title}", html, message)
         except Exception:
             logger.exception("notification email failed for user %s", user_id)
@@ -91,6 +88,28 @@ async def create_notification(
 # ============================================
 # Email Notifications (SMTP via aiosmtplib)
 # ============================================
+
+# Absolute URL — email clients can't load app-relative assets.
+BRAND_LOGO_URL = "https://prolinemarket.com/images/logo1.png"
+
+
+def brand_email(heading: str, inner_html: str) -> str:
+    """Wrap email body in the branded Proline Markets template (logo header + footer)."""
+    return (
+        '<div style="background:#f4f6f8;padding:24px 0;font-family:Arial,Helvetica,sans-serif;">'
+        '<div style="max-width:560px;margin:0 auto;background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e5e7eb;">'
+        '<div style="background:#0a0a0a;padding:18px 24px;text-align:center;">'
+        f'<img src="{BRAND_LOGO_URL}" alt="Proline Markets" style="height:32px;max-height:32px;object-fit:contain;" />'
+        '</div>'
+        '<div style="padding:28px 24px;color:#111827;">'
+        f'<h2 style="color:#16a34a;margin:0 0 14px;font-size:20px;">{heading}</h2>'
+        f'{inner_html}'
+        '</div>'
+        '<div style="padding:14px 24px;background:#f9fafb;border-top:1px solid #eee;color:#9ca3af;font-size:12px;text-align:center;">'
+        '© Proline Markets · Automated message, please do not reply.'
+        '</div></div></div>'
+    )
+
 
 async def send_email(
     to: str,
@@ -149,6 +168,29 @@ async def send_email(
 # ============================================
 # Pre-built email templates
 # ============================================
+
+async def send_welcome_email(to: str, login_email: str, password: str | None = None) -> bool:
+    """New-account welcome email — shows the login credentials (id + password)."""
+    creds = ""
+    if password:
+        creds = (
+            '<div style="margin:16px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;">'
+            '<p style="margin:0 0 8px;font-size:13px;color:#166534;font-weight:bold;">Your login credentials</p>'
+            f'<p style="margin:2px 0;font-size:14px;color:#111;">Login ID: <strong>{login_email}</strong></p>'
+            f'<p style="margin:2px 0;font-size:14px;color:#111;">Password: <strong>{password}</strong></p>'
+            '</div>'
+            '<p style="color:#9ca3af;font-size:12px;">For your security, change your password after your first login.</p>'
+        )
+    inner = (
+        '<p style="font-size:15px;color:#374151;line-height:1.6;">Your Proline Markets account has been created successfully. '
+        'Open a trading account and complete KYC to start trading.</p>'
+        f'{creds}'
+        '<p style="margin-top:18px;"><a href="https://prolinemarket.com/auth/login" '
+        'style="display:inline-block;padding:11px 22px;background:#16a34a;color:#fff;text-decoration:none;border-radius:8px;font-weight:bold;">Log in to your account</a></p>'
+    )
+    text = f"Welcome to Proline Markets. Login ID: {login_email}" + (f" | Password: {password}" if password else "")
+    return await send_email(to, "Welcome to Proline Markets", brand_email("Welcome to Proline Markets", inner), text)
+
 
 async def send_password_reset_email(to: str, reset_url: str) -> bool:
     subject = "Proline Markets — Password Reset Request"

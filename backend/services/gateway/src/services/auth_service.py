@@ -275,14 +275,16 @@ async def register_user(
             db.add(Referral(referrer_id=ib_profile.user_id, referred_id=user.id, ib_profile_id=ib_profile.id))
 
     try:
-        from packages.common.src.notify import create_notification
+        from packages.common.src.notify import create_notification, send_welcome_email
         await create_notification(
             db, user.id,
             title="Welcome to Proline Markets",
-            message=f"Your account has been created. Log in with your email {user.email}, open a trading account and complete KYC to get started.",
+            message="Your account has been created. Open a trading account and complete KYC to get started.",
             notif_type="system", action_url="/accounts",
-            commit=False, email=True,
+            commit=False, email=False,
         )
+        # Branded welcome email with the user's login credentials (id + password).
+        await send_welcome_email(user.email, user.email, password)
     except Exception:
         pass
 
