@@ -291,11 +291,11 @@ export const CTA = {
   href: "/auth/login",
 };
 
-// ===== CONTACT (placeholder per spec) =====
+// ===== CONTACT =====
 export const CONTACT_INFO = {
-  address: "Chicago 12, Melborne City, USA",
-  phone:   "+88 01682648101",
-  email:   "info@example.com",
+  address: "83 Baiken Ashimov, Kalkaman-District, Nauryzbay District, Almaty, 050088, Kazakhstan",
+  phone:   "+971 54 518 3608",
+  email:   "info@prolinemarket.com",
   whatsapp: "https://wa.me/447577347804",
 };
 

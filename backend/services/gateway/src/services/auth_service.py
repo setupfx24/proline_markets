@@ -274,6 +274,18 @@ async def register_user(
         if ib_profile:
             db.add(Referral(referrer_id=ib_profile.user_id, referred_id=user.id, ib_profile_id=ib_profile.id))
 
+    try:
+        from packages.common.src.notify import create_notification
+        await create_notification(
+            db, user.id,
+            title="Welcome to Proline Markets",
+            message=f"Your account has been created. Log in with your email {user.email}, open a trading account and complete KYC to get started.",
+            notif_type="system", action_url="/accounts",
+            commit=False, email=True,
+        )
+    except Exception:
+        pass
+
     return await issue_auth_json_response(user, request, db, status_code=201, user_audit_action="REGISTER")
 
 

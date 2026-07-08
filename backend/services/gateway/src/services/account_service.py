@@ -144,6 +144,18 @@ async def open_live_account(
     db.add(new_acc)
     await db.commit()
     await db.refresh(new_acc)
+    try:
+        from packages.common.src.notify import create_notification
+        await create_notification(
+            db, user_id,
+            title="Trading account opened",
+            message=f"Your new {group.name} trading account {new_acc.account_number} is ready. Log in to fund it and start trading.",
+            notif_type="system", action_url="/accounts",
+            commit=False, email=True,
+        )
+        await db.commit()
+    except Exception:
+        pass
     return {
         "id": str(new_acc.id),
         "account_number": new_acc.account_number,

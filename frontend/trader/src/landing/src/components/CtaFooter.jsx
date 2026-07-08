@@ -1,6 +1,6 @@
 import { motion } from "motion/react";
 import { Link } from "react-router-dom";
-import { ArrowUpRight, MessageCircle } from "lucide-react";
+import { ArrowUpRight, MessageCircle, MapPin } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { BlurText } from "@/components/BlurText";
 import {
@@ -11,6 +11,7 @@ import {
   FOOTER_COLUMNS,
   FOOTER_ASSISTANCE,
   FOOTER_ESTABLISHED,
+  CONTACT_INFO,
   EXTERNAL,
   BRAND,
 } from "@/lib/forexData";
@@ -126,6 +127,12 @@ export function CtaFooter() {
               <span className="font-body text-xs text-foreground/55 uppercase tracking-wide">
                 {FOOTER_ESTABLISHED}
               </span>
+              <div className="flex items-start gap-2 max-w-sm">
+                <MapPin className="size-4 text-primary shrink-0 mt-0.5" aria-hidden />
+                <span className="font-body text-xs text-foreground/60 leading-relaxed">
+                  {CONTACT_INFO.address}
+                </span>
+              </div>
             </div>
 
             {/* Link columns */}

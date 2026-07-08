@@ -218,6 +218,7 @@ async def approve_deposit(
         notif_type="deposit",
         action_url="/wallet",
         commit=False,
+        email=True,
     )
     await db.commit()
     return {"message": f"Deposit approved successfully{bonus_msg}"}
@@ -254,6 +255,7 @@ async def reject_deposit(
         notif_type="deposit",
         action_url="/wallet",
         commit=False,
+        email=True,
     )
     await db.commit()
     return {"message": "Deposit rejected"}
@@ -334,6 +336,7 @@ async def approve_withdrawal(
         notif_type="withdrawal",
         action_url="/wallet",
         commit=False,
+        email=True,
     )
     await db.commit()
     return {"message": "Withdrawal approved successfully"}
@@ -370,6 +373,7 @@ async def reject_withdrawal(
         notif_type="withdrawal",
         action_url="/wallet",
         commit=False,
+        email=True,
     )
     await db.commit()
     return {"message": "Withdrawal rejected"}

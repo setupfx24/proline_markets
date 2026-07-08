@@ -183,7 +183,7 @@ async def create_deposit(req, user_id: UUID, db: AsyncSession) -> dict:
             db, user_id,
             title="Deposit Submitted",
             message=f"${float(req.amount):,.2f} deposit via {req.method} is pending approval",
-            notif_type="deposit", action_url="/wallet",
+            notif_type="deposit", action_url="/wallet", email=True,
         )
         await db.commit()
     except Exception:
@@ -284,7 +284,7 @@ async def create_manual_deposit(
             db, user_id,
             title="Deposit Submitted",
             message=f"${float(amount):,.2f} manual deposit pending approval",
-            notif_type="deposit", action_url="/wallet",
+            notif_type="deposit", action_url="/wallet", email=True,
         )
         await db.commit()
     except Exception:
@@ -397,7 +397,7 @@ async def handle_oxapay_webhook(
             db, deposit.user_id,
             title="Deposit approved",
             message=f"Your deposit of ${float(deposit.amount):,.2f} was approved automatically.{bonus_msg}",
-            notif_type="deposit", action_url="/wallet",
+            notif_type="deposit", action_url="/wallet", email=True,
         )
 
     elif oxapay_status in ("expired", "failed"):
@@ -407,7 +407,7 @@ async def handle_oxapay_webhook(
             db, deposit.user_id,
             title="Deposit not completed",
             message=f"Your ${float(deposit.amount):,.2f} crypto deposit {oxapay_status}. Please try again.",
-            notif_type="deposit", action_url="/wallet",
+            notif_type="deposit", action_url="/wallet", email=True,
         )
 
     else:
@@ -460,7 +460,7 @@ async def create_withdrawal(req, user_id: UUID, db: AsyncSession) -> dict:
         db, user_id,
         title="Withdrawal Submitted",
         message=f"${float(req.amount):,.2f} withdrawal via {req.method} is pending approval",
-        notif_type="withdrawal", action_url="/wallet",
+        notif_type="withdrawal", action_url="/wallet", email=True,
     )
     await db.commit()
 
@@ -554,7 +554,7 @@ async def create_manual_withdrawal(
         db, user_id,
         title="Withdrawal Submitted",
         message=f"${float(amount):,.2f} manual withdrawal pending approval",
-        notif_type="withdrawal", action_url="/wallet",
+        notif_type="withdrawal", action_url="/wallet", email=True,
     )
     await db.commit()
 

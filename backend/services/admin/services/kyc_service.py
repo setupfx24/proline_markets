@@ -189,6 +189,7 @@ async def approve_kyc(
         notif_type="kyc",
         action_url="/profile",
         commit=False,
+        email=True,
     )
     await db.commit()
     return {"message": "KYC approved successfully"}
@@ -234,6 +235,7 @@ async def reject_kyc(
         notif_type="kyc",
         action_url="/profile",
         commit=False,
+        email=True,
     )
     await db.commit()
     return {"message": "KYC rejected"}

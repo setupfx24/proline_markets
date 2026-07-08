@@ -41,6 +41,7 @@ async def create_notification(
     notif_type: str = "info",
     action_url: str | None = None,
     commit: bool = True,
+    email: bool = False,
 ):
     n = Notification(
         user_id=user_id,
@@ -63,6 +64,26 @@ async def create_notification(
         }))
     except Exception:
         pass
+
+    # Optionally also email the user the same title/message. Used for important,
+    # low-frequency events (KYC, deposits, account opened) — never trade fills.
+    if email:
+        try:
+            from sqlalchemy import select
+            from .models import User
+            res = await db.execute(select(User.email).where(User.id == user_id))
+            addr = res.scalar_one_or_none()
+            if addr:
+                html = (
+                    '<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;">'
+                    f'<h2 style="color:#16a34a;">{title}</h2>'
+                    f'<p style="font-size:15px;color:#222;">{message}</p>'
+                    '<p style="color:#888;font-size:13px;">Log in to your Proline Markets account for details.</p>'
+                    '</div>'
+                )
+                await send_email(addr, f"Proline Markets — {title}", html, message)
+        except Exception:
+            logger.exception("notification email failed for user %s", user_id)
 
     return n
 
