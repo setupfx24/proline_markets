@@ -5,9 +5,7 @@ Email:  sends via SMTP (aiosmtplib) when SMTP_HOST is configured.
 """
 import json
 import logging
-import os
 import uuid
-from email.mime.image import MIMEImage
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from uuid import UUID
@@ -18,16 +16,6 @@ from .models import Notification
 from .redis_client import redis_client
 
 logger = logging.getLogger("notify")
-
-# Brand logo embedded inline (CID) so it always renders in email clients —
-# no external fetch, no proxy-cache broken image.
-_LOGO_PATH = os.path.join(os.path.dirname(__file__), "assets", "proline_logo.png")
-try:
-    with open(_LOGO_PATH, "rb") as _f:
-        _LOGO_BYTES = _f.read()
-except Exception:  # pragma: no cover - asset should ship with the package
-    _LOGO_BYTES = None
-    logger.warning("Brand logo asset not found at %s", _LOGO_PATH)
 
 TYPES = {
     "trade": "trade",
@@ -102,6 +90,11 @@ async def create_notification(
 # Email Notifications (SMTP via aiosmtplib)
 # ============================================
 
+# Hosted logo URL — referenced (not attached) so it renders inline in the body
+# without showing up as a downloadable attachment. ?v bumps bust proxy caches.
+BRAND_LOGO_URL = "https://prolinemarket.com/images/logo1.png?v=3"
+
+
 def brand_email(heading: str, inner_html: str) -> str:
     """Wrap email body in the branded Proline Markets template (logo header + footer)."""
     # Unique invisible marker so Gmail doesn't collapse the identical footer
@@ -111,7 +104,7 @@ def brand_email(heading: str, inner_html: str) -> str:
         '<div style="background:#f4f6f8;padding:24px 0;font-family:Arial,Helvetica,sans-serif;">'
         '<div style="max-width:560px;margin:0 auto;background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e5e7eb;">'
         '<div style="background:#15803d;background:linear-gradient(135deg,#16a34a 0%,#047857 55%,#065f46 100%);padding:22px 24px;text-align:center;">'
-        '<img src="cid:prolinelogo" alt="Proline Markets" width="160" '
+        f'<img src="{BRAND_LOGO_URL}" alt="Proline Markets" width="160" '
         'style="height:auto;max-width:160px;width:160px;display:inline-block;border:0;outline:none;text-decoration:none;" />'
         '</div>'
         '<div style="padding:28px 24px;color:#111827;">'
@@ -153,27 +146,14 @@ async def send_email(
     try:
         import aiosmtplib
 
-        alt = MIMEMultipart("alternative")
-        if body_text:
-            alt.attach(MIMEText(body_text, "plain"))
-        alt.attach(MIMEText(body_html, "html"))
-
-        # When the HTML references the inline logo (cid:prolinelogo) and the
-        # asset is available, wrap in multipart/related and embed the image so
-        # it always renders — no external fetch, no proxy-cache broken image.
-        if _LOGO_BYTES and "cid:prolinelogo" in body_html:
-            msg = MIMEMultipart("related")
-            msg.attach(alt)
-            img = MIMEImage(_LOGO_BYTES, _subtype="png")
-            img.add_header("Content-ID", "<prolinelogo>")
-            img.add_header("Content-Disposition", "inline", filename="proline_logo.png")
-            msg.attach(img)
-        else:
-            msg = alt
-
+        msg = MIMEMultipart("alternative")
         msg["From"] = settings.SMTP_FROM or settings.SMTP_USER
         msg["To"] = to
         msg["Subject"] = subject
+
+        if body_text:
+            msg.attach(MIMEText(body_text, "plain"))
+        msg.attach(MIMEText(body_html, "html"))
 
         await aiosmtplib.send(
             msg,
@@ -197,26 +177,28 @@ async def send_email(
 # ============================================
 
 async def send_welcome_email(to: str, login_email: str, password: str | None = None) -> bool:
-    """New-account welcome email — shows the login credentials (id + password)."""
-    creds = ""
+    """Congratulations email sent AFTER email verification — shows login details
+    (Login ID always; password only when the account was created for the user)."""
+    creds_rows = f'<p style="margin:2px 0;font-size:14px;color:#111;">Login ID: <strong>{login_email}</strong></p>'
     if password:
-        creds = (
-            '<div style="margin:16px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;">'
-            '<p style="margin:0 0 8px;font-size:13px;color:#166534;font-weight:bold;">Your login credentials</p>'
-            f'<p style="margin:2px 0;font-size:14px;color:#111;">Login ID: <strong>{login_email}</strong></p>'
-            f'<p style="margin:2px 0;font-size:14px;color:#111;">Password: <strong>{password}</strong></p>'
-            '</div>'
-            '<p style="color:#9ca3af;font-size:12px;">For your security, change your password after your first login.</p>'
-        )
+        creds_rows += f'<p style="margin:2px 0;font-size:14px;color:#111;">Password: <strong>{password}</strong></p>'
+    creds = (
+        '<div style="margin:16px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;">'
+        '<p style="margin:0 0 8px;font-size:13px;color:#166534;font-weight:bold;">Your login details</p>'
+        f'{creds_rows}'
+        '</div>'
+    )
+    if password:
+        creds += '<p style="color:#9ca3af;font-size:12px;">For your security, change your password after your first login.</p>'
     inner = (
-        '<p style="font-size:15px;color:#374151;line-height:1.6;">Your Proline Markets account has been created successfully. '
-        'Open a trading account and complete KYC to start trading.</p>'
+        '<p style="font-size:15px;color:#374151;line-height:1.6;">🎉 Congratulations! Your email has been verified and your '
+        'Proline Markets account is now active. Open a trading account and complete KYC to start trading.</p>'
         f'{creds}'
         '<p style="margin-top:18px;"><a href="https://prolinemarket.com/auth/login" '
         'style="display:inline-block;padding:11px 22px;background:#16a34a;color:#fff;text-decoration:none;border-radius:8px;font-weight:bold;">Log in to your account</a></p>'
     )
-    text = f"Welcome to Proline Markets. Login ID: {login_email}" + (f" | Password: {password}" if password else "")
-    return await send_email(to, "Welcome to Proline Markets", brand_email("Welcome to Proline Markets", inner), text)
+    text = f"Congratulations! Your Proline Markets account is active. Login ID: {login_email}" + (f" | Password: {password}" if password else "")
+    return await send_email(to, "Welcome to Proline Markets — Your account is active", brand_email("Welcome to Proline Markets", inner), text)
 
 
 async def send_verification_email(to: str, code: str) -> bool:

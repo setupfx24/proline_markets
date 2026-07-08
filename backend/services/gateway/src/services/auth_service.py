@@ -280,7 +280,7 @@ async def register_user(
     user.email_verification_code = code
     user.email_verification_expires = datetime.now(timezone.utc) + timedelta(minutes=15)
 
-    from packages.common.src.notify import create_notification, send_verification_email, send_welcome_email
+    from packages.common.src.notify import create_notification, send_verification_email
     try:
         await create_notification(
             db, user.id,
@@ -294,12 +294,12 @@ async def register_user(
 
     await db.commit()
 
+    # Step 1: only the verification email now. The congratulations/welcome email
+    # (with login details) is sent AFTER the user verifies — see verify_email().
     try:
         await send_verification_email(user.email, code)
-        # Branded welcome email with the user's login credentials (id + password).
-        await send_welcome_email(user.email, user.email, password)
     except Exception:
-        logger.exception("registration emails failed for %s", email)
+        logger.exception("verification email failed for %s", email)
 
     return JSONResponse(
         content={"verification_required": True, "email": user.email},
@@ -325,6 +325,15 @@ async def verify_email(email: str, code: str, request: Request, db: AsyncSession
     user.email_verified = True
     user.email_verification_code = None
     user.email_verification_expires = None
+
+    # Step 2: now that the email is verified, send the congratulations/welcome
+    # email with the user's login details (Login ID = email).
+    try:
+        from packages.common.src.notify import send_welcome_email
+        await send_welcome_email(user.email, user.email)
+    except Exception:
+        logger.exception("welcome email failed for %s", user.email)
+
     return await issue_auth_json_response(user, request, db, user_audit_action="LOGIN")
 
 
