@@ -206,22 +206,15 @@ async def send_verification_email(to: str, code: str) -> bool:
 
 
 async def send_password_reset_email(to: str, reset_url: str) -> bool:
-    subject = "Proline Markets — Password Reset Request"
-    html = f"""
-    <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;">
-        <h2 style="color:#1a73e8;">Password Reset</h2>
-        <p>You requested a password reset for your Proline Markets account.</p>
-        <p><a href="{reset_url}"
-              style="display:inline-block;padding:12px 24px;background:#1a73e8;
-                     color:#fff;text-decoration:none;border-radius:4px;">
-            Reset Password
-        </a></p>
-        <p style="color:#666;font-size:13px;">This link expires in 1 hour.
-           If you didn't request this, ignore this email.</p>
-    </div>
-    """
-    text = f"Reset your password: {reset_url}\nThis link expires in 1 hour."
-    return await send_email(to, subject, html, text)
+    inner = (
+        '<p style="font-size:15px;color:#374151;line-height:1.6;">You requested a password reset for your Proline Markets account. '
+        'Click the button below to choose a new password.</p>'
+        f'<p style="margin:18px 0;"><a href="{reset_url}" '
+        'style="display:inline-block;padding:11px 22px;background:#16a34a;color:#fff;text-decoration:none;border-radius:8px;font-weight:bold;">Reset Password</a></p>'
+        '<p style="color:#9ca3af;font-size:13px;">This link expires in 15 minutes. If you didn\'t request this, ignore this email.</p>'
+    )
+    text = f"Reset your password: {reset_url}\nThis link expires in 15 minutes."
+    return await send_email(to, "Proline Markets — Password Reset", brand_email("Password Reset", inner), text)
 
 
 async def send_deposit_confirmation_email(to: str, amount: str, currency: str, status: str) -> bool:

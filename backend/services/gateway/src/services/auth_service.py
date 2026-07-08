@@ -573,7 +573,8 @@ async def forgot_password(email: str, request: Request, db: AsyncSession) -> dic
     base = settings.TRADER_APP_URL.rstrip("/")
     link = f"{base}/auth/reset-password?token={raw}"
 
-    from packages.common.src.smtp_mail import send_password_reset_email, smtp_configured
+    from packages.common.src.smtp_mail import smtp_configured
+    from packages.common.src.notify import send_password_reset_email
     if smtp_configured():
         sent = await send_password_reset_email(user.email, link)
         if sent:
