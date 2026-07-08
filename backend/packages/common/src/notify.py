@@ -90,7 +90,9 @@ async def create_notification(
 # ============================================
 
 # Absolute URL — email clients can't load app-relative assets.
-BRAND_LOGO_URL = "https://prolinemarket.com/images/logo1.png"
+# ?v=2 cache-busts Gmail's image proxy (it had cached a broken fetch from a
+# past outage); bump this whenever the logo asset changes.
+BRAND_LOGO_URL = "https://prolinemarket.com/images/logo1.png?v=2"
 
 
 def brand_email(heading: str, inner_html: str) -> str:
@@ -98,8 +100,9 @@ def brand_email(heading: str, inner_html: str) -> str:
     return (
         '<div style="background:#f4f6f8;padding:24px 0;font-family:Arial,Helvetica,sans-serif;">'
         '<div style="max-width:560px;margin:0 auto;background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e5e7eb;">'
-        '<div style="background:#0a0a0a;padding:18px 24px;text-align:center;">'
-        f'<img src="{BRAND_LOGO_URL}" alt="Proline Markets" style="height:32px;max-height:32px;object-fit:contain;" />'
+        '<div style="background:#0a0a0a;padding:20px 24px;text-align:center;">'
+        f'<img src="{BRAND_LOGO_URL}" alt="Proline Markets" width="150" '
+        'style="height:auto;max-width:150px;width:150px;display:inline-block;border:0;outline:none;text-decoration:none;" />'
         '</div>'
         '<div style="padding:28px 24px;color:#111827;">'
         f'<h2 style="color:#16a34a;margin:0 0 14px;font-size:20px;">{heading}</h2>'
