@@ -5,6 +5,9 @@ Email:  sends via SMTP (aiosmtplib) when SMTP_HOST is configured.
 """
 import json
 import logging
+import os
+import uuid
+from email.mime.image import MIMEImage
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from uuid import UUID
@@ -15,6 +18,16 @@ from .models import Notification
 from .redis_client import redis_client
 
 logger = logging.getLogger("notify")
+
+# Brand logo embedded inline (CID) so it always renders in email clients —
+# no external fetch, no proxy-cache broken image.
+_LOGO_PATH = os.path.join(os.path.dirname(__file__), "assets", "proline_logo.png")
+try:
+    with open(_LOGO_PATH, "rb") as _f:
+        _LOGO_BYTES = _f.read()
+except Exception:  # pragma: no cover - asset should ship with the package
+    _LOGO_BYTES = None
+    logger.warning("Brand logo asset not found at %s", _LOGO_PATH)
 
 TYPES = {
     "trade": "trade",
@@ -89,20 +102,17 @@ async def create_notification(
 # Email Notifications (SMTP via aiosmtplib)
 # ============================================
 
-# Absolute URL — email clients can't load app-relative assets.
-# ?v=2 cache-busts Gmail's image proxy (it had cached a broken fetch from a
-# past outage); bump this whenever the logo asset changes.
-BRAND_LOGO_URL = "https://prolinemarket.com/images/logo1.png?v=2"
-
-
 def brand_email(heading: str, inner_html: str) -> str:
     """Wrap email body in the branded Proline Markets template (logo header + footer)."""
+    # Unique invisible marker so Gmail doesn't collapse the identical footer
+    # across messages into a "show trimmed content (…)" toggle.
+    marker = uuid.uuid4().hex
     return (
         '<div style="background:#f4f6f8;padding:24px 0;font-family:Arial,Helvetica,sans-serif;">'
         '<div style="max-width:560px;margin:0 auto;background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e5e7eb;">'
-        '<div style="background:#0a0a0a;padding:20px 24px;text-align:center;">'
-        f'<img src="{BRAND_LOGO_URL}" alt="Proline Markets" width="150" '
-        'style="height:auto;max-width:150px;width:150px;display:inline-block;border:0;outline:none;text-decoration:none;" />'
+        '<div style="background:#15803d;background:linear-gradient(135deg,#16a34a 0%,#047857 55%,#065f46 100%);padding:22px 24px;text-align:center;">'
+        '<img src="cid:prolinelogo" alt="Proline Markets" width="160" '
+        'style="height:auto;max-width:160px;width:160px;display:inline-block;border:0;outline:none;text-decoration:none;" />'
         '</div>'
         '<div style="padding:28px 24px;color:#111827;">'
         f'<h2 style="color:#16a34a;margin:0 0 14px;font-size:20px;">{heading}</h2>'
@@ -111,6 +121,7 @@ def brand_email(heading: str, inner_html: str) -> str:
         '<div style="padding:14px 24px;background:#f9fafb;border-top:1px solid #eee;color:#9ca3af;font-size:12px;text-align:center;">'
         '© Proline Markets · Automated message, please do not reply.'
         '</div></div></div>'
+        f'<span style="display:none;max-height:0;overflow:hidden;opacity:0;color:#f4f6f8;font-size:1px;line-height:0;">ref:{marker}</span>'
     )
 
 
@@ -142,14 +153,27 @@ async def send_email(
     try:
         import aiosmtplib
 
-        msg = MIMEMultipart("alternative")
+        alt = MIMEMultipart("alternative")
+        if body_text:
+            alt.attach(MIMEText(body_text, "plain"))
+        alt.attach(MIMEText(body_html, "html"))
+
+        # When the HTML references the inline logo (cid:prolinelogo) and the
+        # asset is available, wrap in multipart/related and embed the image so
+        # it always renders — no external fetch, no proxy-cache broken image.
+        if _LOGO_BYTES and "cid:prolinelogo" in body_html:
+            msg = MIMEMultipart("related")
+            msg.attach(alt)
+            img = MIMEImage(_LOGO_BYTES, _subtype="png")
+            img.add_header("Content-ID", "<prolinelogo>")
+            img.add_header("Content-Disposition", "inline", filename="proline_logo.png")
+            msg.attach(img)
+        else:
+            msg = alt
+
         msg["From"] = settings.SMTP_FROM or settings.SMTP_USER
         msg["To"] = to
         msg["Subject"] = subject
-
-        if body_text:
-            msg.attach(MIMEText(body_text, "plain"))
-        msg.attach(MIMEText(body_html, "html"))
 
         await aiosmtplib.send(
             msg,
