@@ -81,6 +81,9 @@ class User(Base):
     email_verified = Column(Boolean, default=True, server_default="true", nullable=False)
     email_verification_code = Column(String(6))
     email_verification_expires = Column(DateTime(timezone=True))
+    # Held only between registration and verification so the welcome email can
+    # include the login password; cleared immediately after that email is sent.
+    pending_welcome_password = Column(String(255))
     is_demo = Column(Boolean, default=False)
     two_factor_enabled = Column(Boolean, default=False)
     two_factor_secret = Column(String(255))

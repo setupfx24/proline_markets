@@ -279,6 +279,9 @@ async def register_user(
     code = f"{secrets.randbelow(1000000):06d}"
     user.email_verification_code = code
     user.email_verification_expires = datetime.now(timezone.utc) + timedelta(minutes=15)
+    # Keep the plaintext password only until verification, so the welcome email
+    # can show the login credentials; cleared as soon as that email is sent.
+    user.pending_welcome_password = password
 
     from packages.common.src.notify import create_notification, send_verification_email
     try:
@@ -327,10 +330,13 @@ async def verify_email(email: str, code: str, request: Request, db: AsyncSession
     user.email_verification_expires = None
 
     # Step 2: now that the email is verified, send the congratulations/welcome
-    # email with the user's login details (Login ID = email).
+    # email with the user's login details (Login ID + password), then drop the
+    # transient plaintext password.
+    welcome_pw = user.pending_welcome_password
+    user.pending_welcome_password = None
     try:
         from packages.common.src.notify import send_welcome_email
-        await send_welcome_email(user.email, user.email)
+        await send_welcome_email(user.email, user.email, welcome_pw)
     except Exception:
         logger.exception("welcome email failed for %s", user.email)
 

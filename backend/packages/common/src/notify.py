@@ -95,26 +95,40 @@ async def create_notification(
 BRAND_LOGO_URL = "https://prolinemarket.com/images/logo1.png?v=3"
 
 
+SUPPORT_EMAIL = "support@prolinemarket.com"
+FONT_STACK = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif"
+
+
 def brand_email(heading: str, inner_html: str) -> str:
     """Wrap email body in the branded Proline Markets template (logo header + footer)."""
     # Unique invisible marker so Gmail doesn't collapse the identical footer
     # across messages into a "show trimmed content (…)" toggle.
     marker = uuid.uuid4().hex
     return (
-        '<div style="background:#f4f6f8;padding:24px 0;font-family:Arial,Helvetica,sans-serif;">'
-        '<div style="max-width:560px;margin:0 auto;background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e5e7eb;">'
-        '<div style="background:#15803d;background:linear-gradient(135deg,#16a34a 0%,#047857 55%,#065f46 100%);padding:22px 24px;text-align:center;">'
-        f'<img src="{BRAND_LOGO_URL}" alt="Proline Markets" width="160" '
-        'style="height:auto;max-width:160px;width:160px;display:inline-block;border:0;outline:none;text-decoration:none;" />'
+        f'<div style="background:#eef1f4;margin:0;padding:32px 16px;font-family:{FONT_STACK};">'
+        '<div style="max-width:600px;margin:0 auto;background:#ffffff;border-radius:14px;overflow:hidden;'
+        'border:1px solid #e3e8ee;box-shadow:0 6px 24px rgba(16,24,40,0.06);">'
+        # ── Header (brand gradient + logo) ──
+        '<div style="background:#15803d;background:linear-gradient(135deg,#16a34a 0%,#047857 55%,#065f46 100%);padding:28px 24px;text-align:center;">'
+        f'<img src="{BRAND_LOGO_URL}" alt="Proline Markets" width="168" '
+        'style="height:auto;max-width:168px;width:168px;display:inline-block;border:0;outline:none;text-decoration:none;" />'
         '</div>'
-        '<div style="padding:28px 24px;color:#111827;">'
-        f'<h2 style="color:#16a34a;margin:0 0 14px;font-size:20px;">{heading}</h2>'
+        # ── Accent divider ──
+        '<div style="height:3px;background:linear-gradient(90deg,#16a34a,#f59e0b);"></div>'
+        # ── Body ──
+        '<div style="padding:34px 34px 26px;color:#1f2937;">'
+        f'<h1 style="color:#111827;margin:0 0 16px;font-size:22px;font-weight:700;letter-spacing:-0.2px;">{heading}</h1>'
         f'{inner_html}'
         '</div>'
-        '<div style="padding:14px 24px;background:#f9fafb;border-top:1px solid #eee;color:#9ca3af;font-size:12px;text-align:center;">'
-        '© Proline Markets · Automated message, please do not reply.'
-        '</div></div></div>'
-        f'<span style="display:none;max-height:0;overflow:hidden;opacity:0;color:#f4f6f8;font-size:1px;line-height:0;">ref:{marker}</span>'
+        # ── Footer ──
+        '<div style="padding:20px 34px;background:#f8fafc;border-top:1px solid #edf1f5;">'
+        f'<p style="margin:0 0 6px;color:#6b7280;font-size:13px;line-height:1.5;">Need help? Contact us at '
+        f'<a href="mailto:{SUPPORT_EMAIL}" style="color:#16a34a;text-decoration:none;font-weight:600;">{SUPPORT_EMAIL}</a>.</p>'
+        '<p style="margin:0;color:#9ca3af;font-size:12px;line-height:1.5;">© Proline Markets. All rights reserved.<br/>'
+        'This is an automated message — please do not reply.</p>'
+        '</div>'
+        '</div></div>'
+        f'<span style="display:none;max-height:0;overflow:hidden;opacity:0;color:#eef1f4;font-size:1px;line-height:0;">ref:{marker}</span>'
     )
 
 
@@ -179,26 +193,35 @@ async def send_email(
 async def send_welcome_email(to: str, login_email: str, password: str | None = None) -> bool:
     """Congratulations email sent AFTER email verification — shows login details
     (Login ID always; password only when the account was created for the user)."""
-    creds_rows = f'<p style="margin:2px 0;font-size:14px;color:#111;">Login ID: <strong>{login_email}</strong></p>'
+    def _row(label: str, value: str) -> str:
+        return (
+            '<tr>'
+            f'<td style="padding:6px 0;color:#6b7280;font-size:13px;width:110px;">{label}</td>'
+            f'<td style="padding:6px 0;color:#111827;font-size:14px;font-weight:600;">{value}</td>'
+            '</tr>'
+        )
+    rows = _row("Login ID", login_email)
     if password:
-        creds_rows += f'<p style="margin:2px 0;font-size:14px;color:#111;">Password: <strong>{password}</strong></p>'
+        rows += _row("Password", password)
     creds = (
-        '<div style="margin:16px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;">'
-        '<p style="margin:0 0 8px;font-size:13px;color:#166534;font-weight:bold;">Your login details</p>'
-        f'{creds_rows}'
+        '<div style="margin:20px 0;padding:18px 20px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;">'
+        '<p style="margin:0 0 8px;font-size:12px;letter-spacing:0.4px;text-transform:uppercase;color:#166534;font-weight:700;">Your login details</p>'
+        f'<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;">{rows}</table>'
         '</div>'
     )
     if password:
-        creds += '<p style="color:#9ca3af;font-size:12px;">For your security, change your password after your first login.</p>'
+        creds += '<p style="margin:0 0 6px;color:#9ca3af;font-size:12px;line-height:1.5;">For your security, please change your password after your first login.</p>'
     inner = (
-        '<p style="font-size:15px;color:#374151;line-height:1.6;">🎉 Congratulations! Your email has been verified and your '
-        'Proline Markets account is now active. Open a trading account and complete KYC to start trading.</p>'
+        '<p style="margin:0 0 4px;font-size:15px;color:#374151;line-height:1.65;">Congratulations — your email has been verified and your '
+        'Proline Markets profile is now active.</p>'
+        '<p style="margin:8px 0 0;font-size:15px;color:#374151;line-height:1.65;">Use the details below to sign in. To start trading, '
+        'open a trading account and complete your KYC verification.</p>'
         f'{creds}'
-        '<p style="margin-top:18px;"><a href="https://prolinemarket.com/auth/login" '
-        'style="display:inline-block;padding:11px 22px;background:#16a34a;color:#fff;text-decoration:none;border-radius:8px;font-weight:bold;">Log in to your account</a></p>'
+        '<p style="margin:22px 0 0;"><a href="https://prolinemarket.com/auth/login" '
+        'style="display:inline-block;padding:13px 28px;background:#16a34a;color:#ffffff;text-decoration:none;border-radius:8px;font-weight:700;font-size:15px;">Log in to your profile</a></p>'
     )
-    text = f"Congratulations! Your Proline Markets account is active. Login ID: {login_email}" + (f" | Password: {password}" if password else "")
-    return await send_email(to, "Welcome to Proline Markets — Your account is active", brand_email("Welcome to Proline Markets", inner), text)
+    text = f"Congratulations! Your Proline Markets profile is active. Login ID: {login_email}" + (f" | Password: {password}" if password else "")
+    return await send_email(to, "Welcome to Proline Markets — Your profile is active", brand_email("Welcome to Proline Markets", inner), text)
 
 
 async def send_verification_email(to: str, code: str) -> bool:
