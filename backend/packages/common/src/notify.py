@@ -76,8 +76,9 @@ async def create_notification(
             addr = res.scalar_one_or_none()
             if addr:
                 html = brand_email(title, (
-                    f'<p style="font-size:15px;color:#374151;line-height:1.6;">{message}</p>'
-                    '<p style="color:#9ca3af;font-size:13px;">Log in to your Proline Markets account for details.</p>'
+                    f'<p style="margin:0 0 14px;font-size:15px;color:#374151;line-height:1.65;">{message}</p>'
+                    '<p style="margin:0;"><a href="https://prolinemarket.com/auth/login" '
+                    'style="display:inline-block;padding:12px 26px;background:#16a34a;color:#ffffff;text-decoration:none;border-radius:8px;font-weight:700;font-size:14px;">Log in to your profile</a></p>'
                 ))
                 await send_email(addr, f"Proline Markets — {title}", html, message)
         except Exception:
@@ -95,7 +96,7 @@ async def create_notification(
 BRAND_LOGO_URL = "https://prolinemarket.com/images/logo1.png?v=3"
 
 
-SUPPORT_EMAIL = "support@prolinemarket.com"
+SUPPORT_EMAIL = "info@prolinemarket.com"
 FONT_STACK = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif"
 
 
