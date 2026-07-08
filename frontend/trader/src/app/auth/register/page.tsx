@@ -74,7 +74,7 @@ export default function RegisterPage() {
 function RegisterContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { register, isLoading } = useAuthStore();
+  const { register, verifyEmail, resendVerification, isLoading } = useAuthStore();
 
   const [form, setForm] = useState({
     email: '', password: '', confirmPassword: '',
@@ -84,6 +84,11 @@ function RegisterContent() {
   const [showConfirmPass, setShowConfirmPass] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
+
+  // Email verification (OTP) step, shown after a successful registration.
+  const [verifyMode, setVerifyMode] = useState(false);
+  const [code, setCode] = useState('');
+  const [resending, setResending] = useState(false);
 
   useEffect(() => {
     const ref = searchParams.get('ref');
@@ -108,7 +113,7 @@ function RegisterContent() {
 
     setLoading(true);
     try {
-      await register({
+      const res = await register({
         email: form.email,
         password: form.password,
         first_name: form.first_name,
@@ -116,12 +121,47 @@ function RegisterContent() {
         phone: form.phone || undefined,
         referral_code: form.referral_code || undefined,
       });
-      toast.success('Account created successfully!');
-      router.push('/accounts');
+      if (res?.verification_required) {
+        setVerifyMode(true);
+        toast.success('We sent a 6-digit code to your email.');
+      } else {
+        toast.success('Account created successfully!');
+        router.push('/accounts');
+      }
     } catch (err: any) {
       toast.error(err.message || 'Registration failed');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleVerify = async (ev: React.FormEvent) => {
+    ev.preventDefault();
+    if (!/^\d{6}$/.test(code.trim())) {
+      setErrors({ code: 'Enter the 6-digit code from your email.' });
+      return;
+    }
+    setLoading(true);
+    try {
+      await verifyEmail(form.email, code.trim());
+      toast.success('Email verified! Welcome to Proline Markets.');
+      router.push('/accounts');
+    } catch (err: any) {
+      toast.error(err.message || 'Verification failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleResend = async () => {
+    setResending(true);
+    try {
+      await resendVerification(form.email);
+      toast.success('A new code has been sent to your email.');
+    } catch (err: any) {
+      toast.error(err.message || 'Could not resend the code');
+    } finally {
+      setResending(false);
     }
   };
 
@@ -179,6 +219,53 @@ function RegisterContent() {
           {/* â”€â”€ RIGHT PANEL â”€â”€ */}
           <div className="auth-right">
             <AnimatePresence mode="wait">
+              {verifyMode ? (
+              <motion.div
+                key="verify"
+                variants={formVariants}
+                initial="initial"
+                animate="animate"
+                exit="exit"
+                transition={{ duration: 0.28, ease: 'easeInOut' }}
+                style={{ width: '100%', maxWidth: 380 }}
+              >
+                <form className="auth-form" onSubmit={handleVerify} noValidate>
+                  <motion.div {...fadeUp(0.2)} className="flex justify-center mb-2">
+                    <img src="/images/logo1.png" alt="ProlineMarketsFX" className="w-16 h-16 object-contain" />
+                  </motion.div>
+                  <motion.div {...fadeUp(0.3)}>
+                    <h2 className="auth-form__title">Verify Your Email</h2>
+                    <p className="auth-form__subtitle">
+                      Enter the 6-digit code we sent to <strong>{form.email}</strong>.
+                    </p>
+                  </motion.div>
+
+                  <motion.div {...fadeUp(0.4)}>
+                    <AuthInput
+                      label="Verification Code"
+                      type="text"
+                      placeholder="123456"
+                      value={code}
+                      onChange={(e) => { setCode(e.target.value.replace(/\D/g, '').slice(0, 6)); setErrors({}); }}
+                      error={errors.code}
+                    />
+                  </motion.div>
+
+                  <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ delay: 0.5, duration: 0.4 }}>
+                    <button type="submit" className="auth-btn" disabled={loading || isLoading}>
+                      {(loading || isLoading) ? <Loader2 size={18} className="auth-spinner" /> : 'Verify & Continue'}
+                    </button>
+                  </motion.div>
+
+                  <motion.p className="auth-footer" {...fadeUp(0.6)}>
+                    Didn&apos;t get the code?{' '}
+                    <a onClick={() => { if (!resending) void handleResend(); }}>
+                      {resending ? 'Sending…' : 'Resend code'}
+                    </a>
+                  </motion.p>
+                </form>
+              </motion.div>
+              ) : (
               <motion.div
                 key="signup"
                 variants={formVariants}
@@ -294,6 +381,7 @@ function RegisterContent() {
                   </motion.p>
                 </form>
               </motion.div>
+              )}
             </AnimatePresence>
           </div>
         </div>

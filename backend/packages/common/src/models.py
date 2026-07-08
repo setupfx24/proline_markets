@@ -76,6 +76,11 @@ class User(Base):
     role = Column(String(20), default="user")
     status = Column(String(20), default="active")
     kyc_status = Column(String(20), default="pending")
+    # Email verification (OTP). Defaults True so existing/demo/admin users are
+    # grandfathered; register_user sets it False and requires a 6-digit code.
+    email_verified = Column(Boolean, default=True, server_default="true", nullable=False)
+    email_verification_code = Column(String(6))
+    email_verification_expires = Column(DateTime(timezone=True))
     is_demo = Column(Boolean, default=False)
     two_factor_enabled = Column(Boolean, default=False)
     two_factor_secret = Column(String(255))

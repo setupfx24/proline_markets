@@ -34,7 +34,9 @@ interface AuthState {
     last_name: string;
     phone?: string;
     referral_code?: string;
-  }) => Promise<void>;
+  }) => Promise<{ verification_required?: boolean; email?: string }>;
+  verifyEmail: (email: string, code: string) => Promise<void>;
+  resendVerification: (email: string) => Promise<void>;
   logout: () => void;
   loadUser: () => Promise<void>;
   setInitialized: (val: boolean) => void;
@@ -98,13 +100,36 @@ export const useAuthStore = create<AuthState>()((set) => ({
   register: async (data) => {
     set({ isLoading: true });
     try {
-      await api.post<{ access_token: string }>('/auth/register', data);
+      const res = await api.post<{ verification_required?: boolean; email?: string }>(
+        '/auth/register',
+        data,
+      );
+      set({ isLoading: false });
+      // New accounts must verify their email before they can log in.
+      return res ?? { verification_required: true, email: data.email };
+    } catch (e) {
+      set({ isLoading: false });
+      throw e;
+    }
+  },
+
+  verifyEmail: async (email, code) => {
+    set({ isLoading: true });
+    try {
+      await api.post<{ access_token: string; user_id: string; role: string }>('/auth/verify-email', {
+        email,
+        code,
+      });
       const user = await api.get<User>('/auth/me');
       set({ user, isAuthenticated: true, isLoading: false, token: null });
     } catch (e) {
       set({ isLoading: false });
       throw e;
     }
+  },
+
+  resendVerification: async (email) => {
+    await api.post<{ message: string }>('/auth/resend-verification', { email });
   },
 
   logout: () => {

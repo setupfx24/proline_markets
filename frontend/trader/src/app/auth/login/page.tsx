@@ -81,7 +81,7 @@ function AuthInput({
 /* â•â•â•â•â•â•â• PAGE â•â•â•â•â•â•â• */
 export default function LoginPage() {
   const router = useRouter();
-  const { login, demoLogin, forgotPassword, isLoading } = useAuthStore();
+  const { login, demoLogin, forgotPassword, verifyEmail, resendVerification, isLoading } = useAuthStore();
   const [activeStep, setActiveStep] = useState(1);
 
   /* Sign-in state */
@@ -103,6 +103,12 @@ export default function LoginPage() {
 
   /* Error dialog */
   const [errorDialog, setErrorDialog] = useState<{ title: string; message: string } | null>(null);
+
+  /* Email verification (OTP) modal — shown when an unverified user tries to log in */
+  const [verifyOpen, setVerifyOpen] = useState(false);
+  const [verifyCode, setVerifyCode] = useState('');
+  const [verifyLoading, setVerifyLoading] = useState(false);
+  const [verifyResending, setVerifyResending] = useState(false);
 
   /* Platform maintenance status */
   const maintenance = usePlatformStatusStore((s) => s.maintenance_mode);
@@ -131,11 +137,49 @@ export default function LoginPage() {
       const msg = err instanceof Error ? err.message : '';
       if (msg.includes('2FA') && !msg.includes('Invalid')) {
         setNeed2FA(true);
+      } else if (msg.includes('EMAIL_NOT_VERIFIED')) {
+        // Account exists but email isn't confirmed — send a fresh code and prompt.
+        setVerifyOpen(true);
+        setVerifyCode('');
+        void resendVerification(email).catch(() => {});
+        toast('Please verify your email. We sent you a 6-digit code.', { icon: '📧' });
       } else {
         setErrorDialog({ title: 'Sign-in failed', message: authErrorMessage(err, 'login') });
       }
     } finally {
       setLoading(false);
+    }
+  };
+
+  /* â”€â”€ Email verification handlers â”€â”€ */
+  const handleVerify = async (ev: React.FormEvent) => {
+    ev.preventDefault();
+    if (!/^\d{6}$/.test(verifyCode.trim())) {
+      toast.error('Enter the 6-digit code from your email.');
+      return;
+    }
+    setVerifyLoading(true);
+    try {
+      await verifyEmail(email, verifyCode.trim());
+      setVerifyOpen(false);
+      toast.success('Email verified! Welcome back.');
+      router.push('/accounts');
+    } catch (err: unknown) {
+      setErrorDialog({ title: 'Verification failed', message: authErrorMessage(err, 'login') });
+    } finally {
+      setVerifyLoading(false);
+    }
+  };
+
+  const handleVerifyResend = async () => {
+    setVerifyResending(true);
+    try {
+      await resendVerification(email);
+      toast.success('A new code has been sent to your email.');
+    } catch {
+      toast.error('Could not resend the code.');
+    } finally {
+      setVerifyResending(false);
     }
   };
 
@@ -364,6 +408,40 @@ export default function LoginPage() {
             <h3 className="auth-modal__title">{errorDialog.title}</h3>
             <p className="auth-modal__desc">{errorDialog.message}</p>
             <button type="button" className="auth-btn" onClick={() => setErrorDialog(null)}>OK</button>
+          </div>
+        </div>
+      )}
+
+      {/* â”€â”€ Email Verification Modal â”€â”€ */}
+      {verifyOpen && (
+        <div className="auth-overlay" onClick={() => setVerifyOpen(false)}>
+          <div className="auth-modal" onClick={(e) => e.stopPropagation()}>
+            <h3 className="auth-modal__title">Verify Your Email</h3>
+            <p className="auth-modal__desc">
+              Enter the 6-digit code we sent to <strong>{email}</strong> to activate your account.
+            </p>
+            <form onSubmit={handleVerify}>
+              <AuthInput
+                label="Verification Code"
+                type="text"
+                placeholder="123456"
+                value={verifyCode}
+                onChange={(e) => setVerifyCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+              />
+              <button
+                type="button"
+                onClick={() => { if (!verifyResending) void handleVerifyResend(); }}
+                style={{ background: 'none', border: 'none', color: '#6b7280', fontSize: '0.72rem', cursor: 'pointer', marginTop: 4 }}
+              >
+                {verifyResending ? 'Sending…' : 'Resend code'}
+              </button>
+              <div className="auth-modal__actions">
+                <button type="button" className="auth-btn auth-btn--outline" onClick={() => setVerifyOpen(false)}>Cancel</button>
+                <button type="submit" className="auth-btn" disabled={verifyLoading}>
+                  {verifyLoading ? <Loader2 size={18} className="auth-spinner" /> : 'Verify'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

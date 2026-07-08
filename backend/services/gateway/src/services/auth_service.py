@@ -262,6 +262,7 @@ async def register_user(
         role="user",
         status="active",
         kyc_status="pending",
+        email_verified=False,
     )
     db.add(user)
     await db.flush()
@@ -274,21 +275,74 @@ async def register_user(
         if ib_profile:
             db.add(Referral(referrer_id=ib_profile.user_id, referred_id=user.id, ib_profile_id=ib_profile.id))
 
+    # Email verification: generate a 6-digit OTP; login is blocked until confirmed.
+    code = f"{secrets.randbelow(1000000):06d}"
+    user.email_verification_code = code
+    user.email_verification_expires = datetime.now(timezone.utc) + timedelta(minutes=15)
+
+    from packages.common.src.notify import create_notification, send_verification_email, send_welcome_email
     try:
-        from packages.common.src.notify import create_notification, send_welcome_email
         await create_notification(
             db, user.id,
             title="Welcome to Proline Markets",
-            message="Your account has been created. Open a trading account and complete KYC to get started.",
+            message="Your account has been created. Verify your email, then open a trading account and complete KYC.",
             notif_type="system", action_url="/accounts",
             commit=False, email=False,
         )
-        # Branded welcome email with the user's login credentials (id + password).
-        await send_welcome_email(user.email, user.email, password)
     except Exception:
         pass
 
-    return await issue_auth_json_response(user, request, db, status_code=201, user_audit_action="REGISTER")
+    await db.commit()
+
+    try:
+        await send_verification_email(user.email, code)
+        # Branded welcome email with the user's login credentials (id + password).
+        await send_welcome_email(user.email, user.email, password)
+    except Exception:
+        logger.exception("registration emails failed for %s", email)
+
+    return JSONResponse(
+        content={"verification_required": True, "email": user.email},
+        status_code=201,
+    )
+
+
+async def verify_email(email: str, code: str, request: Request, db: AsyncSession) -> JSONResponse:
+    """Confirm a new account's email with the 6-digit OTP, then log the user in."""
+    result = await db.execute(select(User).where(User.email == email))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise AuthServiceError("Invalid email or verification code", 400)
+    if user.email_verified:
+        return await issue_auth_json_response(user, request, db, user_audit_action="LOGIN")
+    if not user.email_verification_code or not user.email_verification_expires:
+        raise AuthServiceError("No pending verification. Please request a new code.", 400)
+    if datetime.now(timezone.utc) > user.email_verification_expires:
+        raise AuthServiceError("Verification code expired. Please request a new code.", 400)
+    if str(code).strip() != str(user.email_verification_code):
+        raise AuthServiceError("Invalid verification code", 400)
+
+    user.email_verified = True
+    user.email_verification_code = None
+    user.email_verification_expires = None
+    return await issue_auth_json_response(user, request, db, user_audit_action="LOGIN")
+
+
+async def resend_verification(email: str, db: AsyncSession) -> dict:
+    """Re-issue an email-verification OTP. Does not reveal whether the email exists."""
+    result = await db.execute(select(User).where(User.email == email))
+    user = result.scalar_one_or_none()
+    if user and not user.email_verified:
+        code = f"{secrets.randbelow(1000000):06d}"
+        user.email_verification_code = code
+        user.email_verification_expires = datetime.now(timezone.utc) + timedelta(minutes=15)
+        await db.commit()
+        try:
+            from packages.common.src.notify import send_verification_email
+            await send_verification_email(user.email, code)
+        except Exception:
+            logger.exception("resend verification failed for %s", email)
+    return {"message": "If your email needs verification, a new code has been sent."}
 
 
 # ─── Login ────────────────────────────────────────────────────────────────
@@ -311,6 +365,10 @@ async def login_user(
         raise AuthServiceError("Account has been banned", 403)
     if user.status == "blocked":
         raise AuthServiceError("Account has been blocked", 403)
+
+    # Email must be verified before login (grandfathered users have email_verified=True).
+    if not getattr(user, "email_verified", True):
+        raise AuthServiceError("EMAIL_NOT_VERIFIED", 403)
 
     # Maintenance mode: only admin / super_admin / employee roles may log in.
     if user.role not in ("admin", "super_admin", "employee"):

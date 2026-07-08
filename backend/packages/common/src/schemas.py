@@ -26,6 +26,15 @@ class LoginRequest(BaseModel):
     totp_code: Optional[str] = None
 
 
+class VerifyEmailRequest(BaseModel):
+    email: EmailStr
+    code: str = Field(min_length=4, max_length=6)
+
+
+class ResendVerificationRequest(BaseModel):
+    email: EmailStr
+
+
 class ForgotPasswordRequest(BaseModel):
     email: EmailStr
 

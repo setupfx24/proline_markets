@@ -192,6 +192,19 @@ async def send_welcome_email(to: str, login_email: str, password: str | None = N
     return await send_email(to, "Welcome to Proline Markets", brand_email("Welcome to Proline Markets", inner), text)
 
 
+async def send_verification_email(to: str, code: str) -> bool:
+    """Email a 6-digit verification code for new-account email confirmation."""
+    inner = (
+        '<p style="font-size:15px;color:#374151;line-height:1.6;">Use the code below to verify your email and activate your Proline Markets account:</p>'
+        '<div style="margin:18px 0;text-align:center;">'
+        f'<span style="display:inline-block;font-size:30px;letter-spacing:8px;font-weight:bold;color:#111827;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:14px 22px;">{code}</span>'
+        '</div>'
+        '<p style="color:#9ca3af;font-size:13px;">This code expires in 15 minutes. If you did not sign up, ignore this email.</p>'
+    )
+    text = f"Your Proline Markets verification code is {code}. It expires in 15 minutes."
+    return await send_email(to, "Proline Markets — Verify your email", brand_email("Verify your email", inner), text)
+
+
 async def send_password_reset_email(to: str, reset_url: str) -> bool:
     subject = "Proline Markets — Password Reset Request"
     html = f"""

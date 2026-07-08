@@ -8,11 +8,13 @@ from packages.common.src.database import get_db
 from packages.common.src.schemas import (
     RegisterRequest, LoginRequest, UserResponse,
     ForgotPasswordRequest, ResetPasswordRequest, MessageResponse, BootstrapSessionRequest,
+    VerifyEmailRequest, ResendVerificationRequest,
 )
 from packages.common.src.auth import get_current_user
 from ..services.auth_service import (
     AuthServiceError,
     register_user, login_user, demo_login as _demo_login,
+    verify_email as _verify_email, resend_verification as _resend_verification,
     investor_login as _investor_login,
     refresh_token as _refresh_token, bootstrap_session as _bootstrap_session,
     forgot_password as _forgot_password, reset_password as _reset_password,
@@ -70,6 +72,24 @@ async def login(req: LoginRequest, request: Request, db: AsyncSession = Depends(
             email=req.email, password=req.password,
             totp_code=req.totp_code, request=request, db=db,
         )
+    except AuthServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+
+
+@router.post("/verify-email")
+async def verify_email(req: VerifyEmailRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    """Confirm a new account's email with the 6-digit code, then log the user in."""
+    try:
+        return await _verify_email(email=req.email, code=req.code, request=request, db=db)
+    except AuthServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+
+
+@router.post("/resend-verification", response_model=MessageResponse)
+async def resend_verification(req: ResendVerificationRequest, db: AsyncSession = Depends(get_db)):
+    """Re-send the email-verification code."""
+    try:
+        return await _resend_verification(email=req.email, db=db)
     except AuthServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail)
 
