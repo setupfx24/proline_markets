@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef, Suspense } from 'react';
+import { useState, useEffect, useCallback, useRef, Suspense, type SyntheticEvent } from 'react';
 import Link from 'next/link';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { clsx } from 'clsx';
@@ -74,6 +74,17 @@ const DEMO_FUNDING_MSG =
   'Demo accounts cannot deposit, withdraw, or transfer funds. Open a live account to use wallet funding.';
 
 const OXAPAY_METHOD = 'oxapay';
+
+/** Static QR shown when the admin hasn't configured one, or the uploaded QR fails to load. */
+const FALLBACK_QR = '/wallet_Qr.png';
+
+/** Swap a broken QR <img> to the bundled fallback exactly once (avoids error loops). */
+function handleQrError(e: SyntheticEvent<HTMLImageElement>) {
+  const img = e.currentTarget;
+  if (img.dataset.fallbackApplied) return;
+  img.dataset.fallbackApplied = '1';
+  img.src = FALLBACK_QR;
+}
 
 /** UI grid — selection is sent with OxaPay / payout details for finance matching. */
 const CRYPTO_ASSETS = [
@@ -998,15 +1009,14 @@ function WalletPageContent() {
                                 Copy
                               </button>
                             </div>
-                            {cryptoInfo.qr_code_url ? (
-                              <div className="pt-1 flex justify-center">
-                                <img
-                                  src={cryptoInfo.qr_code_url}
-                                  alt="USDT deposit QR"
-                                  className="w-full max-w-[220px] max-h-52 object-contain rounded-lg border border-border-primary bg-white p-2"
-                                />
-                              </div>
-                            ) : null}
+                            <div className="pt-1 flex justify-center">
+                              <img
+                                src={cryptoInfo.qr_code_url || FALLBACK_QR}
+                                onError={handleQrError}
+                                alt="USDT deposit QR"
+                                className="w-full max-w-[220px] max-h-52 object-contain rounded-lg border border-border-primary bg-white p-2"
+                              />
+                            </div>
                             <p className="text-[10px] text-amber-500/90 leading-relaxed">
                               Send only {cryptoInfo.asset || 'USDT'} over the {cryptoInfo.network || 'TRC20'} network. Sending any other asset or network may cause permanent loss.
                             </p>
@@ -1137,15 +1147,14 @@ function WalletPageContent() {
                                 </p>
                               ) : null}
                             </div>
-                            {manualBankInfo.qr_code_url ? (
-                              <div className="pt-1 flex justify-center">
-                                <img
-                                  src={manualBankInfo.qr_code_url}
-                                  alt="Payment QR"
-                                  className="w-full max-w-[220px] max-h-48 object-contain rounded-lg border border-border-primary bg-bg-base"
-                                />
-                              </div>
-                            ) : null}
+                            <div className="pt-1 flex justify-center">
+                              <img
+                                src={manualBankInfo.qr_code_url || FALLBACK_QR}
+                                onError={handleQrError}
+                                alt="Payment QR"
+                                className="w-full max-w-[220px] max-h-48 object-contain rounded-lg border border-border-primary bg-bg-base"
+                              />
+                            </div>
                           </div>
                         ) : (
                           <p className="text-[11px] text-amber-500/90">

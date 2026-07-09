@@ -1,5 +1,6 @@
 """Wallet Service — Deposits, withdrawals, transfers, wallet summary."""
 import logging
+import re
 import uuid as uuid_lib
 from pathlib import Path
 from decimal import Decimal
@@ -7,6 +8,7 @@ from uuid import UUID
 from datetime import datetime
 
 from fastapi import HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,6 +24,54 @@ logger = logging.getLogger("wallet_service")
 
 DEPOSIT_PROOF_EXT = {".jpg", ".jpeg", ".png", ".pdf", ".webp"}
 MAX_PROOF_BYTES = 10 * 1024 * 1024
+
+# Admin uploads bank/crypto QR images through the admin service; they land on the
+# shared uploads volume (/app/uploads/qr) which the gateway also mounts. The admin
+# stores the URL as "/banks/qr/<file>" (only reachable behind the admin API). Traders
+# can't reach that path, so we re-serve the same file here and hand the trader a URL
+# it CAN load through its own /api/v1 proxy.
+_QR_FILENAME_RE = re.compile(r"[a-fA-F0-9]{32}\.[a-zA-Z0-9]+")
+
+
+def _qr_dir() -> Path:
+    p = Path.cwd() / "uploads" / "qr"
+    return p
+
+
+def _trader_qr_url(qr_code_url: str | None) -> str | None:
+    """Rewrite an admin-stored QR reference into a trader-reachable URL.
+
+    - Full http(s) URLs are returned unchanged.
+    - "/banks/qr/<file>" (admin upload) → "/api/v1/wallet/qr/<file>" (this service).
+    - Anything else is passed through as-is.
+    """
+    if not qr_code_url:
+        return None
+    u = qr_code_url.strip()
+    if not u:
+        return None
+    if u.startswith("http://") or u.startswith("https://"):
+        return u
+    if "/banks/qr/" in u:
+        fn = u.rsplit("/banks/qr/", 1)[-1].split("?", 1)[0]
+        if _QR_FILENAME_RE.fullmatch(fn):
+            return f"/api/v1/wallet/qr/{fn}"
+    return u
+
+
+def serve_bank_qr(filename: str) -> FileResponse:
+    """Serve an admin-uploaded bank/crypto QR image from the shared uploads volume."""
+    fn = Path(filename or "").name
+    if not fn or fn != filename or not _QR_FILENAME_RE.fullmatch(fn):
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    base = _qr_dir()
+    try:
+        filepath = safe_join_under_base(base, fn)
+    except PathTraversalError:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    if not filepath.exists() or not filepath.is_file():
+        raise HTTPException(status_code=404, detail="QR code not found")
+    return FileResponse(filepath)
 
 METHOD_MAP = {
     "bank": "bank_transfer",
@@ -103,7 +153,7 @@ async def get_deposit_crypto_details(db: AsyncSession) -> dict:
         "asset": w.asset or "USDT",
         "network": w.network or "TRC20",
         "wallet_address": (w.wallet_address or w.account_number or "").strip(),
-        "qr_code_url": w.qr_code_url,
+        "qr_code_url": _trader_qr_url(w.qr_code_url),
     }
 
 
@@ -969,7 +1019,7 @@ async def get_deposit_bank_details(amount: Decimal | None, db: AsyncSession) -> 
     if bank.upi_id:
         resp["upi_id"] = bank.upi_id
     if bank.qr_code_url:
-        resp["qr_code_url"] = bank.qr_code_url
+        resp["qr_code_url"] = _trader_qr_url(bank.qr_code_url)
     return resp
 
 
@@ -984,5 +1034,5 @@ async def get_bank_info(amount: Decimal, db: AsyncSession) -> dict:
         "account_number": bank.account_number,
         "ifsc_code": bank.ifsc_code,
         "upi_id": bank.upi_id,
-        "qr_code_url": bank.qr_code_url,
+        "qr_code_url": _trader_qr_url(bank.qr_code_url),
     }

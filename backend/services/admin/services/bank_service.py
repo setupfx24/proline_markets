@@ -1,4 +1,5 @@
 """Admin Bank Service — CRUD for bank accounts, QR upload/serve."""
+import os
 import re
 import uuid
 from pathlib import Path
@@ -13,7 +14,14 @@ from packages.common.src.admin_schemas import BankAccountIn, BankAccountOut
 from packages.common.src.path_safety import PathTraversalError, safe_join_under_base
 from dependencies import write_audit_log
 
-UPLOAD_DIR = Path(__file__).resolve().parent.parent.parent.parent / "uploads" / "qr"
+# QR images MUST live on the mounted uploads volume (./backend/uploads -> /app/uploads),
+# NOT the ephemeral container filesystem — otherwise every image rebuild wipes them.
+# Resolve from CWD (/app) so it lands at /app/uploads/qr, shared with the gateway.
+# Override with BANK_QR_UPLOAD_ROOT (absolute path) if the volume mount differs.
+_QR_ROOT = (os.getenv("BANK_QR_UPLOAD_ROOT") or "").strip() or "uploads/qr"
+UPLOAD_DIR = Path(_QR_ROOT)
+if not UPLOAD_DIR.is_absolute():
+    UPLOAD_DIR = Path.cwd() / UPLOAD_DIR
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 

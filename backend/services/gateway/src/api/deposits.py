@@ -60,6 +60,16 @@ async def get_deposit_crypto_details(
     return await wallet_service.get_deposit_crypto_details(db=db)
 
 
+@router.get("/qr/{filename}")
+async def serve_deposit_qr(filename: str):
+    """Re-serve an admin-uploaded bank/crypto QR image (shared uploads volume).
+
+    Public (no auth): loaded directly by <img> tags on the deposit page via the
+    trader's /api/v1 proxy. Filenames are strictly validated in the service.
+    """
+    return wallet_service.serve_bank_qr(filename)
+
+
 @router.post("/withdraw", status_code=201)
 async def create_withdrawal(
     req: WithdrawalRequest,
