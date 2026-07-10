@@ -219,7 +219,7 @@ export default function TradesPage() {
   // Bulk upload state
   const uploadInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
-  const [uploadResult, setUploadResult] = useState<{ created: number; failed: number; total: number; errors: { row: number; error: string }[] } | null>(null);
+  const [uploadResult, setUploadResult] = useState<{ created: number; dummy_users_created?: number; failed: number; total: number; errors: { row: number; error: string }[] } | null>(null);
 
   const handleUploadFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -233,10 +233,11 @@ export default function TradesPage() {
     try {
       const fd = new FormData();
       fd.append('file', file);
-      const res = await adminApi.postForm<{ created: number; failed: number; total: number; errors: { row: number; error: string }[] }>('/trades/upload', fd);
+      const res = await adminApi.postForm<{ created: number; dummy_users_created?: number; failed: number; total: number; errors: { row: number; error: string }[] }>('/trades/upload', fd);
       setUploadResult(res);
       if (res.created > 0) {
-        toast.success(`${res.created} trade${res.created === 1 ? '' : 's'} created${res.failed ? `, ${res.failed} failed` : ''}`);
+        const dummyNote = res.dummy_users_created ? ` (${res.dummy_users_created} dummy user${res.dummy_users_created === 1 ? '' : 's'})` : '';
+        toast.success(`${res.created} trade${res.created === 1 ? '' : 's'} created${dummyNote}${res.failed ? `, ${res.failed} failed` : ''}`);
         setActiveTab('open');
         void fetchPositions();
       } else {
@@ -1044,11 +1045,17 @@ export default function TradesPage() {
         {uploadResult && (
           <div className="space-y-3">
             <div className="flex flex-wrap gap-3">
-              <div className="flex-1 min-w-[100px] rounded-lg border border-buy/30 bg-buy/10 px-3 py-2">
+              <div className="flex-1 min-w-[90px] rounded-lg border border-buy/30 bg-buy/10 px-3 py-2">
                 <p className="text-xxs text-text-tertiary">Created</p>
                 <p className="text-lg font-bold text-buy">{uploadResult.created}</p>
               </div>
-              <div className="flex-1 min-w-[100px] rounded-lg border border-sell/30 bg-sell/10 px-3 py-2">
+              {(uploadResult.dummy_users_created ?? 0) > 0 && (
+                <div className="flex-1 min-w-[90px] rounded-lg border border-warning/30 bg-warning/10 px-3 py-2">
+                  <p className="text-xxs text-text-tertiary">Dummy users</p>
+                  <p className="text-lg font-bold text-warning">{uploadResult.dummy_users_created}</p>
+                </div>
+              )}
+              <div className="flex-1 min-w-[90px] rounded-lg border border-sell/30 bg-sell/10 px-3 py-2">
                 <p className="text-xxs text-text-tertiary">Failed</p>
                 <p className="text-lg font-bold text-sell">{uploadResult.failed}</p>
               </div>

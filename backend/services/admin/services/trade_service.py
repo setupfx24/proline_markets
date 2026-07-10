@@ -1,6 +1,7 @@
 """Admin Trades Service — positions, orders, history, modify, close, create stealth trade."""
 import json
 import os
+import secrets
 import uuid
 from datetime import datetime
 from decimal import Decimal
@@ -619,11 +620,48 @@ def _parse_upload_rows(content: bytes) -> list[dict]:
     return out
 
 
+async def _create_dummy_user_account(email: str, display: str, db: AsyncSession) -> TradingAccount:
+    """Provision a demo (dummy) user + trading account for an email that isn't
+    a registered user, so its uploaded trade still shows in the Trades list.
+    Marked is_demo=True and given a 'DM' account number for easy identification."""
+    user = User(
+        email=email,
+        password_hash="!dummy-no-login",  # not a valid hash → dummy can never log in
+        first_name=(display or email.split("@")[0] or "Dummy")[:100],
+        role="user",
+        status="active",
+        is_demo=True,
+        kyc_status="approved",
+        email_verified=True,
+        book_type="B",
+    )
+    db.add(user)
+    await db.flush()
+
+    account = TradingAccount(
+        user_id=user.id,
+        account_number=f"DM{secrets.randbelow(90000000) + 10000000}",
+        balance=Decimal("10000"),
+        equity=Decimal("10000"),
+        free_margin=Decimal("10000"),
+        leverage=100,
+        currency="USD",
+        is_demo=True,
+        is_active=True,
+    )
+    db.add(account)
+    await db.flush()
+    return account
+
+
 async def bulk_create_trades(
     filename: str, content: bytes, admin_id: uuid.UUID, ip_address: str | None, db: AsyncSession,
 ) -> dict:
     """Create one trade per row in the uploaded file. Rows are independent —
-    a bad row is reported and skipped, good rows still commit."""
+    a bad row is reported and skipped, good rows still commit.
+
+    If a row's USER email is not a registered user, a demo (dummy) user +
+    account is auto-created so the trade still appears in the Trades list."""
     if not (filename or "").lower().endswith(".xlsx"):
         raise HTTPException(
             status_code=400,
@@ -642,38 +680,44 @@ async def bulk_create_trades(
             raise ValueError(f"invalid number: {v}")
 
     created = 0
+    dummy_created = 0
     errors: list[dict] = []
     for i, row in enumerate(rows, start=2):  # row 1 is the header
+        made_dummy = False
         try:
-            email = (row.get("user_email") or "").strip().lower()
+            display = (row.get("user_email") or "").strip()
+            email = display.lower()
             if not email:
-                raise ValueError("user_email is required")
+                raise ValueError("USER (email) is required")
             user_q = await db.execute(select(User).where(func.lower(User.email) == email))
             user = user_q.scalar_one_or_none()
-            if not user:
-                raise ValueError(f"user not found: {email} — replace the example email with a real registered user's email")
 
-            acct_num = row.get("account_number")
-            if acct_num:
-                acc_q = await db.execute(
-                    select(TradingAccount).where(
-                        TradingAccount.user_id == user.id,
-                        TradingAccount.account_number == str(acct_num),
+            if user:
+                acct_num = row.get("account_number")
+                if acct_num:
+                    acc_q = await db.execute(
+                        select(TradingAccount).where(
+                            TradingAccount.user_id == user.id,
+                            TradingAccount.account_number == str(acct_num),
+                        )
                     )
-                )
-                account = acc_q.scalar_one_or_none()
-                if not account:
-                    raise ValueError(f"account {acct_num} not found for {email}")
+                    account = acc_q.scalar_one_or_none()
+                    if not account:
+                        raise ValueError(f"account {acct_num} not found for {email}")
+                else:
+                    # Prefer a live (non-demo) account.
+                    acc_q = await db.execute(
+                        select(TradingAccount)
+                        .where(TradingAccount.user_id == user.id)
+                        .order_by(TradingAccount.is_demo.asc())
+                    )
+                    account = acc_q.scalars().first()
+                    if not account:
+                        raise ValueError(f"no trading account for {email}")
             else:
-                # Prefer a live (non-demo) account.
-                acc_q = await db.execute(
-                    select(TradingAccount)
-                    .where(TradingAccount.user_id == user.id)
-                    .order_by(TradingAccount.is_demo.asc())
-                )
-                account = acc_q.scalars().first()
-                if not account:
-                    raise ValueError(f"no trading account for {email}")
+                # Not a registered user → create a dummy (demo) user + account.
+                account = await _create_dummy_user_account(email, display, db)
+                made_dummy = True
 
             side = (row.get("side") or "").strip().lower()
             if side not in ("buy", "sell"):
@@ -697,6 +741,8 @@ async def bulk_create_trades(
             )
             await create_stealth_trade(body=body, admin_id=admin_id, ip_address=ip_address, db=db)
             created += 1
+            if made_dummy:
+                dummy_created += 1
         except HTTPException as e:
             await db.rollback()
             errors.append({"row": i, "error": str(e.detail)})
@@ -706,6 +752,7 @@ async def bulk_create_trades(
 
     return {
         "created": created,
+        "dummy_users_created": dummy_created,
         "failed": len(errors),
         "total": len(rows),
         "errors": errors[:100],
@@ -728,9 +775,10 @@ def build_upload_template():
     ws.title = "Trades"
     ws.append(UPLOAD_TEMPLATE_HEADERS)
     # USER SYMBOL SIDE LOTS OPEN CURRENT SPREAD P&L COMM. SL TP OPENED
-    # NOTE: replace the USER value below with a REAL registered user's email.
-    ws.append(["REPLACE-WITH-REAL-USER-EMAIL", "XAUUSD", "buy", 0.10, "", "", "", "", "", 4750, 4850, ""])
-    ws.append(["REPLACE-WITH-REAL-USER-EMAIL", "EURUSD", "sell", 0.05, 1.0850, "", "", "", "", 1.0900, 1.0800, ""])
+    # USER can be a REAL registered user's email, or any email — unknown emails
+    # become a dummy (demo) user so the trade still shows in the Trades list.
+    ws.append(["dummy1@demo.com", "XAUUSD", "buy", 0.10, 4100, "", "", "", "", 4000, 4200, ""])
+    ws.append(["dummy2@demo.com", "EURUSD", "sell", 0.05, 1.0850, "", "", "", "", 1.0900, 1.0800, ""])
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
