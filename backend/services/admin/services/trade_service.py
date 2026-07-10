@@ -526,22 +526,24 @@ async def create_stealth_trade(
     return {"message": "Trade created successfully", "order_id": str(order.id)}
 
 
-# ── Bulk trade upload (Excel / CSV) ─────────────────────────────────────────
-# Column headers accepted in the upload file (case-insensitive, aliases below).
+# ── Bulk trade upload (Excel .xlsx) ─────────────────────────────────────────
+# Template headers mirror the Trades table columns exactly. Only USER, SYMBOL,
+# SIDE, LOTS, OPEN, SL, TP are used to create a trade; CURRENT/SPREAD/P&L/COMM./
+# OPENED are display-only in the table and ignored on upload.
 UPLOAD_TEMPLATE_HEADERS = [
-    "user_email", "account_number", "symbol", "side", "lots",
-    "open_price", "stop_loss", "take_profit", "comment",
+    "USER", "SYMBOL", "SIDE", "LOTS", "OPEN",
+    "CURRENT", "SPREAD", "P&L", "COMM.", "SL", "TP", "OPENED",
 ]
 
 _UPLOAD_ALIASES = {
-    "user_email": ["user_email", "email", "user", "user email"],
+    "user_email": ["user", "user_email", "email", "user email"],
     "account_number": ["account_number", "account", "account no", "acct", "account number"],
     "symbol": ["symbol", "instrument", "pair"],
     "side": ["side", "direction"],
     "lots": ["lots", "lot", "volume", "size", "qty", "quantity"],
-    "open_price": ["open_price", "open", "price", "entry", "entry_price", "open price"],
-    "stop_loss": ["stop_loss", "sl", "stoploss", "stop loss"],
-    "take_profit": ["take_profit", "tp", "takeprofit", "take profit"],
+    "open_price": ["open", "open_price", "price", "entry", "entry_price", "open price"],
+    "stop_loss": ["sl", "stop_loss", "stoploss", "stop loss"],
+    "take_profit": ["tp", "take_profit", "takeprofit", "take profit"],
     "comment": ["comment", "note", "notes", "reason"],
 }
 
@@ -564,29 +566,26 @@ def _map_headers(raw_headers: list) -> dict:
     return mapping
 
 
-def _parse_upload_rows(filename: str, content: bytes) -> list[dict]:
-    """Parse an .xlsx or .csv upload into a list of row dicts keyed by canonical field."""
-    name = (filename or "").lower()
-    rows: list[list] = []
-    if name.endswith(".csv"):
-        import csv
+def _parse_upload_rows(content: bytes) -> list[dict]:
+    """Parse an .xlsx upload into a list of row dicts keyed by canonical field."""
+    try:
         import io
-        text = content.decode("utf-8-sig", errors="replace")
-        rows = [r for r in csv.reader(io.StringIO(text))]
-    else:
-        try:
-            import io
-            import openpyxl
-        except ImportError:
-            raise HTTPException(
-                status_code=500,
-                detail="Excel support is not installed on the server. Upload a .csv file instead.",
-            )
+        import openpyxl
+    except ImportError:
+        raise HTTPException(
+            status_code=500,
+            detail="Excel support is not installed on the server. Rebuild the admin service.",
+        )
+    try:
         wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
-        ws = wb.active
-        for r in ws.iter_rows(values_only=True):
-            rows.append(list(r))
-        wb.close()
+    except Exception:
+        raise HTTPException(
+            status_code=400,
+            detail="Could not read the Excel file. Make sure it is a valid .xlsx file (use the Template).",
+        )
+    ws = wb.active
+    rows: list[list] = [list(r) for r in ws.iter_rows(values_only=True)]
+    wb.close()
 
     if not rows:
         return []
@@ -625,7 +624,12 @@ async def bulk_create_trades(
 ) -> dict:
     """Create one trade per row in the uploaded file. Rows are independent —
     a bad row is reported and skipped, good rows still commit."""
-    rows = _parse_upload_rows(filename, content)
+    if not (filename or "").lower().endswith(".xlsx"):
+        raise HTTPException(
+            status_code=400,
+            detail="Only Excel (.xlsx) files are supported. Download the Template, fill it in, and upload the .xlsx.",
+        )
+    rows = _parse_upload_rows(content)
     if not rows:
         raise HTTPException(status_code=400, detail="No data rows found in the file.")
 
@@ -723,8 +727,10 @@ def build_upload_template():
     ws = wb.active
     ws.title = "Trades"
     ws.append(UPLOAD_TEMPLATE_HEADERS)
-    ws.append(["trader@example.com", "", "XAUUSD", "buy", 0.10, "", 4750, 4850, "Example market buy"])
-    ws.append(["trader@example.com", "100245", "EURUSD", "sell", 0.05, 1.0850, 1.0900, 1.0800, "Example with entry price"])
+    # USER SYMBOL SIDE LOTS OPEN CURRENT SPREAD P&L COMM. SL TP OPENED
+    ws.append(["trader@example.com", "XAUUSD", "buy", 0.10, "", "", "", "", "", 4750, 4850, ""])
+    ws.append(["trader@example.com", "EURUSD", "sell", 0.05, 1.0850, "", "", "", "", 1.0900, 1.0800, ""])
+    ws.append(["hari@example.com", "BTCUSD", "buy", 0.01, "", "", "", "", "", "", "", ""])
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)

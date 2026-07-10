@@ -225,6 +225,10 @@ export default function TradesPage() {
     const file = e.target.files?.[0];
     if (uploadInputRef.current) uploadInputRef.current.value = ''; // allow re-selecting same file
     if (!file) return;
+    if (!file.name.toLowerCase().endsWith('.xlsx')) {
+      toast.error('Only Excel (.xlsx) files are supported. Download the Template and fill it in.');
+      return;
+    }
     setUploading(true);
     try {
       const fd = new FormData();
@@ -512,7 +516,7 @@ export default function TradesPage() {
             <input
               ref={uploadInputRef}
               type="file"
-              accept=".xlsx,.xls,.csv"
+              accept=".xlsx"
               className="hidden"
               onChange={handleUploadFile}
             />
