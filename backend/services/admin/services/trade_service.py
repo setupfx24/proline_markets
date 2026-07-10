@@ -651,7 +651,7 @@ async def bulk_create_trades(
             user_q = await db.execute(select(User).where(func.lower(User.email) == email))
             user = user_q.scalar_one_or_none()
             if not user:
-                raise ValueError(f"user not found: {email}")
+                raise ValueError(f"user not found: {email} — replace the example email with a real registered user's email")
 
             acct_num = row.get("account_number")
             if acct_num:
@@ -728,9 +728,9 @@ def build_upload_template():
     ws.title = "Trades"
     ws.append(UPLOAD_TEMPLATE_HEADERS)
     # USER SYMBOL SIDE LOTS OPEN CURRENT SPREAD P&L COMM. SL TP OPENED
-    ws.append(["trader@example.com", "XAUUSD", "buy", 0.10, "", "", "", "", "", 4750, 4850, ""])
-    ws.append(["trader@example.com", "EURUSD", "sell", 0.05, 1.0850, "", "", "", "", 1.0900, 1.0800, ""])
-    ws.append(["hari@example.com", "BTCUSD", "buy", 0.01, "", "", "", "", "", "", "", ""])
+    # NOTE: replace the USER value below with a REAL registered user's email.
+    ws.append(["REPLACE-WITH-REAL-USER-EMAIL", "XAUUSD", "buy", 0.10, "", "", "", "", "", 4750, 4850, ""])
+    ws.append(["REPLACE-WITH-REAL-USER-EMAIL", "EURUSD", "sell", 0.05, 1.0850, "", "", "", "", 1.0900, 1.0800, ""])
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
