@@ -87,7 +87,10 @@ export function NotificationBell() {
               <span className="text-xs font-bold text-text-primary">Notifications</span>
               <button
                 type="button"
-                onClick={() => void markAllRead()}
+                onClick={() => {
+                  void markAllRead();
+                  setOpen(false);
+                }}
                 className="text-xxs text-buy hover:text-buy/80 transition-fast"
               >
                 Mark all read

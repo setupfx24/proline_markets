@@ -104,6 +104,7 @@ export default function NotificationBell() {
     for (const c of cats) next[c.key] = c.count;
     writeSeen(next);
     setSeen(next);
+    setOpen(false);
   };
 
   const go = (href: string) => {
