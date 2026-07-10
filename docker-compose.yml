@@ -195,24 +195,6 @@ services:
       - ./backend/services/risk-engine:/app/services/risk_engine
       - ./backend/packages:/app/packages
 
-  # MetaApi (MT5) mirror worker — streams one MT5 account's live positions +
-  # balance into the platform (read-only). Idle unless METAAPI_ENABLED=true.
-  metaapi-worker:
-    build:
-      context: .
-      dockerfile: backend/services/metaapi-worker/Dockerfile
-    env_file:
-      - path: ./.env
-        required: false
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    volumes:
-      - ./backend/services/metaapi-worker:/app/services/metaapi_worker
-      - ./backend/packages:/app/packages
-
   # Trader frontend (port 3000) — RESTART ALONE IS NOT ENOUGH. Rebuild the image or the browser keeps old JS:
   #   PowerShell:  $env:APP_VERSION=(Get-Date -Format 'yyyyMMdd-HHmmss'); docker compose build --no-cache trader-frontend; docker compose up -d trader-frontend
   #   Bash:        APP_VERSION=$(date +%Y%m%d-%H%M%S) docker compose build --no-cache trader-frontend && docker compose up -d trader-frontend

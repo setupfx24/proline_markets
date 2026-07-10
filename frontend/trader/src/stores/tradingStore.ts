@@ -23,7 +23,7 @@ export interface Position {
   swap: number;
   commission: number;
   profit: number;
-  /** copy_trade | algo_trade | mt5_trade | self_trade when the API provides it. */
+  /** copy_trade | algo_trade | self_trade when the API provides it. */
   trade_type?: string;
   created_at: string;
 }
@@ -244,9 +244,6 @@ export const useTradingStore = create<TradingState>()((set, get) => ({
       positions: state.positions.map((pos) => {
         const pSym = String(pos.symbol || '').trim().toUpperCase();
         if (pSym !== sym) return pos;
-        // MT5-mirrored positions carry the broker's own price/P&L — never
-        // recompute from platform ticks; keep the server (MetaApi) values.
-        if (pos.trade_type === 'mt5_trade') return pos;
         const cp = pos.side === 'buy' ? normalized.bid : normalized.ask;
         const inst =
           state.instruments.find((i) => i.symbol === sym) ||
