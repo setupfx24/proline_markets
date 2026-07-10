@@ -647,7 +647,9 @@ async def _create_dummy_user_account(email: str, display: str, db: AsyncSession)
         first_name=(display or email.split("@")[0] or "Dummy")[:100],
         role="user",
         status="active",
-        is_demo=True,
+        # Live (not demo) so its trades show in the admin Trades list. Identify
+        # these synthetic users by the 'DM' account number / unusable password.
+        is_demo=False,
         kyc_status="approved",
         email_verified=True,
         book_type="B",
@@ -663,7 +665,9 @@ async def _create_dummy_user_account(email: str, display: str, db: AsyncSession)
         free_margin=Decimal("10000"),
         leverage=100,
         currency="USD",
-        is_demo=True,
+        # Must be a LIVE account (is_demo=False) — the admin Trades list filters
+        # out demo accounts, so a demo account would create the trade but hide it.
+        is_demo=False,
         is_active=True,
     )
     db.add(account)
