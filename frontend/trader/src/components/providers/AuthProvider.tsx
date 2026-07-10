@@ -90,8 +90,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // the short link should open the same card regardless of auth state.
         if (!isSharePage) router.push('/accounts');
       } else if (isAuthenticated && user?.role === 'investor' && !isSharePage && !isInvestorLogin) {
-        // Read-only investor sessions may only see Accounts + Trading.
-        const investorAllowed = pathname?.startsWith('/accounts') || pathname?.startsWith('/trading');
+        // Read-only investor sessions may only see Accounts + Trading + Transactions (view-only).
+        const investorAllowed = pathname?.startsWith('/accounts') || pathname?.startsWith('/trading') || pathname?.startsWith('/transactions');
         if (!investorAllowed) router.push('/accounts');
       }
     }

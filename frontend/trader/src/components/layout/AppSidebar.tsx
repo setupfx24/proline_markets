@@ -43,10 +43,11 @@ const NAV_ITEMS = [
   { label: 'Settings', href: '/profile', icon: Settings },
 ] as const;
 
-// Read-only investor sessions only see their account + trading.
+// Read-only investor sessions only see their account + trading + transaction history.
 const INVESTOR_NAV = [
   { label: 'Accounts', href: '/accounts', icon: LayoutGrid },
   { label: 'Trading', href: '/trading', icon: TrendingUp },
+  { label: 'Transactions', href: '/transactions', icon: History },
 ] as const;
 
 export default function AppSidebar() {

@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import { clsx } from 'clsx';
 import toast from 'react-hot-toast';
 import api from '@/lib/api/client';
+import { useViewOnly } from '@/stores/authStore';
 import {
   RefreshCcw,
   TrendingUp,
@@ -132,6 +133,8 @@ function calcLivePnl(pos: any): number {
 }
 
 export default function TradesSection() {
+  // Read-only investor sessions: show trades but no Close/Cancel actions.
+  const viewOnly = useViewOnly();
   const [tab, setTab] = useState<TradeTab>('open');
   const [accounts, setAccounts] = useState<AccountItem[]>([]);
   const [openPositions, setOpenPositions] = useState<OpenPosition[]>([]);
@@ -428,7 +431,11 @@ export default function TradesSection() {
                         </td>
                         {tab === 'open' && (
                           <td className="px-3 py-3 text-right">
-                            {isMamFollower ? (
+                            {viewOnly ? (
+                              <span className="px-2 py-1 rounded-lg text-[9px] font-bold uppercase bg-bg-hover text-text-tertiary border border-border-primary" title="Read-only investor access">
+                                View only
+                              </span>
+                            ) : isMamFollower ? (
                               <span className="px-2 py-1 rounded-lg text-[9px] font-bold uppercase bg-info/15 text-info border border-info/30" title="This is a MAM mirrored trade — only the master can close it">
                                 MAM · Master closes
                               </span>
@@ -446,14 +453,20 @@ export default function TradesSection() {
                         )}
                         {tab === 'pending' && (
                           <td className="px-3 py-3 text-right">
-                            <button
-                              type="button"
-                              onClick={(e) => { e.stopPropagation(); cancelOrder(r.id, r.symbol); }}
-                              disabled={closingId === r.id}
-                              className="px-3 py-1 rounded-lg text-[10px] font-bold uppercase bg-warning/15 text-warning border border-warning/30 hover:bg-warning/25 disabled:opacity-50 transition-all"
-                            >
-                              {closingId === r.id ? 'Cancelling…' : 'Cancel'}
-                            </button>
+                            {viewOnly ? (
+                              <span className="px-2 py-1 rounded-lg text-[9px] font-bold uppercase bg-bg-hover text-text-tertiary border border-border-primary" title="Read-only investor access">
+                                View only
+                              </span>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); cancelOrder(r.id, r.symbol); }}
+                                disabled={closingId === r.id}
+                                className="px-3 py-1 rounded-lg text-[10px] font-bold uppercase bg-warning/15 text-warning border border-warning/30 hover:bg-warning/25 disabled:opacity-50 transition-all"
+                              >
+                                {closingId === r.id ? 'Cancelling…' : 'Cancel'}
+                              </button>
+                            )}
                           </td>
                         )}
                       </tr>
@@ -531,7 +544,11 @@ export default function TradesSection() {
                         {dateStr ? new Date(dateStr).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'}
                       </span>
                       {tab === 'open' && (
-                        isMamFollower ? (
+                        viewOnly ? (
+                          <span className="px-2 py-1 rounded-lg text-[9px] font-bold uppercase bg-bg-hover text-text-tertiary border border-border-primary" title="Read-only investor access">
+                            View only
+                          </span>
+                        ) : isMamFollower ? (
                           <span className="px-2 py-1 rounded-lg text-[9px] font-bold uppercase bg-info/15 text-info border border-info/30" title="MAM trade — only master can close">
                             MAM · Master closes
                           </span>
@@ -547,14 +564,20 @@ export default function TradesSection() {
                         )
                       )}
                       {tab === 'pending' && (
-                        <button
-                          type="button"
-                          onClick={(e) => { e.stopPropagation(); cancelOrder(r.id, r.symbol); }}
-                          disabled={closingId === r.id}
-                          className="px-3 py-1 rounded-lg text-[10px] font-bold uppercase bg-warning/15 text-warning border border-warning/30 hover:bg-warning/25 disabled:opacity-50"
-                        >
-                          {closingId === r.id ? 'Cancelling…' : 'Cancel'}
-                        </button>
+                        viewOnly ? (
+                          <span className="px-2 py-1 rounded-lg text-[9px] font-bold uppercase bg-bg-hover text-text-tertiary border border-border-primary" title="Read-only investor access">
+                            View only
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); cancelOrder(r.id, r.symbol); }}
+                            disabled={closingId === r.id}
+                            className="px-3 py-1 rounded-lg text-[10px] font-bold uppercase bg-warning/15 text-warning border border-warning/30 hover:bg-warning/25 disabled:opacity-50"
+                          >
+                            {closingId === r.id ? 'Cancelling…' : 'Cancel'}
+                          </button>
+                        )
                       )}
                     </div>
                   </div>
