@@ -16,7 +16,7 @@ from routes import (
     auth, dashboard, users, trades, deposits, banks, book,
     config as routes_config, instruments_admin, business, social, analytics, bonus, banners,
     support, employees, settings, transactions, kyc, account_types, user_audit_logs,
-    investor_access,
+    investor_access, notifications,
 )
 
 app_settings = get_settings()
@@ -138,6 +138,7 @@ app.include_router(kyc.router, prefix=prefix)
 app.include_router(account_types.router, prefix=prefix)
 app.include_router(user_audit_logs.router, prefix=prefix)
 app.include_router(investor_access.router, prefix=prefix)
+app.include_router(notifications.router, prefix=prefix)
 
 
 @app.get("/health")
