@@ -38,6 +38,14 @@ async def _get_live_price(symbol: str) -> dict | None:
     return None
 
 
+def _display_name(usr) -> str | None:
+    """Full name for the Trades USER column (falls back to None → email is shown)."""
+    if not usr:
+        return None
+    name = " ".join(p for p in [usr.first_name, usr.last_name] if p).strip()
+    return name or None
+
+
 async def list_positions(
     page: int, per_page: int, status_filter: str, db: AsyncSession,
 ):
@@ -65,6 +73,7 @@ async def list_positions(
         acc = acc_q.scalar_one_or_none()
 
         user_email = None
+        user_name = None
         account_number = None
         book_type = None
         is_demo = False
@@ -75,6 +84,7 @@ async def list_positions(
             usr = user_q.scalar_one_or_none()
             if usr:
                 user_email = usr.email
+                user_name = _display_name(usr)
                 book_type = (usr.book_type or "B").upper()
         # LP-forwarded when a LIVE account belongs to an A-book user —
         # demo trades always stay internal (b-book engine), never hit LP.
@@ -118,6 +128,7 @@ async def list_positions(
             is_admin_modified=pos.is_admin_modified or False,
             created_at=pos.created_at,
             user_email=user_email,
+            user_name=user_name,
             account_number=account_number,
             book_type=book_type,
             is_demo=is_demo,
@@ -152,6 +163,7 @@ async def list_orders(
         acc_q = await db.execute(select(TradingAccount).where(TradingAccount.id == o.account_id))
         acc = acc_q.scalar_one_or_none()
         user_email = None
+        user_name = None
         account_number = None
         if acc:
             account_number = acc.account_number
@@ -159,6 +171,7 @@ async def list_orders(
             usr = user_q.scalar_one_or_none()
             if usr:
                 user_email = usr.email
+                user_name = _display_name(usr)
 
         inst_q = await db.execute(select(Instrument).where(Instrument.id == o.instrument_id))
         inst = inst_q.scalar_one_or_none()
@@ -181,6 +194,7 @@ async def list_orders(
             is_admin_created=o.is_admin_created or False,
             created_at=o.created_at,
             user_email=user_email,
+            user_name=user_name,
             account_number=account_number,
         ))
 
@@ -208,6 +222,7 @@ async def list_trade_history(page: int, per_page: int, db: AsyncSession):
         acc_q = await db.execute(select(TradingAccount).where(TradingAccount.id == t.account_id))
         acc = acc_q.scalar_one_or_none()
         user_email = None
+        user_name = None
         account_number = None
         if acc:
             account_number = acc.account_number
@@ -215,6 +230,7 @@ async def list_trade_history(page: int, per_page: int, db: AsyncSession):
             usr = user_q.scalar_one_or_none()
             if usr:
                 user_email = usr.email
+                user_name = _display_name(usr)
 
         items.append(TradeHistoryOut(
             id=str(t.id),
@@ -231,6 +247,7 @@ async def list_trade_history(page: int, per_page: int, db: AsyncSession):
             opened_at=t.opened_at,
             closed_at=t.closed_at,
             user_email=user_email,
+            user_name=user_name,
             account_number=account_number,
         ))
 
@@ -775,10 +792,10 @@ def build_upload_template():
     ws.title = "Trades"
     ws.append(UPLOAD_TEMPLATE_HEADERS)
     # USER SYMBOL SIDE LOTS OPEN CURRENT SPREAD P&L COMM. SL TP OPENED
-    # USER can be a REAL registered user's email, or any email — unknown emails
-    # become a dummy (demo) user so the trade still shows in the Trades list.
-    ws.append(["dummy1@demo.com", "XAUUSD", "buy", 0.10, 4100, "", "", "", "", 4000, 4200, ""])
-    ws.append(["dummy2@demo.com", "EURUSD", "sell", 0.05, 1.0850, "", "", "", "", 1.0900, 1.0800, ""])
+    # USER = a registered user's email → uses their account; OR any name/email →
+    # shown as-is in the Trades list (a demo user is created behind the scenes).
+    ws.append(["Rahul Sharma", "XAUUSD", "buy", 0.10, 4100, "", "", "", "", 4000, 4200, ""])
+    ws.append(["Priya Verma", "EURUSD", "sell", 0.05, 1.0850, "", "", "", "", 1.0900, 1.0800, ""])
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)

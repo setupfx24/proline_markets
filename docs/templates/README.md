@@ -16,7 +16,7 @@ Only these are used to create a trade:
 
 | Column   | Required | Notes |
 |----------|----------|-------|
-| `USER`   | ✅       | Email of the user. **Registered user** → uses their first live account. **Unknown email** → a dummy (demo) user + account is auto-created so the trade still shows in the Trades list. |
+| `USER`   | ✅       | A **registered user's email** → uses their first live account and shows their name. **Any other name or email** → shown **exactly as typed** in the Trades USER column (a demo user is created behind the scenes to hold the trade). |
 | `SYMBOL` | ✅       | Instrument symbol, e.g. `XAUUSD`, `EURUSD`, `BTCUSD`. |
 | `SIDE`   | ✅       | `buy` or `sell`. |
 | `LOTS`   | ✅       | Lot size, e.g. `0.10`. Must be > 0. |
@@ -29,5 +29,5 @@ table and are **ignored** on upload (leave them blank).
 
 - Header names are case-insensitive.
 - Rows are independent: a bad row is reported and skipped; valid rows still get created.
-- Unknown emails become **dummy demo users** (marked `is_demo`, account number starts with `DM`) — they appear in the Trades list and Users page. The result summary reports how many dummy users were created.
-- After upload, a summary shows created / dummy / failed counts and the reason for each skipped row.
+- Whatever you put in `USER` is shown as-is in the Trades list. Behind the scenes, non-registered names get a demo user (marked `is_demo`, account number starts with `DM`). The same name is reused if it appears again.
+- After upload, a summary shows created / new-users / failed counts and the reason for each skipped row.

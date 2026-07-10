@@ -169,6 +169,7 @@ class PositionOut(BaseModel):
     is_admin_modified: bool = False
     created_at: Optional[datetime] = None
     user_email: Optional[str] = None
+    user_name: Optional[str] = None
     account_number: Optional[str] = None
     book_type: Optional[str] = None       # 'A' (forwarded to LP) or 'B'
     is_demo: bool = False
@@ -196,6 +197,7 @@ class OrderOut(BaseModel):
     is_admin_created: bool = False
     created_at: Optional[datetime] = None
     user_email: Optional[str] = None
+    user_name: Optional[str] = None
     account_number: Optional[str] = None
 
     class Config:
@@ -217,6 +219,7 @@ class TradeHistoryOut(BaseModel):
     opened_at: Optional[datetime] = None
     closed_at: Optional[datetime] = None
     user_email: Optional[str] = None
+    user_name: Optional[str] = None
     account_number: Optional[str] = None
 
     class Config:

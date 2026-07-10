@@ -38,6 +38,7 @@ interface Position {
   is_admin_modified: boolean;
   created_at: string;
   user_email?: string;
+  user_name?: string;
   account_number?: string;
   book_type?: string;
   is_demo?: boolean;
@@ -62,12 +63,14 @@ interface PendingOrder {
   is_admin_created: boolean;
   created_at: string;
   user_email?: string;
+  user_name?: string;
   account_number?: string;
 }
 
 interface ClosedTrade {
   id: string;
   user_email: string;
+  user_name?: string;
   account_number: string;
   instrument_symbol: string;
   side: string;
@@ -236,7 +239,7 @@ export default function TradesPage() {
       const res = await adminApi.postForm<{ created: number; dummy_users_created?: number; failed: number; total: number; errors: { row: number; error: string }[] }>('/trades/upload', fd);
       setUploadResult(res);
       if (res.created > 0) {
-        const dummyNote = res.dummy_users_created ? ` (${res.dummy_users_created} dummy user${res.dummy_users_created === 1 ? '' : 's'})` : '';
+        const dummyNote = res.dummy_users_created ? ` (${res.dummy_users_created} new user${res.dummy_users_created === 1 ? '' : 's'})` : '';
         toast.success(`${res.created} trade${res.created === 1 ? '' : 's'} created${dummyNote}${res.failed ? `, ${res.failed} failed` : ''}`);
         setActiveTab('open');
         void fetchPositions();
@@ -623,7 +626,7 @@ export default function TradesPage() {
                         : p.profit || 0;
                       return (
                       <tr key={p.id} className={cn('border-b border-border-primary/50 transition-fast hover:bg-bg-hover', livePnl > 0 && 'bg-success/[0.03]', livePnl < 0 && 'bg-danger/[0.03]')}>
-                        <td className="px-3 py-2 text-xs text-text-primary truncate max-w-[160px]" title={p.user_email || ''}>{p.user_email || p.account_number || '—'}</td>
+                        <td className="px-3 py-2 text-xs text-text-primary truncate max-w-[160px]" title={p.user_name || p.user_email || ''}>{p.user_name || p.user_email || p.account_number || '—'}</td>
                         <td className="px-3 py-2 text-xs text-text-primary font-semibold">{p.instrument_symbol}</td>
                         <td className="px-3 py-2"><span className={cn('text-xs font-bold', isBuy ? 'text-buy' : 'text-sell')}>{p.side?.toUpperCase()}</span></td>
                         <td className="px-3 py-2 text-xs text-text-primary font-mono tabular-nums">{p.lots}</td>
@@ -692,7 +695,7 @@ export default function TradesPage() {
                       .map(o => (
                       <tr key={o.id} className="border-b border-border-primary/50 transition-fast hover:bg-bg-hover">
                         <td className="px-4 py-2.5 text-xxs text-text-tertiary font-mono tabular-nums">{o.id.slice(0, 8)}</td>
-                        <td className="px-4 py-2.5 text-xs text-text-primary">{o.user_email || o.account_number || '—'}</td>
+                        <td className="px-4 py-2.5 text-xs text-text-primary">{o.user_name || o.user_email || o.account_number || '—'}</td>
                         <td className="px-4 py-2.5 text-xs text-text-primary font-medium">{o.instrument_symbol}</td>
                         <td className="px-4 py-2.5"><span className={cn('text-xs font-medium', o.side?.toLowerCase() === 'buy' ? 'text-buy' : 'text-sell')}>{o.side?.toUpperCase()}</span></td>
                         <td className="px-4 py-2.5 text-xs text-text-secondary capitalize">{o.order_type?.replace('_', ' ')}</td>
@@ -761,7 +764,7 @@ export default function TradesPage() {
                       return (
                       <tr key={t.id} className="border-b border-border-primary/50 transition-fast hover:bg-bg-hover">
                         <td className="px-4 py-2.5 text-xxs text-text-tertiary font-mono tabular-nums">{formatDate(t.closed_at)}</td>
-                        <td className="px-4 py-2.5 text-xs text-text-primary">{t.user_email || t.account_number || '—'}</td>
+                        <td className="px-4 py-2.5 text-xs text-text-primary">{t.user_name || t.user_email || t.account_number || '—'}</td>
                         <td className="px-4 py-2.5 text-xs text-text-primary font-medium">{t.instrument_symbol}</td>
                         <td className="px-4 py-2.5"><span className={cn('text-xs font-medium', t.side?.toLowerCase() === 'buy' ? 'text-buy' : 'text-sell')}>{t.side?.toUpperCase()}</span></td>
                         <td className="px-4 py-2.5 text-xs text-text-primary text-right font-mono tabular-nums">{t.lots}</td>
@@ -798,7 +801,7 @@ export default function TradesPage() {
             const cp = tick ? (isBuy ? tick.bid : tick.ask) : null;
             return (
               <div className="grid grid-cols-3 gap-2 p-3 bg-bg-tertiary/50 border border-border-primary rounded-md text-xs">
-                <div><p className="text-xxs text-text-tertiary">User</p><p className="text-text-primary truncate">{selectedPosition.user_email}</p></div>
+                <div><p className="text-xxs text-text-tertiary">User</p><p className="text-text-primary truncate">{selectedPosition.user_name || selectedPosition.user_email}</p></div>
                 <div><p className="text-xxs text-text-tertiary">Side</p><p className={cn('font-bold', isBuy ? 'text-buy' : 'text-sell')}>{selectedPosition.side?.toUpperCase()}</p></div>
                 <div><p className="text-xxs text-text-tertiary">Current Price</p><p className="text-text-primary font-mono">{cp?.toFixed(5) || '—'}</p></div>
               </div>
@@ -872,7 +875,7 @@ export default function TradesPage() {
               <div><p className="text-xxs text-text-tertiary">Open</p><p className="text-text-primary font-mono">{selectedPosition.open_price}</p></div>
               <div><p className="text-xxs text-text-tertiary">Current</p><p className="text-text-primary font-mono">{cp?.toFixed(5) || '—'}</p></div>
               <div><p className="text-xxs text-text-tertiary">P&L</p><p className={cn('font-mono font-bold', livePnl >= 0 ? 'text-success' : 'text-danger')}>{livePnl >= 0 ? '+' : ''}{formatMoney(livePnl)}</p></div>
-              <div><p className="text-xxs text-text-tertiary">User</p><p className="text-text-primary truncate">{selectedPosition.user_email}</p></div>
+              <div><p className="text-xxs text-text-tertiary">User</p><p className="text-text-primary truncate">{selectedPosition.user_name || selectedPosition.user_email}</p></div>
               <div><p className="text-xxs text-text-tertiary">SL</p><p className="text-sell font-mono">{selectedPosition.stop_loss || '—'}</p></div>
               <div><p className="text-xxs text-text-tertiary">TP</p><p className="text-buy font-mono">{selectedPosition.take_profit || '—'}</p></div>
             </div>
@@ -1051,7 +1054,7 @@ export default function TradesPage() {
               </div>
               {(uploadResult.dummy_users_created ?? 0) > 0 && (
                 <div className="flex-1 min-w-[90px] rounded-lg border border-warning/30 bg-warning/10 px-3 py-2">
-                  <p className="text-xxs text-text-tertiary">Dummy users</p>
+                  <p className="text-xxs text-text-tertiary">New users</p>
                   <p className="text-lg font-bold text-warning">{uploadResult.dummy_users_created}</p>
                 </div>
               )}
