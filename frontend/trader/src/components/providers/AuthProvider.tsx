@@ -64,9 +64,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (isStaff) return;
     if (kickedRef.current) return;
     kickedRef.current = true;
+    // Investor (read-only) sessions log in at /investor — send them back there.
+    const dest = user?.role === 'investor' ? '/investor' : '/auth/login';
     logout();
     toast.error('Platform is under maintenance. You have been signed out.', { duration: 6000 });
-    router.push('/auth/login');
+    router.push(dest);
   }, [maintenance, isAuthenticated, isInitialized, user, logout, router]);
 
   useEffect(() => {

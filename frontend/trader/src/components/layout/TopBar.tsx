@@ -48,8 +48,10 @@ export default function TopBar() {
   }, [showMenu]);
 
   const handleLogout = () => {
+    // Investor (read-only) sessions log in at /investor — send them back there.
+    const dest = useAuthStore.getState().user?.role === 'investor' ? '/investor' : '/auth/login';
     logout();
-    router.push('/auth/login');
+    router.push(dest);
   };
 
   const initials = user

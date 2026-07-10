@@ -12,8 +12,10 @@ export default function MorePage() {
   const { user, logout } = useAuthStore();
 
   const handleLogout = () => {
+    // Investor (read-only) sessions log in at /investor — send them back there.
+    const dest = user?.role === 'investor' ? '/investor' : '/auth/login';
     logout();
-    router.push('/auth/login');
+    router.push(dest);
   };
 
   const initials = user

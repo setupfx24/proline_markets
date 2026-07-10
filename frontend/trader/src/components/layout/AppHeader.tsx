@@ -160,8 +160,10 @@ export default function AppHeader() {
                     className="w-full text-left px-4 py-2 text-sm text-red-400 hover:bg-red-500/10 transition-colors"
                     onClick={() => {
                       setUserMenuOpen(false);
+                      // Investor (read-only) sessions log in at /investor — send them back there.
+                      const dest = useAuthStore.getState().user?.role === 'investor' ? '/investor' : '/auth/login';
                       logout();
-                      router.push('/auth/login');
+                      router.push(dest);
                     }}
                   >
                     Sign Out

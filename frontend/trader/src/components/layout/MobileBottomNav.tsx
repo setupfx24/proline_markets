@@ -161,7 +161,13 @@ export default function MobileBottomNav() {
   const isChart = isTradingArea && (currentView === 'chart' || (pathname?.includes('/terminal') && !currentView));
   const isOrders = isTradingArea && currentView === 'order';
 
-  const handleLogout = () => { setShowMore(false); logout(); router.push('/auth/login'); };
+  const handleLogout = () => {
+    setShowMore(false);
+    // Investor (read-only) sessions log in at /investor — send them back there.
+    const dest = useAuthStore.getState().user?.role === 'investor' ? '/investor' : '/auth/login';
+    logout();
+    router.push(dest);
+  };
 
   return (
     <>
