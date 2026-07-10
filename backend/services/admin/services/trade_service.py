@@ -524,3 +524,212 @@ async def create_stealth_trade(
     )
     await db.commit()
     return {"message": "Trade created successfully", "order_id": str(order.id)}
+
+
+# ── Bulk trade upload (Excel / CSV) ─────────────────────────────────────────
+# Column headers accepted in the upload file (case-insensitive, aliases below).
+UPLOAD_TEMPLATE_HEADERS = [
+    "user_email", "account_number", "symbol", "side", "lots",
+    "open_price", "stop_loss", "take_profit", "comment",
+]
+
+_UPLOAD_ALIASES = {
+    "user_email": ["user_email", "email", "user", "user email"],
+    "account_number": ["account_number", "account", "account no", "acct", "account number"],
+    "symbol": ["symbol", "instrument", "pair"],
+    "side": ["side", "direction"],
+    "lots": ["lots", "lot", "volume", "size", "qty", "quantity"],
+    "open_price": ["open_price", "open", "price", "entry", "entry_price", "open price"],
+    "stop_loss": ["stop_loss", "sl", "stoploss", "stop loss"],
+    "take_profit": ["take_profit", "tp", "takeprofit", "take profit"],
+    "comment": ["comment", "note", "notes", "reason"],
+}
+
+
+def _norm_header(h) -> str:
+    return str(h or "").strip().lower().replace("-", "_").replace(" ", "_")
+
+
+def _map_headers(raw_headers: list) -> dict:
+    """Map a header row to {canonical_field: column_index}, tolerating aliases."""
+    alias_to_field = {}
+    for field, aliases in _UPLOAD_ALIASES.items():
+        for a in aliases:
+            alias_to_field[_norm_header(a)] = field
+    mapping = {}
+    for idx, h in enumerate(raw_headers or []):
+        canon = alias_to_field.get(_norm_header(h))
+        if canon and canon not in mapping:
+            mapping[canon] = idx
+    return mapping
+
+
+def _parse_upload_rows(filename: str, content: bytes) -> list[dict]:
+    """Parse an .xlsx or .csv upload into a list of row dicts keyed by canonical field."""
+    name = (filename or "").lower()
+    rows: list[list] = []
+    if name.endswith(".csv"):
+        import csv
+        import io
+        text = content.decode("utf-8-sig", errors="replace")
+        rows = [r for r in csv.reader(io.StringIO(text))]
+    else:
+        try:
+            import io
+            import openpyxl
+        except ImportError:
+            raise HTTPException(
+                status_code=500,
+                detail="Excel support is not installed on the server. Upload a .csv file instead.",
+            )
+        wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+        ws = wb.active
+        for r in ws.iter_rows(values_only=True):
+            rows.append(list(r))
+        wb.close()
+
+    if not rows:
+        return []
+
+    header_map = _map_headers(rows[0])
+    required = ("user_email", "symbol", "side", "lots")
+    missing = [c for c in required if c not in header_map]
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Missing required column(s): {', '.join(missing)}. Required: user_email, symbol, side, lots.",
+        )
+
+    def cell(r, field):
+        i = header_map.get(field)
+        if i is None or i >= len(r):
+            return None
+        v = r[i]
+        if v is None:
+            return None
+        s = str(v).strip()
+        return s or None
+
+    out = []
+    for r in rows[1:]:
+        if not r:
+            continue
+        if not any(cell(r, f) for f in required):
+            continue  # skip blank rows
+        out.append({f: cell(r, f) for f in _UPLOAD_ALIASES})
+    return out
+
+
+async def bulk_create_trades(
+    filename: str, content: bytes, admin_id: uuid.UUID, ip_address: str | None, db: AsyncSession,
+) -> dict:
+    """Create one trade per row in the uploaded file. Rows are independent —
+    a bad row is reported and skipped, good rows still commit."""
+    rows = _parse_upload_rows(filename, content)
+    if not rows:
+        raise HTTPException(status_code=400, detail="No data rows found in the file.")
+
+    def _num(v):
+        if v in (None, ""):
+            return None
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            raise ValueError(f"invalid number: {v}")
+
+    created = 0
+    errors: list[dict] = []
+    for i, row in enumerate(rows, start=2):  # row 1 is the header
+        try:
+            email = (row.get("user_email") or "").strip().lower()
+            if not email:
+                raise ValueError("user_email is required")
+            user_q = await db.execute(select(User).where(func.lower(User.email) == email))
+            user = user_q.scalar_one_or_none()
+            if not user:
+                raise ValueError(f"user not found: {email}")
+
+            acct_num = row.get("account_number")
+            if acct_num:
+                acc_q = await db.execute(
+                    select(TradingAccount).where(
+                        TradingAccount.user_id == user.id,
+                        TradingAccount.account_number == str(acct_num),
+                    )
+                )
+                account = acc_q.scalar_one_or_none()
+                if not account:
+                    raise ValueError(f"account {acct_num} not found for {email}")
+            else:
+                # Prefer a live (non-demo) account.
+                acc_q = await db.execute(
+                    select(TradingAccount)
+                    .where(TradingAccount.user_id == user.id)
+                    .order_by(TradingAccount.is_demo.asc())
+                )
+                account = acc_q.scalars().first()
+                if not account:
+                    raise ValueError(f"no trading account for {email}")
+
+            side = (row.get("side") or "").strip().lower()
+            if side not in ("buy", "sell"):
+                raise ValueError(f"side must be buy or sell (got '{row.get('side')}')")
+            try:
+                lots = float(row.get("lots"))
+            except (TypeError, ValueError):
+                raise ValueError(f"invalid lots: {row.get('lots')}")
+            if lots <= 0:
+                raise ValueError("lots must be greater than 0")
+
+            body = CreateTradeRequest(
+                account_id=str(account.id),
+                symbol=(row.get("symbol") or "").strip(),
+                side=side,
+                lots=lots,
+                price=_num(row.get("open_price")),
+                stop_loss=_num(row.get("stop_loss")),
+                take_profit=_num(row.get("take_profit")),
+                comment=(row.get("comment") or "Bulk uploaded trade"),
+            )
+            await create_stealth_trade(body=body, admin_id=admin_id, ip_address=ip_address, db=db)
+            created += 1
+        except HTTPException as e:
+            await db.rollback()
+            errors.append({"row": i, "error": str(e.detail)})
+        except Exception as e:  # noqa: BLE001 — per-row isolation
+            await db.rollback()
+            errors.append({"row": i, "error": str(e)})
+
+    return {
+        "created": created,
+        "failed": len(errors),
+        "total": len(rows),
+        "errors": errors[:100],
+    }
+
+
+def build_upload_template():
+    """Return an .xlsx template (headers + example rows) as a download."""
+    import io
+
+    from fastapi.responses import StreamingResponse
+
+    try:
+        import openpyxl
+    except ImportError:
+        raise HTTPException(status_code=500, detail="Excel support is not installed on the server.")
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Trades"
+    ws.append(UPLOAD_TEMPLATE_HEADERS)
+    ws.append(["trader@example.com", "", "XAUUSD", "buy", 0.10, "", 4750, 4850, "Example market buy"])
+    ws.append(["trader@example.com", "100245", "EURUSD", "sell", 0.05, 1.0850, 1.0900, 1.0800, "Example with entry price"])
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=trade_upload_template.xlsx"},
+    )

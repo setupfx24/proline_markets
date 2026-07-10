@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Query, Request, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.common.src.database import get_db
@@ -96,3 +96,27 @@ async def create_stealth_trade(
         body=body, admin_id=admin.id,
         ip_address=request.client.host if request.client else None, db=db,
     )
+
+
+@router.post("/upload")
+async def upload_trades(
+    request: Request,
+    file: UploadFile = File(...),
+    admin: User = Depends(require_permission("trades.create")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Bulk-create trades from an uploaded .xlsx/.csv file (one trade per row)."""
+    content = await file.read()
+    return await trade_service.bulk_create_trades(
+        filename=file.filename or "upload.xlsx",
+        content=content,
+        admin_id=admin.id,
+        ip_address=request.client.host if request.client else None,
+        db=db,
+    )
+
+
+@router.get("/upload/template")
+async def download_upload_template():
+    """Download the .xlsx template for bulk trade upload (public — static template, no data)."""
+    return trade_service.build_upload_template()

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
-import { adminApi } from '@/lib/api';
+import { adminApi, getAdminApiBase } from '@/lib/api';
 import toast from 'react-hot-toast';
 import Link from 'next/link';
 import {
@@ -10,11 +10,13 @@ import {
   ChevronLeft,
   ChevronRight,
   Edit3,
+  FileDown,
   Loader2,
   MoreHorizontal,
   Plus,
   Search,
   Trash2,
+  Upload,
   X,
 } from 'lucide-react';
 
@@ -213,6 +215,35 @@ export default function TradesPage() {
   const [createTp, setCreateTp] = useState('');
   const [createReason, setCreateReason] = useState('');
   const [userSearchLoading, setUserSearchLoading] = useState(false);
+
+  // Bulk upload state
+  const uploadInputRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadResult, setUploadResult] = useState<{ created: number; failed: number; total: number; errors: { row: number; error: string }[] } | null>(null);
+
+  const handleUploadFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (uploadInputRef.current) uploadInputRef.current.value = ''; // allow re-selecting same file
+    if (!file) return;
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const res = await adminApi.postForm<{ created: number; failed: number; total: number; errors: { row: number; error: string }[] }>('/trades/upload', fd);
+      setUploadResult(res);
+      if (res.created > 0) {
+        toast.success(`${res.created} trade${res.created === 1 ? '' : 's'} created${res.failed ? `, ${res.failed} failed` : ''}`);
+        setActiveTab('open');
+        void fetchPositions();
+      } else {
+        toast.error(res.failed ? `All ${res.failed} rows failed — see details` : 'No trades created');
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Upload failed');
+    } finally {
+      setUploading(false);
+    }
+  };
 
   /** Full fetch with loading spinner — only on initial load or manual refresh. */
   const fetchPositions = useCallback(async (silent = false) => {
@@ -478,6 +509,41 @@ export default function TradesPage() {
             <p className="text-xxs text-text-tertiary mt-0.5">Positions, pending orders, and history</p>
           </div>
           <div className="flex items-center gap-2">
+            <input
+              ref={uploadInputRef}
+              type="file"
+              accept=".xlsx,.xls,.csv"
+              className="hidden"
+              onChange={handleUploadFile}
+            />
+            <button
+              type="button"
+              onClick={() => {
+                const a = document.createElement('a');
+                a.href = `${getAdminApiBase()}/trades/upload/template`;
+                a.download = 'trade_upload_template.xlsx';
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+              }}
+              className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md border bg-bg-secondary text-xs font-medium text-text-secondary border-border-primary transition-fast hover:bg-bg-hover hover:text-text-primary"
+              title="Download the Excel template"
+            >
+              <FileDown size={14} /> Template
+            </button>
+            <button
+              type="button"
+              onClick={() => uploadInputRef.current?.click()}
+              disabled={uploading}
+              className={cn(
+                'inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md border border-buy/30',
+                'bg-buy/10 text-xs font-medium text-buy transition-fast hover:bg-buy/20 disabled:opacity-50 disabled:cursor-not-allowed',
+              )}
+              title="Upload an Excel/CSV file to create trades in bulk"
+            >
+              {uploading ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
+              {uploading ? 'Uploading…' : 'Upload Trade'}
+            </button>
             <Link href="/trades/create" className={cn(
               'inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md border',
               'bg-bg-secondary text-xs font-medium text-text-secondary border-border-primary transition-fast hover:bg-bg-hover hover:text-text-primary',
@@ -967,6 +1033,52 @@ export default function TradesPage() {
             </button>
           </div>
         </div>
+      </Modal>
+
+      {/* Bulk upload result */}
+      <Modal open={!!uploadResult} onClose={() => setUploadResult(null)} title="Trade upload result" wide>
+        {uploadResult && (
+          <div className="space-y-3">
+            <div className="flex flex-wrap gap-3">
+              <div className="flex-1 min-w-[100px] rounded-lg border border-buy/30 bg-buy/10 px-3 py-2">
+                <p className="text-xxs text-text-tertiary">Created</p>
+                <p className="text-lg font-bold text-buy">{uploadResult.created}</p>
+              </div>
+              <div className="flex-1 min-w-[100px] rounded-lg border border-sell/30 bg-sell/10 px-3 py-2">
+                <p className="text-xxs text-text-tertiary">Failed</p>
+                <p className="text-lg font-bold text-sell">{uploadResult.failed}</p>
+              </div>
+              <div className="flex-1 min-w-[100px] rounded-lg border border-border-primary bg-bg-secondary px-3 py-2">
+                <p className="text-xxs text-text-tertiary">Total rows</p>
+                <p className="text-lg font-bold text-text-primary">{uploadResult.total}</p>
+              </div>
+            </div>
+            {uploadResult.errors.length > 0 && (
+              <div className="rounded-lg border border-border-primary overflow-hidden">
+                <div className="px-3 py-2 bg-bg-secondary border-b border-border-primary text-xxs font-semibold text-text-secondary">
+                  Rows skipped
+                </div>
+                <div className="max-h-64 overflow-y-auto divide-y divide-border-primary/60">
+                  {uploadResult.errors.map((er, i) => (
+                    <div key={i} className="flex items-start gap-2 px-3 py-2 text-xs">
+                      <span className="shrink-0 font-mono text-text-tertiary">Row {er.row}</span>
+                      <span className="text-sell">{er.error}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={() => setUploadResult(null)}
+                className="px-4 py-1.5 rounded-md border border-border-primary bg-bg-secondary text-xs font-medium text-text-secondary hover:bg-bg-hover hover:text-text-primary transition-fast"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        )}
       </Modal>
     </>
   );
