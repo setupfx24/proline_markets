@@ -10,7 +10,7 @@ import {
   Settings, Sliders, BarChart3, Gift, Image, HeadphonesIcon,
   UserCog, ChevronDown, ChevronRight, Network, Share2,
   DollarSign, Percent, ArrowLeftRight, PanelLeftClose, PanelLeft,
-  Receipt, Layers, ShieldCheck, ScrollText, BookOpen, Eye,
+  Receipt, Layers, ShieldCheck, ScrollText, BookOpen, Eye, Cable,
 } from 'lucide-react';
 
 interface NavItem {
@@ -37,6 +37,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'Transactions', href: '/transactions', icon: Receipt, perm: 'deposits.view' },
   { label: 'Banks', href: '/banks', icon: Landmark, perm: 'banks.view' },
   { label: 'Account types', href: '/account-types', icon: Layers, perm: 'config.view' },
+  { label: 'MT5-Connect', href: '/mt5-connect', icon: Cable, perm: 'config.view' },
   {
     label: 'Config', icon: Sliders, perm: 'config.view',
     children: [

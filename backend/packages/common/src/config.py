@@ -81,6 +81,13 @@ class Settings(BaseSettings):
     CORECEN_BROKER_API_KEY: str = ""       # ck_... from Corecen broker API keys
     CORECEN_BROKER_API_SECRET: str = ""    # cs_... from Corecen broker API keys
 
+    # MetaApi (MT5) mirror/bridge. Global secrets only; the per-account list
+    # lives in the mt5_account_links table (admin-managed, dynamic). The
+    # metaapi-worker idles unless METAAPI_ENABLED is true.
+    METAAPI_ENABLED: bool = False
+    METAAPI_TOKEN: str = ""      # MetaApi JWT (secret) — shared across all accounts
+    METAAPI_REGION: str = ""     # optional default region (e.g. new-york)
+
     MARGIN_CALL_LEVEL: float = 80.0
     STOP_OUT_LEVEL: float = 50.0
     MAX_OPEN_TRADES: int = 200

@@ -16,7 +16,7 @@ from routes import (
     auth, dashboard, users, trades, deposits, banks, book,
     config as routes_config, instruments_admin, business, social, analytics, bonus, banners,
     support, employees, settings, transactions, kyc, account_types, user_audit_logs,
-    investor_access, notifications,
+    investor_access, notifications, mt5_links,
 )
 
 app_settings = get_settings()
@@ -73,6 +73,24 @@ async def _apply_startup_ddl():
             await conn.execute(text(
                 "ALTER TABLE algo_api_keys ADD COLUMN IF NOT EXISTS api_secret VARCHAR(128)"
             ))
+            # MT5 account links (MetaApi → platform account mappings). Create if
+            # migration 0020 hasn't been applied so the admin CRUD doesn't 500.
+            await conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS mt5_account_links (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    metaapi_account_id VARCHAR(64) UNIQUE NOT NULL,
+                    platform_account_number VARCHAR(20) NOT NULL,
+                    region VARCHAR(40),
+                    mode VARCHAR(10) DEFAULT 'mirror',
+                    enabled BOOLEAN DEFAULT true,
+                    status VARCHAR(20) DEFAULT 'pending',
+                    last_error TEXT,
+                    last_sync_at TIMESTAMPTZ,
+                    label VARCHAR(100) DEFAULT '',
+                    created_at TIMESTAMPTZ DEFAULT now(),
+                    updated_at TIMESTAMPTZ DEFAULT now()
+                )
+            """))
     except Exception as e:
         logger.warning("startup DDL skipped: %s", e)
 
@@ -139,6 +157,7 @@ app.include_router(account_types.router, prefix=prefix)
 app.include_router(user_audit_logs.router, prefix=prefix)
 app.include_router(investor_access.router, prefix=prefix)
 app.include_router(notifications.router, prefix=prefix)
+app.include_router(mt5_links.router, prefix=prefix)
 
 
 @app.get("/health")

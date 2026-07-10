@@ -609,26 +609,34 @@ async def list_positions(account_id: UUID, user_id: UUID, status: str, db: Async
         contract_size = pos.instrument.contract_size if pos.instrument else Decimal("100000")
         pos_status = pos.status.value if hasattr(pos.status, 'value') else str(pos.status)
 
-        if pos.instrument:
+        # Externally-mirrored (MT5 via MetaApi) positions carry the broker's own
+        # price + P&L — show those as-is, never the platform's Redis-tick recompute.
+        is_mt5 = bool(pos.comment and str(pos.comment).startswith("MT5"))
+        if is_mt5:
+            current_price = float(pos.external_price) if pos.external_price is not None else float(pos.open_price)
+        elif pos.instrument:
             tick_data = await redis_client.get(PriceChannel.tick_key(pos.instrument.symbol))
             if tick_data and pos_status == "open":
                 tick = json.loads(tick_data)
                 current_price = float(tick["bid"]) if sv == "buy" else float(tick["ask"])
                 profit = float(calc_pnl(pos.side, pos.open_price, Decimal(str(current_price)), pos.lots, contract_size, instrument=pos.instrument))
 
-        copy_trade_q = await db.execute(
-            select(CopyTrade).where(CopyTrade.investor_position_id == pos.id)
-        )
-        copy_trade = copy_trade_q.scalar_one_or_none()
-        if copy_trade:
-            trade_type = "copy_trade"
-        elif pos.comment and str(pos.comment).startswith("Algo ["):
-            # Algo connector tags every position it opens with this prefix
-            # (see api/algo_connector.py). Lets the UI render an Algo badge so
-            # the master can tell bot trades apart from manual ones at a glance.
-            trade_type = "algo_trade"
+        if is_mt5:
+            trade_type = "mt5_trade"
         else:
-            trade_type = "self_trade"
+            copy_trade_q = await db.execute(
+                select(CopyTrade).where(CopyTrade.investor_position_id == pos.id)
+            )
+            copy_trade = copy_trade_q.scalar_one_or_none()
+            if copy_trade:
+                trade_type = "copy_trade"
+            elif pos.comment and str(pos.comment).startswith("Algo ["):
+                # Algo connector tags every position it opens with this prefix
+                # (see api/algo_connector.py). Lets the UI render an Algo badge so
+                # the master can tell bot trades apart from manual ones at a glance.
+                trade_type = "algo_trade"
+            else:
+                trade_type = "self_trade"
 
         pos_status_val = pos.status.value if hasattr(pos.status, 'value') else str(pos.status)
         response.append({
@@ -669,6 +677,9 @@ async def modify_position(position_id: UUID, req, user_id: UUID, db: AsyncSessio
     acct_row = acct_result.scalar_one_or_none()
     if not acct_row:
         raise HTTPException(status_code=403, detail="Not your position")
+
+    if pos.comment and str(pos.comment).startswith("MT5"):
+        raise HTTPException(status_code=403, detail="MT5-mirrored positions are read-only; manage them in MT5")
 
     pos_status = pos.status.value if hasattr(pos.status, 'value') else str(pos.status)
     if pos_status != "open":
@@ -752,6 +763,9 @@ async def close_position(position_id: UUID, req, user_id: UUID, db: AsyncSession
     account = acct_result.scalar_one_or_none()
     if not account:
         raise HTTPException(status_code=403, detail="Not your position")
+
+    if pos.comment and str(pos.comment).startswith("MT5"):
+        raise HTTPException(status_code=403, detail="MT5-mirrored positions are read-only; manage them in MT5")
 
     pos_status = pos.status.value if hasattr(pos.status, 'value') else str(pos.status)
     if pos_status != "open":

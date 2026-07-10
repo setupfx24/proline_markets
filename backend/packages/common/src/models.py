@@ -351,8 +351,8 @@ class Position(Base):
     swap = Column(Numeric(18, 8), default=0)
     commission = Column(Numeric(18, 8), default=0)
     profit = Column(Numeric(18, 8), default=0)
-    # Legacy: previously used by the (now removed) MT5/MetaApi mirror to store a
-    # broker's own current price. Retained for schema compatibility; unused.
+    # For externally-mirrored positions (MT5 via MetaApi): the broker's own
+    # current price, shown as-is instead of the platform's Redis-tick recompute.
     external_price = Column(Numeric(18, 8))
     closed_at = Column(DateTime(timezone=True))
     comment = Column(Text)
@@ -845,6 +845,31 @@ class SystemSetting(Base):
     description = Column(Text)
     updated_by = Column(UUID(as_uuid=True), ForeignKey("users.id"))
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class MT5AccountLink(Base):
+    """Admin-managed mapping: one MetaApi (MT5) account → one platform TradingAccount.
+
+    The metaapi-worker reads every enabled row and mirrors that MT5 account's
+    live positions + balance into the platform account whose account_number ==
+    platform_account_number. `mode` = 'mirror' (read-only, Phase 1) or 'two_way'
+    (also forward platform orders to MT5, Phase 2). Dynamic: rows can be added/
+    removed/toggled at runtime and the worker picks them up on its next refresh.
+    """
+    __tablename__ = "mt5_account_links"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    metaapi_account_id = Column(String(64), unique=True, nullable=False)
+    platform_account_number = Column(String(20), nullable=False)
+    region = Column(String(40))                    # optional per-account MetaApi region
+    mode = Column(String(10), default="mirror")    # mirror | two_way
+    enabled = Column(Boolean, default=True)
+    status = Column(String(20), default="pending")  # pending | connected | error
+    last_error = Column(Text)
+    last_sync_at = Column(DateTime(timezone=True))
+    label = Column(String(100), default="")
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class SharedTrade(Base):
