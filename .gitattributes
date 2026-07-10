@@ -1,0 +1,14 @@
+# Treat binary assets as binary so Git never applies CRLF/text normalization
+# (which corrupts zip-based formats like .xlsx and images).
+*.xlsx binary
+*.xls  binary
+*.csv  text eol=lf
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.webp binary
+*.pdf  binary
+*.apk  binary
+*.zip  binary
+*.ico  binary

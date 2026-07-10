@@ -1,0 +1,4 @@
+user_email,account_number,symbol,side,lots,open_price,stop_loss,take_profit,comment
+trader@example.com,,XAUUSD,buy,0.10,,4750,4850,Example market buy
+trader@example.com,100245,EURUSD,sell,0.05,1.0850,1.0900,1.0800,Example with entry price
+hari@example.com,,BTCUSD,buy,0.01,,,,Market buy no SL or TP
