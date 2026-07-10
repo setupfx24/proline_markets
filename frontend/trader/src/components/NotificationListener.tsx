@@ -41,6 +41,10 @@ export function NotificationBell() {
 
   const badgeLabel = unreadCount > 99 ? '99+' : String(unreadCount);
 
+  // Bell shows unread only, so "Mark all read" clears the list (and it stays
+  // cleared on reopen since read notifications are filtered out).
+  const visibleNotifications = notifications.filter((n) => !n.is_read);
+
   return (
     <div className="relative">
       <button
@@ -90,10 +94,10 @@ export function NotificationBell() {
               </button>
             </div>
             <div className="flex-1 overflow-y-auto scrollbar-none">
-              {notifications.length === 0 ? (
+              {visibleNotifications.length === 0 ? (
                 <div className="px-4 py-8 text-center text-xs text-text-tertiary">No notifications</div>
               ) : (
-                notifications.map((n) => (
+                visibleNotifications.map((n) => (
                   <button
                     key={n.id}
                     type="button"
