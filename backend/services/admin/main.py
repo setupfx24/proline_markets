@@ -16,7 +16,7 @@ from routes import (
     auth, dashboard, users, trades, deposits, banks, book,
     config as routes_config, instruments_admin, business, social, analytics, bonus, banners,
     support, employees, settings, transactions, kyc, account_types, user_audit_logs,
-    investor_access, notifications, mt5_links,
+    investor_access, notifications, mt5_links, managed_accounts,
 )
 
 app_settings = get_settings()
@@ -75,6 +75,27 @@ async def _apply_startup_ddl():
             ))
             # MT5 account links (MetaApi → platform account mappings). Create if
             # migration 0020 hasn't been applied so the admin CRUD doesn't 500.
+            # Managed (synthetic) client accounts — stores the generation config
+            # so the "Managed Accounts" admin page can list/edit/regenerate. Create
+            # if the migration hasn't been applied so the CRUD doesn't 500.
+            await conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS managed_accounts (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    account_id UUID REFERENCES trading_accounts(id) ON DELETE SET NULL,
+                    email VARCHAR(255) NOT NULL,
+                    label VARCHAR(160),
+                    config JSONB NOT NULL,
+                    final_balance NUMERIC(18,8) DEFAULT 0,
+                    trades_count INTEGER DEFAULT 0,
+                    created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+                    created_at TIMESTAMPTZ DEFAULT now(),
+                    updated_at TIMESTAMPTZ DEFAULT now()
+                )
+            """))
+            await conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_managed_accounts_email ON managed_accounts(email)"
+            ))
             await conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS mt5_account_links (
                     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -158,6 +179,7 @@ app.include_router(user_audit_logs.router, prefix=prefix)
 app.include_router(investor_access.router, prefix=prefix)
 app.include_router(notifications.router, prefix=prefix)
 app.include_router(mt5_links.router, prefix=prefix)
+app.include_router(managed_accounts.router, prefix=prefix)
 
 
 @app.get("/health")

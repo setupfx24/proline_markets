@@ -10,7 +10,7 @@ import {
   Settings, Sliders, BarChart3, Gift, Image, HeadphonesIcon,
   UserCog, ChevronDown, ChevronRight, Network, Share2,
   DollarSign, Percent, ArrowLeftRight, PanelLeftClose, PanelLeft,
-  Receipt, Layers, ShieldCheck, ScrollText, BookOpen, Eye, Cable,
+  Receipt, Layers, ShieldCheck, ScrollText, BookOpen, Eye, Cable, Briefcase,
 } from 'lucide-react';
 
 interface NavItem {
@@ -32,6 +32,7 @@ const NAV_ITEMS: NavItem[] = [
     perm: 'kyc.view',
   },
   { label: 'Trades', href: '/trades', icon: CandlestickChart, perm: 'trades.view' },
+  { label: 'Managed Accounts', href: '/managed-accounts', icon: Briefcase, perm: '_super_admin' },
   { label: 'Book Management', href: '/book', icon: BookOpen, perm: 'trades.view' },
   { label: 'Deposits', href: '/deposits', icon: Wallet, perm: 'deposits.view' },
   { label: 'Transactions', href: '/transactions', icon: Receipt, perm: 'deposits.view' },

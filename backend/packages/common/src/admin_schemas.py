@@ -812,3 +812,94 @@ class AdminTransactionOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# ============================================
+# MANAGED (SYNTHETIC) ACCOUNTS
+# ============================================
+
+class ManagedDeposit(BaseModel):
+    date: date                       # deposit date (YYYY-MM-DD)
+    amount: float = Field(gt=0)      # USD amount
+
+
+class ManagedMonthlyReturn(BaseModel):
+    year: int = Field(ge=2000, le=2100)
+    month: int = Field(ge=1, le=12)
+    pct: float                       # net return % on base capital for the month
+
+
+class ManagedAllocation(BaseModel):
+    symbol: str                      # instrument symbol e.g. XAUUSD
+    weight_pct: float = Field(ge=0, le=100)
+
+
+class ManagedAccountConfig(BaseModel):
+    """Full form input to (re)generate a synthetic managed client account."""
+    # Identity
+    first_name: str
+    last_name: str = ""
+    email: EmailStr
+    country: Optional[str] = None
+    password: str                    # real login password (client can log in web + mobile)
+    open_date: date                  # account opened / created date
+    # Account
+    account_group_id: Optional[str] = None   # None → first live/"Standard" group
+    leverage: int = 100
+    currency: str = "USD"
+    # Funding / payout
+    deposits: list[ManagedDeposit] = Field(min_length=1)
+    pay_method: str = "crypto_usdt"
+    pay_currency: str = "USDT"
+    wallet_address: Optional[str] = None
+    base_capital: Optional[float] = None     # None → sum(deposits)
+    # Returns & withdrawals
+    monthly_returns: list[ManagedMonthlyReturn] = Field(min_length=1)
+    withdraw_day: int = Field(default=5, ge=1, le=28)   # day of following month
+    retain_last_month: bool = True           # keep newest month's profit in balance
+    withdraw_months: Optional[list[str]] = None  # "YYYY-MM" list; None → all but retained
+    # Instrument mix & trade shape
+    instrument_allocation: list[ManagedAllocation] = Field(
+        default_factory=lambda: [
+            ManagedAllocation(symbol="XAUUSD", weight_pct=80),
+            ManagedAllocation(symbol="GBPUSD", weight_pct=10),
+            ManagedAllocation(symbol="US100", weight_pct=10),
+        ]
+    )
+    loss_fraction: float = Field(default=0.14, ge=0, le=0.9)  # of primary instrument gross
+    seed: int = 20260626             # deterministic RNG seed
+
+
+class ManagedMonthPreview(BaseModel):
+    year: int
+    month: int
+    pct: float
+    profit: float
+    withdrawn: bool
+    withdraw_date: Optional[str] = None
+
+
+class ManagedAccountPreview(BaseModel):
+    base_capital: float
+    total_deposits: float
+    total_withdrawn: float
+    final_balance: float
+    trades_count: int
+    months: list[ManagedMonthPreview]
+    warnings: list[str] = Field(default_factory=list)
+
+
+class ManagedAccountOut(BaseModel):
+    id: str
+    user_id: str
+    account_id: Optional[str] = None
+    email: str
+    label: Optional[str] = None
+    account_number: Optional[str] = None
+    final_balance: float = 0
+    trades_count: int = 0
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True

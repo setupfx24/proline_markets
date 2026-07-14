@@ -1,0 +1,54 @@
+{
+  "expo": {
+    "name": "prolinemarkets",
+    "slug": "prolinemarket",
+    "version": "1.0.0",
+    "runtimeVersion": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/logo.png",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/logo.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#000000"
+    },
+    "updates": {
+      "enabled": true,
+      "checkAutomatically": "ON_LOAD",
+      "fallbackToCacheTimeout": 0,
+      "url": "https://u.expo.dev/054b5447-1ebf-4a6a-afe3-6d49191ea3ac"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": true,
+          "NSAllowsLocalNetworking": true
+        }
+      },
+      "bundleIdentifier": "com.prolinemarkets.app"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/logo.png",
+        "backgroundColor": "#FFFFFF"
+      },
+      "edgeToEdgeEnabled": true,
+      "package": "com.prolinemarkets.app"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "054b5447-1ebf-4a6a-afe3-6d49191ea3ac"
+      }
+    },
+    "owner": "shivam92388",
+    "plugins": [
+      "expo-font",
+      "expo-updates"
+    ]
+  }
+}

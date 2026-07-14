@@ -872,6 +872,31 @@ class MT5AccountLink(Base):
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class ManagedAccount(Base):
+    """Admin-generated synthetic client account (deposits, month-wise returns,
+    fabricated closed trades, monthly withdrawals). Stores the generation config
+    so an admin can list, edit and regenerate it from the "Managed Accounts"
+    admin page. The generated data lands in the normal users/trading_accounts/
+    deposits/withdrawals/transactions/positions/trade_history tables, so it shows
+    on the trader web app AND the mobile APK with no client-side changes."""
+    __tablename__ = "managed_accounts"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    account_id = Column(UUID(as_uuid=True), ForeignKey("trading_accounts.id", ondelete="SET NULL"))
+    email = Column(String(255), nullable=False, index=True)
+    label = Column(String(160))
+    # Full form input used to (re)generate this account (deposits, monthly_returns,
+    # instrument_allocation, withdrawal schedule, etc.). Source of truth for edits.
+    config = Column(JSONB, nullable=False)
+    # Cached headline figures for the list view (avoids recomputing on every load).
+    final_balance = Column(Numeric(18, 8), default=0)
+    trades_count = Column(Integer, default=0)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class SharedTrade(Base):
     """Public share link for a trader's position — TradeLocker-style share card."""
     __tablename__ = "shared_trades"
