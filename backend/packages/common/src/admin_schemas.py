@@ -839,7 +839,7 @@ class ManagedAccountConfig(BaseModel):
     # Identity
     first_name: str
     last_name: str = ""
-    email: EmailStr
+    email: str                       # not EmailStr — avoids the email-validator dep; normalised in the service
     country: Optional[str] = None
     password: str                    # real login password (client can log in web + mobile)
     open_date: date                  # account opened / created date
