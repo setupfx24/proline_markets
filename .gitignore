@@ -65,6 +65,9 @@ dist/
 build/
 *.egg-info/
 
+# Desktop terminal installer binary — host on the server, don't commit (~16 MB)
+frontend/trader/public/downloads/*.exe
+
 # Misc
 *.local
 *.tsbuildinfo
