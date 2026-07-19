@@ -5,7 +5,7 @@ import { ScrubSequence } from "@/components/ScrubSequence";
 import { LiveTickerBar } from "@/components/LiveTickerBar";
 import { BackgroundPaths } from "@/components/ui/background-paths";
 import { Button } from "@/components/ui/button";
-import { FRAMES_PATH, FRAME_COUNT, FRAME_EXT } from "@/lib/constants";
+import { FRAME_COUNT, frameUrl } from "@/lib/constants";
 import { HERO_SLIDES, BRAND } from "@/lib/forexData";
 
 const SLIDE_DURATION = 6000;
@@ -26,9 +26,8 @@ export function Hero({ scrollRef }) {
       <div className="relative h-screen w-full overflow-hidden">
         <BackgroundPaths className="z-0" />
         <ScrubSequence
-          framesPath={FRAMES_PATH}
           frameCount={FRAME_COUNT}
-          ext={FRAME_EXT}
+          frameUrl={frameUrl}
           scrollTargetRef={scrollRef}
           className="absolute inset-0 w-full h-full z-[1]"
         />

@@ -16,40 +16,42 @@ below. A banner appears at the bottom of the page if frames are missing.
 
 ## Frame pipeline
 
-The hero plays a video by swapping JPGs on a `<canvas>` tied to scroll
-position. You provide ONE short source video (5–15 s is ideal) and extract it
-to numbered stills.
+The hero plays a video by swapping stills on a `<canvas>` tied to scroll
+position.
 
-```bash
-# 1. Put the source video at input/source.mp4 (input/ is gitignored).
-mkdir -p input public/frames
+**The frames do NOT live in this app's `public/frames` — that directory is
+empty.** They are served by the Next.js app from
+`frontend/trader/public/frames` (121 WebP files, ~25 MB). This matters: at
+runtime Next.js matches `/frames/*` against its own `public/` and serves the
+file directly. Anything it can't match falls through the `rewrites()` fallback
+in `next.config.mjs` to this Vite app, which answers unknown paths with the SPA
+`index.html` — so a wrong frame name yields HTML (or a 503 under load), never a
+clean 404.
 
-# 2. Extract frames with ffmpeg (must be installed locally).
-ffmpeg -i input/source.mp4 \
-  -vf "fps=30,scale='min(1920,iw)':'-2':flags=lanczos" \
-  -q:v 3 \
-  public/frames/frame_%04d.jpg
+Current on-disk naming — 0-indexed, **3**-digit, with a frame-delay suffix:
 
-# 3. Count the frames and update FRAME_COUNT in src/lib/constants.ts.
-ls public/frames | wc -l
+```
+frame_000_delay-0.066s.webp … frame_120_delay-0.066s.webp
 ```
 
 **Rules:**
 
-- Filenames must be zero-padded 4-digit (`frame_0001.jpg` … `frame_NNNN.jpg`).
-- Update `FRAME_COUNT` in [src/lib/constants.ts](src/lib/constants.ts) to match
-  the actual number of files. The hero section's height (`250vh`) is tuned for
-  ~240 frames; bump to `300vh`–`400vh` for longer sequences.
-- `input/` stays gitignored. `public/frames/` ships with the build.
-- If your hosting platform has a 25 MB upload limit (e.g. Vercel hobby),
-  warn yourself if total frames exceed 20 MB. WebP halves the size:
+- [src/lib/constants.js](src/lib/constants.js) is the single source of truth.
+  `frameUrl(i)` builds every URL; `FRAME_COUNT` must equal the number of files
+  in `frontend/trader/public/frames`.
+- The `<link rel="preload">` in [index.html](index.html) must match
+  `FIRST_FRAME_URL`.
+- If you re-extract frames, either keep the naming above or update `frameUrl()`
+  to match — do not change one without the other.
+
+To regenerate from a source video (`input/` is gitignored):
 
 ```bash
-# Optional WebP pass (smaller payload, same visual quality)
-for f in public/frames/*.jpg; do
-  cwebp -q 82 "$f" -o "${f%.jpg}.webp" && rm "$f"
-done
-# Then set FRAME_EXT to "webp" in src/lib/constants.ts
+ffmpeg -i input/source.mp4 \
+  -vf "fps=15,scale='min(1920,iw)':'-2':flags=lanczos" \
+  ../../public/frames/frame_%03d.webp
+
+ls ../../public/frames | wc -l   # -> update FRAME_COUNT
 ```
 
 **No ffmpeg locally?** A WASM alternative using `@ffmpeg/ffmpeg` works in Node

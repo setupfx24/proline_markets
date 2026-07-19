@@ -1,11 +1,8 @@
 import { useEffect, useRef } from "react";
 
-const pad4 = (n) => String(n).padStart(4, "0");
-
 export function ScrubSequence({
-  framesPath,
   frameCount,
-  ext = "jpg",
+  frameUrl,
   className,
   scrollTargetRef,
 }) {
@@ -20,13 +17,10 @@ export function ScrubSequence({
   );
 
   useEffect(() => {
-    const urls = Array.from(
-      { length: frameCount },
-      (_, i) => `${framesPath}/frame_${pad4(i + 1)}.${ext}`
-    );
+    const urls = Array.from({ length: frameCount }, (_, i) => frameUrl(i));
 
     // Pre-create the Image objects so drawFrame() can index any frame safely,
-    // but DON'T set every .src at once — firing all ~240 requests simultaneously
+    // but DON'T set every .src at once — firing all ~120 requests simultaneously
     // floods the origin (tripping rate limits / overwhelming the upstream and
     // causing 503s). Load sequentially through a small concurrency pool instead;
     // sequential order also matches how the scrubber consumes frames.
@@ -58,7 +52,7 @@ export function ScrubSequence({
     return () => {
       cancelled = true;
     };
-  }, [framesPath, frameCount, ext]);
+  }, [frameCount, frameUrl]);
 
   const drawImage = (img) => {
     const canvas = canvasRef.current;
