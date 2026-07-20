@@ -4,7 +4,7 @@ import { BRAND_NAME } from '@/lib/brand';
 
 /**
  * Updates the browser tab title with the selected symbol and live price,
- * e.g. "â–² XAUUSD 4,757.37 | ProlineMarkets". Restores original title on unmount.
+ * e.g. "▲ XAUUSD 4,757.37 | ProlineMarkets". Restores original title on unmount.
  */
 export function useDocumentTitle() {
   const selectedSymbol = useTradingStore((s) => s.selectedSymbol);
@@ -31,8 +31,8 @@ export function useDocumentTitle() {
     const price = tick.bid.toFixed(digits);
     let arrow = '';
     if (prevBid !== undefined) {
-      if (tick.bid > prevBid) arrow = 'â–² ';
-      else if (tick.bid < prevBid) arrow = 'â–¼ ';
+      if (tick.bid > prevBid) arrow = '▲ ';
+      else if (tick.bid < prevBid) arrow = '▼ ';
     }
 
     document.title = `${arrow}${selectedSymbol} ${price} | ${original}`;
