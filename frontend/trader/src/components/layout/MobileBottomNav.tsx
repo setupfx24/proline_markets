@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import { useState, useMemo } from 'react';
 import Link from 'next/link';
@@ -24,6 +24,7 @@ import {
 import { useUIStore } from '@/stores/uiStore';
 import { useAuthStore } from '@/stores/authStore';
 import { useTradingStore } from '@/stores/tradingStore';
+import { useStandalone } from '@/hooks/useStandalone';
 import {
   getPersistedTradingAccountId,
   setPersistedTradingAccountId,
@@ -98,6 +99,7 @@ export default function MobileBottomNav() {
   const activeAccount = useTradingStore((s) => s.activeAccount);
   const setActiveAccount = useTradingStore((s) => s.setActiveAccount);
   const [showMore, setShowMore] = useState(false);
+  const standalone = useStandalone();
 
   const tradingAccountId = useMemo(() => {
     if (pathname?.startsWith('/trading/terminal')) return searchParams.get('account');
@@ -143,6 +145,9 @@ export default function MobileBottomNav() {
     pathname === '/risk' || pathname === '/about' || pathname === '/contact' ||
     pathname === '/platforms' || pathname === '/white-label';
   if (pathname?.startsWith('/auth') || isPublicPage) return null;
+  // The installed app is terminal-only, so the nav that leaves it is dropped
+  // rather than left to bounce off StandaloneGuard.
+  if (standalone) return null;
 
   const currentView = searchParams.get('view') || '';
   const isTradingArea = pathname?.startsWith('/trading');

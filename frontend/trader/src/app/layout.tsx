@@ -8,6 +8,7 @@ import { AuthProvider } from '@/components/providers/AuthProvider';
 import NotificationListener from '@/components/NotificationListener';
 import TopLoader from '@/components/TopLoader';
 import InstallApp from '@/components/pwa/InstallApp';
+import StandaloneGuard from '@/components/pwa/StandaloneGuard';
 
 export const metadata: Metadata = {
   title: 'ProlineMarketsFX',
@@ -51,6 +52,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <AuthProvider>
             <NotificationListener />
             <InstallApp />
+            <Suspense fallback={null}>
+              <StandaloneGuard />
+            </Suspense>
             {children}
             <Suspense fallback={null}>
               <MobileBottomNav />

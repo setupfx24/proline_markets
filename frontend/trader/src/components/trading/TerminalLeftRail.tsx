@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { wsManager, type ConnectionStatus } from '@/lib/ws/wsManager';
+import { useStandalone } from '@/hooks/useStandalone';
 
 export type TerminalSpaceId = 'balanced' | 'chart' | 'trading';
 
@@ -102,6 +103,7 @@ export default function TerminalLeftRail({
   onPanelsSelectCalc,
 }: TerminalLeftRailProps) {
   const [wsStatus, setWsStatus] = useState<ConnectionStatus>('disconnected');
+  const standalone = useStandalone();
 
   useEffect(() => {
     const unsub = wsManager.onStatusChange(setWsStatus);
@@ -131,7 +133,9 @@ export default function TerminalLeftRail({
     >
       <div className="flex flex-col items-center gap-0.5 pt-2 pb-1 px-1.5 border-b border-border-primary">
         <div className="mb-1 flex justify-center w-full">
-          <ProlineMarketsWordmark href="/accounts" variant="rail" />
+          {/* In the installed app the wordmark is not a way out to /accounts —
+              the app is terminal-only, so it stays as plain branding. */}
+          <ProlineMarketsWordmark href="/accounts" variant="rail" static={standalone} />
         </div>
         <RailBtn title="Search symbols" onClick={onFocusSymbolSearch}>
           <Search size={17} strokeWidth={1.75} />
@@ -213,26 +217,32 @@ export default function TerminalLeftRail({
         >
           <PanelBottom size={17} strokeWidth={1.75} />
         </RailBtn>
-        <Link
-          href="/support"
-          title="Support chat"
-          className="w-9 h-9 rounded-md flex items-center justify-center text-text-tertiary hover:text-text-primary hover:bg-bg-hover transition-colors"
-        >
-          <MessageCircle size={17} strokeWidth={1.75} />
-        </Link>
+        {/* Support and Settings leave the terminal, so they are hidden in the
+            installed app rather than left to bounce off StandaloneGuard. */}
+        {!standalone && (
+          <Link
+            href="/support"
+            title="Support chat"
+            className="w-9 h-9 rounded-md flex items-center justify-center text-text-tertiary hover:text-text-primary hover:bg-bg-hover transition-colors"
+          >
+            <MessageCircle size={17} strokeWidth={1.75} />
+          </Link>
+        )}
         <div
           className="w-9 h-9 rounded-md flex items-center justify-center"
           title={statusTitle}
         >
           <span className={statusDot} />
         </div>
-        <Link
-          href="/profile"
-          title="Settings"
-          className="w-9 h-9 rounded-md flex items-center justify-center text-text-tertiary hover:text-text-primary hover:bg-bg-hover transition-colors"
-        >
-          <Settings size={17} strokeWidth={1.75} />
-        </Link>
+        {!standalone && (
+          <Link
+            href="/profile"
+            title="Settings"
+            className="w-9 h-9 rounded-md flex items-center justify-center text-text-tertiary hover:text-text-primary hover:bg-bg-hover transition-colors"
+          >
+            <Settings size={17} strokeWidth={1.75} />
+          </Link>
+        )}
       </div>
     </aside>
   );
