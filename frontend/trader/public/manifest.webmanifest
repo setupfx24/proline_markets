@@ -1,7 +1,7 @@
 {
   "id": "/dashboard",
-  "name": "ProlineMarketsFX",
-  "short_name": "Proline",
+  "name": "Proline Terminal",
+  "short_name": "Proline Terminal",
   "description": "Trade forex, metals, indices and crypto from a full charting terminal — live prices, one-click orders, and your positions, wallet and account history in one place.",
   "start_url": "/trading/terminal",
   "scope": "/",
