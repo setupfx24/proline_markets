@@ -5,6 +5,9 @@ import { clsx } from 'clsx';
 import { Download } from 'lucide-react';
 import { useAuthStore } from '@/stores/authStore';
 
+const MANIFEST_HREF = '/manifest.webmanifest';
+const MANIFEST_ID = 'proline-manifest';
+
 /** The `beforeinstallprompt` event isn't in lib.dom yet. */
 interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
@@ -12,21 +15,54 @@ interface BeforeInstallPromptEvent extends Event {
 }
 
 /**
- * Registers the service worker and exposes the deferred install prompt.
+ * Gates installability on being signed in.
  *
- * Chrome shows its own install button in the address bar once the manifest,
- * icons and this worker are all in place. `beforeinstallprompt` additionally
- * lets us surface an in-app button — Chromium only, so treat it as an
- * enhancement and never as the only route to installing.
+ * Chrome offers the address-bar install button only when the current document
+ * links a manifest AND a service worker with a fetch handler is registered.
+ * Both are attached here, after login, and torn down on logout — so an
+ * anonymous visitor sitting on /auth/login is never invited to install.
+ *
+ * The manifest is a static file rather than app/manifest.ts precisely because
+ * Next.js injects the <link> for that one into *every* page it renders,
+ * including the login page, which is the thing being avoided.
  */
-function useInstallPrompt() {
+function useInstallable() {
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const [deferred, setDeferred] = useState<BeforeInstallPromptEvent | null>(null);
   const [installed, setInstalled] = useState(false);
 
   useEffect(() => {
+    if (typeof document === 'undefined') return;
+
+    if (!isAuthenticated) {
+      document.getElementById(MANIFEST_ID)?.remove();
+      return;
+    }
+    if (document.getElementById(MANIFEST_ID)) return;
+
+    const link = document.createElement('link');
+    link.id = MANIFEST_ID;
+    link.rel = 'manifest';
+    link.href = MANIFEST_HREF;
+    document.head.appendChild(link);
+  }, [isAuthenticated]);
+
+  useEffect(() => {
     if (!('serviceWorker' in navigator)) return;
-    // Registration is deliberately after load: it competes with the first
-    // price fetch otherwise, and the worker is not on the critical path.
+
+    if (!isAuthenticated) {
+      // Drop the worker on sign-out so the next anonymous visitor on this
+      // browser is not installable. An already-installed app is unaffected.
+      void navigator.serviceWorker.getRegistrations().then((regs) => {
+        regs.forEach((r) => {
+          if (r.active?.scriptURL.endsWith('/sw.js')) void r.unregister();
+        });
+      });
+      return;
+    }
+
+    // Registration waits for load: it competes with the first price fetch
+    // otherwise, and the worker is not on the critical path.
     const register = () => {
       navigator.serviceWorker.register('/sw.js').catch(() => {
         /* non-fatal — the app works fine without it, only install is lost */
@@ -34,7 +70,7 @@ function useInstallPrompt() {
     };
     if (document.readyState === 'complete') register();
     else window.addEventListener('load', register, { once: true });
-  }, []);
+  }, [isAuthenticated]);
 
   useEffect(() => {
     const onPrompt = (e: Event) => {
@@ -66,25 +102,24 @@ function useInstallPrompt() {
     setDeferred(null);
   };
 
-  return { canInstall: !!deferred && !installed, install };
+  return { canInstall: isAuthenticated && !!deferred && !installed, install };
 }
 
-/** Mount once in the root layout — registers the worker on every page. */
+/** Mount once in the root layout. */
 export default function InstallApp() {
-  useInstallPrompt();
+  useInstallable();
   return null;
 }
 
 /**
- * Optional in-app install button. Renders nothing unless the user is signed in
- * and the browser has actually offered an install, so it stays invisible on
- * Safari/Firefox and for already-installed clients.
+ * Optional in-app install button. Renders nothing unless the browser has
+ * actually offered an install, so it stays invisible on Safari/Firefox and for
+ * clients that already installed.
  */
 export function InstallAppButton({ className }: { className?: string }) {
-  const { canInstall, install } = useInstallPrompt();
-  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const { canInstall, install } = useInstallable();
 
-  if (!isAuthenticated || !canInstall) return null;
+  if (!canInstall) return null;
 
   return (
     <button
@@ -97,7 +132,7 @@ export function InstallAppButton({ className }: { className?: string }) {
       )}
     >
       <Download className="h-4 w-4" />
-      Install app
+      Install terminal
     </button>
   );
 }
