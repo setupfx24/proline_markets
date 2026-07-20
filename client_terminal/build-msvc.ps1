@@ -1,4 +1,4 @@
-# Build the SwissCresta Terminal with MSVC + official Qt 6.8.3 (WebEngine).
+# Build the Proline Terminal with MSVC + official Qt 6.8.3 (WebEngine).
 # Usage:  powershell -ExecutionPolicy Bypass -File build-msvc.ps1
 $ErrorActionPreference = "Stop"
 

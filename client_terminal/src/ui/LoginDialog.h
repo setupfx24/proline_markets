@@ -13,8 +13,8 @@ class QNetworkAccessManager;
 class LoginDialog : public QDialog {
     Q_OBJECT
 public:
-    static constexpr const char* BULL_REST  = "https://api.bull4x.com/api/algo";
-    static constexpr const char* BULL_WS    = "wss://api.bull4x.com/ws/algo/prices";
+    static constexpr const char* PROLINE_REST  = "https://api.prolinemarket.com/api/algo";
+    static constexpr const char* PROLINE_WS    = "wss://api.prolinemarket.com/ws/algo/prices";
     static constexpr const char* LOCAL_REST = "http://localhost:8000/api/algo";
     static constexpr const char* LOCAL_WS   = "ws://localhost:8000/ws/algo/prices";
 

@@ -16,19 +16,19 @@
 
 LoginDialog::LoginDialog(const Config& cfg, QWidget* parent)
     : QDialog(parent), m_cfg(cfg), m_net(new QNetworkAccessManager(this)) {
-    setWindowTitle(tr("Bull4x Terminal — Sign in"));
+    setWindowTitle(tr("Proline Terminal — Sign in"));
     setModal(true);
     setMinimumWidth(440);
 
-    auto* title = new QLabel(tr("<b>Sign in to Bull4x</b>"));
+    auto* title = new QLabel(tr("<b>Sign in to Proline</b>"));
     title->setStyleSheet("font-size:16px;");
-    auto* hint  = new QLabel(tr("Use your Bull4x account email and password — the same "
+    auto* hint  = new QLabel(tr("Use your Proline account email and password — the same "
                                 "as the website. Your trading accounts load automatically."));
     hint->setWordWrap(true);
     hint->setStyleSheet("color:#8a8f98;");
 
     m_profile = new QComboBox;
-    m_profile->addItems({tr("Bull4x"), tr("Local dev"), tr("Custom")});
+    m_profile->addItems({tr("Proline"), tr("Local dev"), tr("Custom")});
 
     m_email = new QLineEdit(m_cfg.userName);
     m_email->setPlaceholderText(tr("you@example.com"));
@@ -72,10 +72,10 @@ LoginDialog::LoginDialog(const Config& cfg, QWidget* parent)
     m_status->setStyleSheet("color:#e01b24;");
 
     connect(m_profile, &QComboBox::currentTextChanged, this, [this](const QString& n) { applyProfile(n); });
-    // Preselect Bull4x endpoints if config matches.
+    // Preselect Proline endpoints if config matches.
     {
         QSignalBlocker b(m_profile);
-        if (m_cfg.restBase == BULL_REST)       m_profile->setCurrentText(tr("Bull4x"));
+        if (m_cfg.restBase == PROLINE_REST)       m_profile->setCurrentText(tr("Proline"));
         else if (m_cfg.restBase == LOCAL_REST) m_profile->setCurrentText(tr("Local dev"));
         else                                   m_profile->setCurrentText(tr("Custom"));
     }
@@ -94,7 +94,7 @@ LoginDialog::LoginDialog(const Config& cfg, QWidget* parent)
 }
 
 void LoginDialog::applyProfile(const QString& name) {
-    if (name == tr("Bull4x"))         { m_rest->setText(BULL_REST);  m_ws->setText(BULL_WS); }
+    if (name == tr("Proline"))         { m_rest->setText(PROLINE_REST);  m_ws->setText(PROLINE_WS); }
     else if (name == tr("Local dev")) { m_rest->setText(LOCAL_REST); m_ws->setText(LOCAL_WS); }
 }
 

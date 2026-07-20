@@ -16,10 +16,10 @@ public:
     QString apiKey;
     QString apiSecret;
 
-    // REST base, e.g. https://api.bull4x.com/api/algo
-    QString restBase = "https://api.bull4x.com/api/algo";
-    // WebSocket URL, e.g. wss://api.bull4x.com/ws/algo/prices
-    QString wsUrl    = "wss://api.bull4x.com/ws/algo/prices";
+    // REST base, e.g. https://api.prolinemarket.com/api/algo
+    QString restBase = "https://api.prolinemarket.com/api/algo";
+    // WebSocket URL, e.g. wss://api.prolinemarket.com/ws/algo/prices
+    QString wsUrl    = "wss://api.prolinemarket.com/ws/algo/prices";
 
     bool hasToken() const {
         return !token.trimmed().isEmpty() && !accountId.trimmed().isEmpty();

@@ -52,7 +52,7 @@ QWidget* MainWindow::buildHeader() {
     lay->setContentsMargins(16, 0, 16, 0);
     lay->setSpacing(0);
 
-    auto* brand = new QLabel("◆  Bull4x <span style='color:#6b7280;font-weight:500;'>Terminal</span>");
+    auto* brand = new QLabel("◆  Proline <span style='color:#6b7280;font-weight:500;'>Terminal</span>");
     brand->setTextFormat(Qt::RichText);
     brand->setStyleSheet("color:#3b82f6; font-size:16px; font-weight:800; letter-spacing:0.5px;");
     lay->addWidget(brand);
@@ -115,7 +115,7 @@ QWidget* MainWindow::buildHeader() {
 
 MainWindow::MainWindow(const Config& cfg, QWidget* parent)
     : QMainWindow(parent), m_cfg(cfg) {
-    setWindowTitle(tr("Bull4x Terminal"));
+    setWindowTitle(tr("Proline Terminal"));
     setMinimumSize(1000, 620);   // stays usable on smaller desktops
     resize(1360, 840);
 

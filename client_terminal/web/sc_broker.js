@@ -1,5 +1,5 @@
 /*
- * Bull4x Broker API adapter for the TradingView Trading Terminal.
+ * Proline Broker API adapter for the TradingView Trading Terminal.
  *
  * This turns the read-only chart into a trading chart: it draws a line for
  * every open position (with live P&L + a close ✕), and lets the user drag the
@@ -30,7 +30,7 @@
   function tickForDigits(d) { return Math.pow(10, -(d == null ? 5 : d)); }
   function pipForDigits(d)  { return Math.pow(10, -((d == null ? 5 : d) - 1)); }
 
-  function Bull4xBroker(host, bridge) {
+  function ProlineBroker(host, bridge) {
     this._host = host;
     this._bridge = bridge;
 
@@ -60,19 +60,19 @@
 
   // ---- helpers ------------------------------------------------------------
 
-  Bull4xBroker.prototype._tick = function (symbol) {
+  ProlineBroker.prototype._tick = function (symbol) {
     var m = this._meta[symbol];
     return tickForDigits(m ? m.digits : 5);
   };
 
-  Bull4xBroker.prototype._parsePositions = function () {
+  ProlineBroker.prototype._parsePositions = function () {
     var arr = [];
     try { arr = JSON.parse(this._bridge.positionsJson || "[]") || []; } catch (e) {}
     return arr;
   };
 
   // Build a TradingView Position object from a bridge position record.
-  Bull4xBroker.prototype._toTv = function (p) {
+  ProlineBroker.prototype._toTv = function (p) {
     var side = (String(p.side).toLowerCase() === "sell") ? Side.Sell : Side.Buy;
     var pos = {
       id: String(p.id),
@@ -89,7 +89,7 @@
   };
 
   // Reconcile the chart's position lines with the latest server snapshot.
-  Bull4xBroker.prototype._reconcile = function () {
+  ProlineBroker.prototype._reconcile = function () {
     var arr = this._parsePositions();
     var seen = {};
     var self = this;
@@ -134,7 +134,7 @@
   };
 
   // Smooth live P&L for positions on `sym` between polls.
-  Bull4xBroker.prototype._updatePL = function (sym) {
+  ProlineBroker.prototype._updatePL = function (sym) {
     var q = this._quotes[sym];
     if (!q) return;
     var self = this;
@@ -152,7 +152,7 @@
     if (touched) this._recomputeTotals();
   };
 
-  Bull4xBroker.prototype._recomputeTotals = function () {
+  ProlineBroker.prototype._recomputeTotals = function () {
     var total = 0;
     var self = this;
     Object.keys(this._positions).forEach(function (id) {
@@ -163,7 +163,7 @@
   };
 
   // Resolve/reject the pending modify/close promise; toast on rejection.
-  Bull4xBroker.prototype._onOp = function (id, op, ok, msg) {
+  ProlineBroker.prototype._onOp = function (id, op, ok, msg) {
     var key = id + "|" + op;
     var pend = this._pending[key];
     if (pend) {
@@ -180,26 +180,26 @@
 
   // ---- IBrokerCommon ------------------------------------------------------
 
-  Bull4xBroker.prototype.connectionStatus = function () { return Connected; };
+  ProlineBroker.prototype.connectionStatus = function () { return Connected; };
 
-  Bull4xBroker.prototype.chartContextMenuActions = function (context, options) {
+  ProlineBroker.prototype.chartContextMenuActions = function (context, options) {
     return this._host.defaultContextMenuActions(context, options);
   };
 
-  Bull4xBroker.prototype.isTradable = function (symbol) {
+  ProlineBroker.prototype.isTradable = function (symbol) {
     return Promise.resolve(true);
   };
 
-  Bull4xBroker.prototype.orders = function () { return Promise.resolve([]); };
+  ProlineBroker.prototype.orders = function () { return Promise.resolve([]); };
 
-  Bull4xBroker.prototype.executions = function (symbol) { return Promise.resolve([]); };
+  ProlineBroker.prototype.executions = function (symbol) { return Promise.resolve([]); };
 
-  Bull4xBroker.prototype.positions = function () {
+  ProlineBroker.prototype.positions = function () {
     var self = this;
     return Promise.resolve(this._parsePositions().map(function (p) { return self._toTv(p); }));
   };
 
-  Bull4xBroker.prototype.symbolInfo = function (symbol) {
+  ProlineBroker.prototype.symbolInfo = function (symbol) {
     var m = this._meta[symbol] || {};
     var d = (m.digits != null) ? m.digits : 5;
     return Promise.resolve({
@@ -213,9 +213,9 @@
     });
   };
 
-  Bull4xBroker.prototype.accountManagerInfo = function () {
+  ProlineBroker.prototype.accountManagerInfo = function () {
     return {
-      accountTitle: "Bull4x",
+      accountTitle: "Proline",
       summary: [
         { text: "Open P&L", wValue: this._openPl, formatter: "profit" },
       ],
@@ -235,26 +235,26 @@
 
   // ---- IBrokerAccountInfo -------------------------------------------------
 
-  Bull4xBroker.prototype.accountsMetainfo = function () {
-    return Promise.resolve([{ id: "main", name: "Bull4x" }]);
+  ProlineBroker.prototype.accountsMetainfo = function () {
+    return Promise.resolve([{ id: "main", name: "Proline" }]);
   };
 
-  Bull4xBroker.prototype.currentAccount = function () { return "main"; };
+  ProlineBroker.prototype.currentAccount = function () { return "main"; };
 
   // ---- IBrokerTerminal ----------------------------------------------------
 
   // Order entry stays in the native Order Ticket; reject any chart order entry.
-  Bull4xBroker.prototype.placeOrder = function (order) {
+  ProlineBroker.prototype.placeOrder = function (order) {
     this._host.showNotification("Use the Order panel",
       "Open new trades from the terminal's Order Ticket.", 1);
     return Promise.reject(new Error("Order entry is disabled on the chart"));
   };
 
-  Bull4xBroker.prototype.modifyOrder = function () { return Promise.resolve(); };
-  Bull4xBroker.prototype.cancelOrder = function () { return Promise.resolve(); };
+  ProlineBroker.prototype.modifyOrder = function () { return Promise.resolve(); };
+  ProlineBroker.prototype.cancelOrder = function () { return Promise.resolve(); };
 
   // Drag SL/TP handle -> modify the real server position.
-  Bull4xBroker.prototype.editPositionBrackets = function (positionId, brackets) {
+  ProlineBroker.prototype.editPositionBrackets = function (positionId, brackets) {
     var id = String(positionId);
     var sl = (brackets && brackets.stopLoss > 0) ? brackets.stopLoss : 0;
     var tp = (brackets && brackets.takeProfit > 0) ? brackets.takeProfit : 0;
@@ -266,7 +266,7 @@
   };
 
   // ✕ on the line -> close the real server position.
-  Bull4xBroker.prototype.closePosition = function (positionId) {
+  ProlineBroker.prototype.closePosition = function (positionId) {
     var id = String(positionId);
     var self = this;
     return new Promise(function (resolve, reject) {
@@ -276,7 +276,7 @@
   };
 
   // Broker config passed to TradingView.widget alongside broker_factory.
-  window.BULL4X_BROKER_CONFIG = {
+  window.PROLINE_BROKER_CONFIG = {
     configFlags: {
       supportPositions: true,
       supportPositionBrackets: true,   // draggable SL/TP on positions
@@ -299,5 +299,5 @@
     durations: [],
   };
 
-  window.makeBroker = function (host, bridge) { return new Bull4xBroker(host, bridge); };
+  window.makeBroker = function (host, bridge) { return new ProlineBroker(host, bridge); };
 })();

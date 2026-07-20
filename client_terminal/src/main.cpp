@@ -28,8 +28,8 @@ static void applyDarkTheme(QApplication& app) {
 
 int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
-    app.setApplicationName("Bull4x Terminal");
-    app.setOrganizationName("Bull4x");
+    app.setApplicationName("Proline Terminal");
+    app.setOrganizationName("Proline Markets");
 
     qRegisterMetaType<Quote>("Quote");
     qRegisterMetaType<AccountInfo>("AccountInfo");

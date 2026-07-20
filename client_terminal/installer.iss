@@ -1,20 +1,26 @@
-; Inno Setup script — packages the built Bull4x Terminal into a single
-; Bull4xTerminal-Setup.exe installer. Installs per-user (no admin / no UAC).
-#define MyApp "Bull4x Terminal"
+; Inno Setup script — packages the built Proline Terminal into a single
+; ProlineTerminal-Setup.exe installer. Installs per-user (no admin / no UAC).
+#define MyApp "Proline Terminal"
 #define MyExe "terminal.exe"
-#define BuildDir "D:\setupfx codes\trading terminal\build-msvc"
+; Resolved from this script's own folder so the installer builds on any
+; machine. The previous script hardcoded one developer's D:\ path.
+#define BuildDir SourcePath + "build-msvc"
+#define DistDir  SourcePath + "dist"
 
 [Setup]
-AppId={{7C1B4E2A-9F3D-4C6E-B8A1-BULL4XTERMINAL}
+; Regenerated: the old AppId was not a valid GUID (its last group spelled out
+; the brand name), and reusing it would tie this installer to the old product.
+AppId={{EC178288-349C-42C7-959F-C61CD707D5D8}
 AppName={#MyApp}
 AppVersion=1.0.0
-AppPublisher=Bull4x
-DefaultDirName={autopf}\Bull4x Terminal
-DefaultGroupName=Bull4x Terminal
+AppPublisher=Proline Markets
+AppPublisherURL=https://prolinemarket.com
+DefaultDirName={autopf}\Proline Terminal
+DefaultGroupName=Proline Terminal
 DisableProgramGroupPage=yes
 UninstallDisplayIcon={app}\{#MyExe}
-OutputDir=D:\setupfx codes\trading terminal\dist
-OutputBaseFilename=Bull4xTerminal-Setup
+OutputDir={#DistDir}
+OutputBaseFilename=ProlineTerminal-Setup
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
@@ -33,8 +39,8 @@ Source: "{#BuildDir}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdir
   Excludes: "CMakeFiles\*,terminal_autogen\*,*.obj,*.pdb,*.ilk,*.cmake,CMakeCache.txt,build.ninja,.ninja_deps,.ninja_log,*.ninja_deps,*.ninja_log,chart-diag.log"
 
 [Icons]
-Name: "{group}\Bull4x Terminal"; Filename: "{app}\{#MyExe}"
-Name: "{autodesktop}\Bull4x Terminal"; Filename: "{app}\{#MyExe}"; Tasks: desktopicon
+Name: "{group}\Proline Terminal"; Filename: "{app}\{#MyExe}"
+Name: "{autodesktop}\Proline Terminal"; Filename: "{app}\{#MyExe}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\{#MyExe}"; Description: "Launch Bull4x Terminal"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#MyExe}"; Description: "Launch Proline Terminal"; Flags: nowait postinstall skipifsilent

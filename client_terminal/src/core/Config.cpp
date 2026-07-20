@@ -8,7 +8,7 @@
 QString Config::filePath() {
     QString dir = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
     if (dir.isEmpty())
-        dir = QDir::homePath() + "/.swisscresta-terminal";
+        dir = QDir::homePath() + "/.proline-terminal";
     QDir().mkpath(dir);
     return dir + "/config.json";
 }

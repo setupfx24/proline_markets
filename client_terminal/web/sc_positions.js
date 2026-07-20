@@ -1,5 +1,5 @@
 /*
- * Bull4x on-chart position overlay.
+ * Proline on-chart position overlay.
  *
  * The vendored charting_library is the *Advanced Charts* build: TradingView's
  * native position lines and Broker API are disabled there

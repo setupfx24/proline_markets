@@ -9,7 +9,7 @@
 class QNetworkAccessManager;
 class QNetworkReply;
 
-// Async REST client for the SwissCresta Algo API. Each call fires a request
+// Async REST client for the Proline Markets Algo API. Each call fires a request
 // and emits a corresponding signal when the reply arrives. Auth headers are
 // attached automatically from the Config.
 class ApiClient : public QObject {
