@@ -13,10 +13,10 @@ class QNetworkAccessManager;
 class LoginDialog : public QDialog {
     Q_OBJECT
 public:
-    static constexpr const char* PROLINE_REST  = "https://api.prolinemarket.com/api/algo";
-    static constexpr const char* PROLINE_WS    = "wss://api.prolinemarket.com/ws/algo/prices";
-    static constexpr const char* LOCAL_REST = "http://localhost:8000/api/algo";
-    static constexpr const char* LOCAL_WS   = "ws://localhost:8000/ws/algo/prices";
+    static constexpr const char* PROLINE_REST = "https://api.prolinemarket.com/api/v1";
+    static constexpr const char* PROLINE_WS   = "wss://api.prolinemarket.com/ws/prices";
+    static constexpr const char* LOCAL_REST = "http://localhost:8000/api/v1";
+    static constexpr const char* LOCAL_WS   = "ws://localhost:8000/ws/prices";
 
     explicit LoginDialog(const Config& cfg, QWidget* parent = nullptr);
     Config config() const { return m_cfg; }
@@ -28,6 +28,9 @@ private slots:
 private:
     void applyProfile(const QString& name);
     void setBusy(bool busy);
+    // Second leg of sign-in: /auth/login returns only a token, so the account
+    // list is fetched separately before the user can pick one.
+    void fetchAccounts();
 
     Config       m_cfg;
     QComboBox*   m_profile;

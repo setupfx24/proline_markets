@@ -2,6 +2,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QAbstractSocket>
+#include <QUrlQuery>
 
 PriceStream::PriceStream(const Config& cfg, QObject* parent)
     : QObject(parent), m_cfg(cfg) {
@@ -16,15 +17,29 @@ PriceStream::PriceStream(const Config& cfg, QObject* parent)
     connect(&m_reconnectTimer, &QTimer::timeout, this, [this]() {
         if (m_wantRun) {
             emit statusChanged(tr("Reconnecting…"));
-            m_ws.open(QUrl(m_cfg.wsUrl));
+            m_ws.open(streamUrl());
         }
     });
+}
+
+// /ws/prices takes an optional ?token= and validates it only when present.
+// The token is still sent so an invalid session is rejected up front (close
+// 4001) instead of silently streaming to a signed-out client.
+QUrl PriceStream::streamUrl() const {
+    QUrl url(m_cfg.wsUrl);
+    if (!m_cfg.token.isEmpty()) {
+        QUrlQuery q(url.query());
+        q.removeAllQueryItems("token");
+        q.addQueryItem("token", m_cfg.token);
+        url.setQuery(q);
+    }
+    return url;
 }
 
 void PriceStream::start() {
     m_wantRun = true;
     emit statusChanged(tr("Connecting…"));
-    m_ws.open(QUrl(m_cfg.wsUrl));
+    m_ws.open(streamUrl());
 }
 
 void PriceStream::stop() {
@@ -34,17 +49,13 @@ void PriceStream::stop() {
 }
 
 void PriceStream::onConnected() {
-    m_authed = false;
-    emit statusChanged(tr("Authenticating…"));
-    QJsonObject auth;
-    auth["action"] = "auth";
-    if (!m_cfg.token.isEmpty()) {
-        auth["token"] = m_cfg.token;           // desktop-terminal JWT
-    } else {
-        auth["api_key"]    = m_cfg.apiKey;
-        auth["api_secret"] = m_cfg.apiSecret;
-    }
-    m_ws.sendTextMessage(QString::fromUtf8(QJsonDocument(auth).toJson(QJsonDocument::Compact)));
+    // /ws/prices authenticates from the query string and never reads the
+    // socket, so there is no auth frame to send and no ack to wait for — an
+    // accepted connection is already a live one. The previous first-message
+    // handshake belonged to /ws/algo/prices and would have hung here forever.
+    m_authed = true;
+    emit statusChanged(tr("Live"));
+    emit authenticated(m_cfg.accountId);
 }
 
 void PriceStream::onDisconnected() {
@@ -65,29 +76,23 @@ void PriceStream::onError() {
 void PriceStream::onTextMessage(const QString& msg) {
     const QJsonObject o = QJsonDocument::fromJson(msg.toUtf8()).object();
 
-    // Auth acknowledgement
-    if (o.value("status").toString() == "authenticated") {
-        m_authed = true;
-        const QString acct = o.value("account").toString();
-        emit statusChanged(tr("Live • account %1").arg(acct));
-        emit authenticated(acct);
-        return;
-    }
+    // Keepalive. The server ignores whatever we send back, so nothing is
+    // returned — the frame just has to not be mistaken for a tick.
+    if (o.value("type").toString() == "ping") return;
 
-    const QString type = o.value("type").toString();
-    if (type == "tick") {
-        Quote q;
-        q.symbol = o.value("symbol").toString();
-        q.bid    = o.value("bid").toDouble();
-        q.ask    = o.value("ask").toDouble();
-        q.spread = o.value("spread").toDouble();
-        q.timestamp = QDateTime::fromString(o.value("timestamp").toString(), Qt::ISODateWithMs);
-        q.valid  = !q.symbol.isEmpty();
-        if (q.valid) emit tickReceived(q);
-    } else if (type == "ping") {
-        QJsonObject pong; pong["type"] = "pong";
-        m_ws.sendTextMessage(QString::fromUtf8(QJsonDocument(pong).toJson(QJsonDocument::Compact)));
-    }
+    // Ticks are forwarded verbatim from the price feed and carry no envelope
+    // or "type" field, so they are recognised by shape. Requiring type=="tick"
+    // (the old /ws/algo/prices contract) silently dropped every quote.
+    if (!o.contains("symbol")) return;
+
+    Quote q;
+    q.symbol = o.value("symbol").toString();
+    q.bid    = o.value("bid").toDouble();
+    q.ask    = o.value("ask").toDouble();
+    q.spread = o.value("spread").toDouble();
+    q.timestamp = QDateTime::fromString(o.value("timestamp").toString(), Qt::ISODateWithMs);
+    q.valid  = !q.symbol.isEmpty();
+    if (q.valid) emit tickReceived(q);
 }
 
 void PriceStream::scheduleReconnect() {

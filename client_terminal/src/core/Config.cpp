@@ -30,6 +30,12 @@ Config Config::load() {
         c.restBase = o.value("restBase").toString();
     if (o.contains("wsUrl") && !o.value("wsUrl").toString().isEmpty())
         c.wsUrl = o.value("wsUrl").toString();
+
+    // Anyone who ran an earlier build has /api/algo saved to disk, and a saved
+    // value wins over the default — so without this they would keep hitting
+    // the endpoints that do not exist and see nothing but 401s.
+    c.restBase.replace("/api/algo", "/api/v1");
+    c.wsUrl.replace("/ws/algo/prices", "/ws/prices");
     return c;
 }
 

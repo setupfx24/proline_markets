@@ -116,7 +116,10 @@ void LoginDialog::doLogin() {
     m_cfg.restBase = m_rest->text().trimmed();
     m_cfg.wsUrl    = m_ws->text().trimmed();
 
-    QNetworkRequest req{QUrl(m_cfg.restBase + "/terminal/login")};
+    // Step 1 — the platform login. Returns the JWT in the body; it also sets
+    // HttpOnly cookies, which a desktop client simply ignores in favour of the
+    // bearer header.
+    QNetworkRequest req{QUrl(m_cfg.restBase + "/auth/login")};
     req.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
     req.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
                      QNetworkRequest::NoLessSafeRedirectPolicy);
@@ -127,6 +130,47 @@ void LoginDialog::doLogin() {
     QNetworkReply* reply = m_net->post(req, QJsonDocument(body).toJson(QJsonDocument::Compact));
     connect(reply, &QNetworkReply::finished, this, [this, reply]() {
         reply->deleteLater();
+        const int http = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        const QJsonObject o = QJsonDocument::fromJson(reply->readAll()).object();
+
+        if (reply->error() != QNetworkReply::NoError || http >= 400) {
+            setBusy(false);
+            QString detail = o.value("detail").toString();
+            if (detail.isEmpty()) detail = reply->errorString();
+            m_status->setText(tr("Sign-in failed: %1").arg(detail));
+            return;
+        }
+
+        m_token = o.value("access_token").toString();
+        if (m_token.isEmpty()) {
+            // The server can be configured to stop returning the token in the
+            // body (JWT_INCLUDE_LEGACY_JSON_TOKEN=false), leaving only cookies
+            // — which this client does not carry.
+            setBusy(false);
+            m_status->setText(tr("Sign-in succeeded but no token was returned. "
+                                 "The server is configured for cookie-only sessions."));
+            return;
+        }
+        m_userName = m_email->text().trimmed();
+        fetchAccounts();
+    });
+}
+
+// Step 2 — /auth/login says nothing about accounts, so pull them with the
+// bearer we just got and let the user choose which one to trade.
+void LoginDialog::fetchAccounts() {
+    m_status->setStyleSheet(QString());
+    m_status->setText(tr("Loading accounts…"));
+
+    // No trailing slash: /accounts/ 307-redirects and can drop the header.
+    QNetworkRequest req{QUrl(m_cfg.restBase + "/accounts")};
+    req.setRawHeader("Authorization", ("Bearer " + m_token).toUtf8());
+    req.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                     QNetworkRequest::NoLessSafeRedirectPolicy);
+
+    QNetworkReply* reply = m_net->get(req);
+    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+        reply->deleteLater();
         setBusy(false);
         const int http = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         const QJsonObject o = QJsonDocument::fromJson(reply->readAll()).object();
@@ -134,16 +178,14 @@ void LoginDialog::doLogin() {
         if (reply->error() != QNetworkReply::NoError || http >= 400) {
             QString detail = o.value("detail").toString();
             if (detail.isEmpty()) detail = reply->errorString();
-            m_status->setText(tr("Sign-in failed: %1").arg(detail));
+            m_status->setText(tr("Could not load accounts: %1").arg(detail));
             return;
         }
 
-        m_token    = o.value("token").toString();
-        m_userName = o.value("name").toString(m_email->text().trimmed());
-        const QJsonArray accts = o.value("accounts").toArray();
+        const QJsonArray accts = o.value("items").toArray();
         m_accountsJson = QString::fromUtf8(QJsonDocument(accts).toJson(QJsonDocument::Compact));
 
-        if (m_token.isEmpty() || accts.isEmpty()) {
+        if (accts.isEmpty()) {
             m_status->setText(tr("Signed in, but no trading accounts were found."));
             return;
         }
@@ -151,13 +193,13 @@ void LoginDialog::doLogin() {
         m_account->clear();
         for (const QJsonValue& v : accts) {
             const QJsonObject a = v.toObject();
-            const QString label = QString("%1  ·  %2  ·  %3  ·  %4 %5")
+            const QString ccy = a.value("currency").toString("USD");
+            const QString label = QString("%1  ·  %2  ·  %3 %4")
                 .arg(a.value("account_number").toString(),
-                     a.value("is_demo").toBool() ? tr("DEMO") : tr("LIVE"),
-                     a.value("currency").toString("USD"))
+                     a.value("is_demo").toBool() ? tr("DEMO") : tr("LIVE"))
                 .arg(a.value("balance").toDouble(), 0, 'f', 2)
-                .arg(a.value("currency").toString("USD"));
-            m_account->addItem(label, a.value("account_id").toString());
+                .arg(ccy);
+            m_account->addItem(label, a.value("id").toString());
         }
         // Preselect previously used account if present.
         const int idx = m_account->findData(m_cfg.accountId);

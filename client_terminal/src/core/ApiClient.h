@@ -54,10 +54,16 @@ signals:
     void errorOccurred(const QString& context, const QString& message);
 
 private:
-    QNetworkRequest makeRequest(const QString& path) const;   // adds auth headers (algo API)
-    QNetworkRequest v1Request(const QString& path) const;     // adds Bearer auth (/api/v1)
-    void handleReply(QNetworkReply* reply, const QString& kind, const QString& context);
+    // Every call goes to /api/v1 with `Authorization: Bearer <jwt>`.
+    QNetworkRequest makeRequest(const QString& path) const;
+    // `a`/`b` carry request context the response does not echo back (the bars
+    // endpoint returns candles without repeating the symbol or resolution).
+    void handleReply(QNetworkReply* reply, const QString& kind, const QString& context,
+                     const QString& a = QString(), const QString& b = QString());
 
     Config m_cfg;
     QNetworkAccessManager* m_net;
+    // /accounts does not report an open-position count, so it is carried over
+    // from the last positions fetch to keep AccountInfo complete.
+    int m_openPositions = 0;
 };

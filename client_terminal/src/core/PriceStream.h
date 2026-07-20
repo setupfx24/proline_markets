@@ -5,8 +5,9 @@
 #include "core/Models.h"
 #include "core/Config.h"
 
-// Live tick stream over WebSocket. Connects, performs first-message auth,
-// emits tickReceived() for every tick, and auto-reconnects on drop.
+// Live tick stream over WebSocket (/ws/prices). Authenticates via ?token= on
+// the URL, emits tickReceived() for every tick, and auto-reconnects on drop.
+// Every symbol is pushed — the endpoint has no subscribe protocol.
 class PriceStream : public QObject {
     Q_OBJECT
 public:
@@ -30,6 +31,7 @@ private slots:
 
 private:
     void scheduleReconnect();
+    QUrl streamUrl() const;   // wsUrl with the session token appended
 
     Config     m_cfg;
     QWebSocket m_ws;
