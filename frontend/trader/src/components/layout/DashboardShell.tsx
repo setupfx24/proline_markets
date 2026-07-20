@@ -22,11 +22,15 @@ export default function DashboardShell({
 
   return (
     <div
+      // The installed app is terminal-only. StandaloneGuard redirects away
+      // from these pages, but that runs in an effect — one frame too late to
+      // stop the full site flashing up first. This marks the chrome so the
+      // pre-hydration script in layout.tsx can hide it via CSS immediately.
+      data-app-chrome=""
       className={cn(
         'h-[100dvh] flex overflow-hidden pb-[70px] lg:pb-0 bg-bg-base text-text-primary',
         className,
       )}
-      
     >
       <AppSidebar />
       <div

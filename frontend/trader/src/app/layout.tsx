@@ -43,6 +43,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             __html: `(function(){try{var L='ProlineMarkets-ui',N='ProlineMarkets-ui';var o=localStorage.getItem(L),n=localStorage.getItem(N);if(o&&!n){localStorage.setItem(N,o);localStorage.removeItem(L);}var s=localStorage.getItem(N);var t='dark';if(s){var j=JSON.parse(s);t=(j&&j.state&&j.state.theme)||(j&&j.theme)||'dark';}var d=document.documentElement;d.setAttribute('data-theme',t);d.classList.add(t==='light'?'theme-light':'theme-dark');if(t==='light'){d.style.backgroundColor='#ffffff';d.style.color='#111827';}else{d.style.backgroundColor='#0a0a0a';d.style.color='#ffffff';}}catch(e){document.documentElement.setAttribute('data-theme','light');document.documentElement.style.backgroundColor='#ffffff';document.documentElement.style.color='#111827';}})();`,
           }}
         />
+        {/* Marks the document before first paint when running as the installed
+            app, so the CSS in globals.css can hide the full-site chrome
+            straight away. StandaloneGuard still does the redirect — this only
+            stops the dashboard flashing up in the frame before it runs. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{if(window.matchMedia('(display-mode: standalone)').matches||window.navigator.standalone===true){document.documentElement.setAttribute('data-standalone','1');}}catch(e){}})();`,
+          }}
+        />
       </head>
       <body className="min-h-full">
         <Suspense fallback={null}>

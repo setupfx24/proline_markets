@@ -713,3 +713,12 @@ html[data-page="accounts"] header.h-\[65px\] + div,
 html[data-page="accounts"] div:has(> header.h-\[65px\]) {
   background: transparent !important;
 }
+
+/* Installed app is terminal-only.
+   data-standalone is set before first paint by the inline script in
+   layout.tsx; StandaloneGuard then redirects to the terminal. Hiding the
+   chrome here covers the frames before that effect runs, so the full site
+   never flashes up inside the app window. */
+html[data-standalone='1'] [data-app-chrome] {
+  display: none !important;
+}
