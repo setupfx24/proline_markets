@@ -21,18 +21,6 @@ const NAV_ITEMS = [
   { label: 'Support', href: '/support' },
 ];
 
-// Windows desktop trading terminal installer (served from trader public/downloads).
-const TERMINAL_INSTALLER_URL = '/downloads/ProlineTerminal-Setup.exe';
-
-function MonitorIcon({ size = 14 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="2" y="3" width="20" height="14" rx="2" />
-      <path d="M8 21h8M12 17v4" />
-    </svg>
-  );
-}
-
 export default function TopBar() {
   const pathname = usePathname();
   const router = useRouter();
@@ -143,17 +131,6 @@ export default function TopBar() {
                 {process.env.NEXT_PUBLIC_APP_VERSION}
               </span>
             )}
-          {user && (
-            <a
-              href={TERMINAL_INSTALLER_URL}
-              download
-              title="Install the Windows desktop trading terminal"
-              className="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-full glass-card text-xs font-medium text-text-secondary hover:text-text-primary transition-fast"
-            >
-              <MonitorIcon />
-              <span className="hidden xl:inline">Client Terminal</span>
-            </a>
-          )}
           <ThemeToggle compact />
           <div className={`hidden sm:block w-2 h-2 rounded-full shrink-0 self-center ${statusColor}`} title={wsStatus} />
           <NotificationBell />
@@ -197,15 +174,6 @@ export default function TopBar() {
                   </svg>
                   Wallet
                 </Link>
-                <a
-                  href={TERMINAL_INSTALLER_URL}
-                  download
-                  onClick={() => setShowMenu(false)}
-                  className="flex items-center gap-2 px-3 py-2 text-xs text-text-secondary hover:bg-bg-hover hover:text-text-primary transition-fast"
-                >
-                  <MonitorIcon />
-                  Client Terminal
-                </a>
                 <div className="border-t border-border-glass my-1" />
                 <button
                   type="button"

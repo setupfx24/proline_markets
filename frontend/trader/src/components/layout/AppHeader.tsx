@@ -7,7 +7,7 @@ import { useShellStore } from '@/stores/shellStore';
 import { useAuthStore } from '@/stores/authStore';
 import { NotificationBell } from '@/components/NotificationListener';
 import api from '@/lib/api/client';
-import { Menu, ChevronDown, Wallet, Download, Monitor } from 'lucide-react';
+import { Menu, ChevronDown, Wallet, Download } from 'lucide-react';
 
 function formatUsd(n: number) {
   return new Intl.NumberFormat('en-US', {
@@ -100,18 +100,6 @@ export default function AppHeader() {
           >
             <Download size={14} className="text-[#22c55e] shrink-0" />
             <span className="text-[#22c55e] text-xs sm:text-sm font-medium hidden sm:inline">APK</span>
-          </a>
-
-          {/* Download Windows desktop trading terminal — served from trader public/downloads/ */}
-          <a
-            href="/downloads/ProlineTerminal-Setup.exe"
-            download
-            title="Download Windows Client Terminal"
-            aria-label="Download Windows Client Terminal"
-            className="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1 sm:py-1.5 rounded-full border border-[#3b82f6]/30 bg-[#3b82f6]/5 hover:bg-[#3b82f6]/10 transition-colors"
-          >
-            <Monitor size={14} className="text-[#3b82f6] shrink-0" />
-            <span className="text-[#3b82f6] text-xs sm:text-sm font-medium hidden sm:inline">Terminal</span>
           </a>
 
           {/* Balance pill */}
