@@ -65,8 +65,11 @@ dist/
 build/
 *.egg-info/
 
-# Desktop terminal installer binary — host on the server, don't commit (~16 MB)
-frontend/trader/public/downloads/*.exe
+# Qt desktop terminal — track src/ + web app code + build scripts only.
+# build/ and dist/ are already covered above; these are the heavy leftovers
+# (build-msvc ~335 MB of MSVC objects + Qt DLLs, vendor ~26 MB charting lib).
+client_terminal/build-msvc/
+client_terminal/web/vendor/
 
 # Misc
 *.local

@@ -37,6 +37,12 @@
     ".next/types/**/*.ts"
   ],
   "exclude": [
-    "node_modules"
+    "node_modules",
+    // src/landing is a self-contained Vite app with its own tsconfig, its own
+    // `@` alias (-> src/landing/src) and its own ui/button.jsx. Type-checking
+    // it here resolves its imports against the trader's alias instead, which
+    // collides with components/ui/Button.tsx on case-insensitive filesystems
+    // and breaks `next build` on Windows. It is built by its own Dockerfile.
+    "src/landing"
   ]
 }

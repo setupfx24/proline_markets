@@ -7,12 +7,20 @@ import MobileBottomNav from '@/components/layout/MobileBottomNav';
 import { AuthProvider } from '@/components/providers/AuthProvider';
 import NotificationListener from '@/components/NotificationListener';
 import TopLoader from '@/components/TopLoader';
+import InstallApp from '@/components/pwa/InstallApp';
 
 export const metadata: Metadata = {
   title: 'ProlineMarketsFX',
   description: 'ProlineMarketsFX â€” professional forex and CFD trading platform',
   icons: {
     icon: [{ url: '/favicon.svg', type: 'image/svg+xml' }],
+    // iOS ignores the web app manifest and reads this instead.
+    apple: [{ url: '/icons/icon-180.png', sizes: '180x180', type: 'image/png' }],
+  },
+  appleWebApp: {
+    capable: true,
+    title: 'Proline',
+    statusBarStyle: 'black-translucent',
   },
 };
 
@@ -42,6 +50,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <ThemeProvider>
           <AuthProvider>
             <NotificationListener />
+            <InstallApp />
             {children}
             <Suspense fallback={null}>
               <MobileBottomNav />

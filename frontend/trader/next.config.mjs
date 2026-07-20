@@ -45,8 +45,19 @@ const nextConfig = {
     ],
   },
   async headers() {
-    if (!isDev) return [];
+    /** The service worker must never be cached by Cloudflare or the browser —
+        a stuck sw.js can pin every client to an old build indefinitely, and
+        `.js` is in Cloudflare's default-cached extension list. */
+    const swHeaders = {
+      source: '/sw.js',
+      headers: [
+        { key: 'Cache-Control', value: 'no-store, no-cache, must-revalidate' },
+        { key: 'Service-Worker-Allowed', value: '/' },
+      ],
+    };
+    if (!isDev) return [swHeaders];
     return [
+      swHeaders,
       {
         source: '/(.*)',
         headers: [
