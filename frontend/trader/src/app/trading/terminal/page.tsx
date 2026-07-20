@@ -12,7 +12,7 @@ import { useTradingStore, InstrumentInfo } from '@/stores/tradingStore';
 import toast from 'react-hot-toast';
 import { sounds, unlockAudio } from '@/lib/sounds';
 import { getMarketStatus } from '@/lib/marketHours';
-import { setPersistedTradingAccountId, tradingTerminalUrl } from '@/lib/tradingNav';
+import { getLastTradingAccountId, setPersistedTradingAccountId, tradingTerminalUrl } from '@/lib/tradingNav';
 import Watchlist from '@/components/trading/Watchlist';
 import InstrumentsTable from '@/components/trading/InstrumentsTable';
 import OrderPanel from '@/components/trading/OrderPanel';
@@ -233,6 +233,7 @@ export default function TradingTerminalPage() {
     prices,
     instruments,
     setSelectedSymbol,
+    accounts,
     activeAccount,
     placeOrder,
   } = useTradingStore();
@@ -246,9 +247,20 @@ export default function TradingTerminalPage() {
     if (accountId) setPersistedTradingAccountId(accountId);
   }, [accountId]);
 
+  // `/trading/terminal` with no ?account= is the installed app's start_url, so
+  // resolve one instead of bouncing to the picker: last account used, else the
+  // only/first account on the profile. The picker is the fallback, not the
+  // default — a cold app launch should land on a chart.
   useEffect(() => {
-    if (!accountId) router.replace('/trading');
-  }, [accountId, router]);
+    if (accountId) return;
+    if (!accounts.length) return; // still loading — layout.tsx fetches them
+
+    const remembered = getLastTradingAccountId();
+    const target =
+      accounts.find((a) => a.id === remembered) ?? (accounts.length === 1 ? accounts[0] : null);
+
+    router.replace(target ? tradingTerminalUrl(target.id, { view: 'chart' }) : '/trading');
+  }, [accountId, accounts, router]);
 
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 768);
