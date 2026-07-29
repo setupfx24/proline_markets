@@ -8,8 +8,12 @@
     <link rel="preload" as="image" href="/frames/frame_000_delay-0.066s.webp" fetchpriority="high" />
     <title>Proline Markets — Future of Trading</title>
     <meta name="description" content="Proline Markets — your gateway to Forex, Indices, CFDs, Commodities and Crypto. Trusted by traders worldwide since 2019." />
+    <!-- The landing is a dark-first design: :root defines the dark palette
+         (cream text on ink), and the hero, nav and ticker all sit on dark
+         imagery. Forcing "light" flipped --foreground to ink, so the hero
+         headline (text-foreground) rendered dark-on-dark and vanished. -->
     <script>
-      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme", "dark");
     </script>
   </head>
   <body>
