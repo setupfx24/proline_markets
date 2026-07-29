@@ -9,6 +9,7 @@ import toast from 'react-hot-toast';
 
 interface DepositRow { date: string; amount: string }
 interface MonthRow { year: string; month: string; pct: string }
+interface DayRow { date: string; pct: string }
 interface AllocRow { symbol: string; weight_pct: string }
 
 interface MonthPreview {
@@ -71,6 +72,7 @@ function ManagedAccountForm() {
 
   const [deposits, setDeposits] = useState<DepositRow[]>(DEFAULT_DEPOSITS);
   const [months, setMonths] = useState<MonthRow[]>(DEFAULT_MONTHS);
+  const [days, setDays] = useState<DayRow[]>([]);
   const [allocs, setAllocs] = useState<AllocRow[]>(DEFAULT_ALLOC);
 
   const [preview, setPreview] = useState<Preview | null>(null);
@@ -102,6 +104,9 @@ function ManagedAccountForm() {
       })));
       setMonths(((c.monthly_returns as Array<{ year: number; month: number; pct: number }>) || []).map((m) => ({
         year: String(m.year), month: String(m.month), pct: String(m.pct),
+      })));
+      setDays(((c.daily_returns as Array<{ date: string; pct: number }>) || []).map((d) => ({
+        date: d.date, pct: String(d.pct),
       })));
       setAllocs(((c.instrument_allocation as Array<{ symbol: string; weight_pct: number }>) || []).map((a) => ({
         symbol: a.symbol, weight_pct: String(a.weight_pct),
@@ -138,6 +143,9 @@ function ManagedAccountForm() {
     monthly_returns: months
       .filter((m) => m.year && m.month && m.pct !== '')
       .map((m) => ({ year: parseInt(m.year, 10), month: parseInt(m.month, 10), pct: parseFloat(m.pct) || 0 })),
+    daily_returns: days
+      .filter((d) => d.date && d.pct !== '')
+      .map((d) => ({ date: d.date, pct: parseFloat(d.pct) || 0 })),
     instrument_allocation: allocs
       .filter((a) => a.symbol && a.weight_pct !== '')
       .map((a) => ({ symbol: a.symbol.trim().toUpperCase(), weight_pct: parseFloat(a.weight_pct) || 0 })),
@@ -149,7 +157,11 @@ function ManagedAccountForm() {
     if (!password) return 'Password is required';
     if (!openDate) return 'Account open date is required';
     if (deposits.filter((d) => d.date && d.amount).length === 0) return 'At least one deposit is required';
-    if (months.filter((m) => m.year && m.month && m.pct !== '').length === 0) return 'At least one monthly return is required';
+    if (
+      months.filter((m) => m.year && m.month && m.pct !== '').length === 0 &&
+      days.filter((d) => d.date && d.pct !== '').length === 0
+    )
+      return 'Add at least one monthly or daily return';
     if (allocs.filter((a) => a.symbol && a.weight_pct !== '').length === 0) return 'At least one instrument allocation is required';
     return null;
   };
@@ -382,6 +394,38 @@ function ManagedAccountForm() {
             normalised to 100%.
           </p>
         </div>
+      </div>
+
+      {/* Daily returns */}
+      <div className={cardCls}>
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-text-primary">Daily returns (%)</h3>
+          <button type="button"
+            onClick={() => setDays([...days, { date: '', pct: '' }])}
+            className="inline-flex items-center gap-1 text-xxs text-buy hover:underline">
+            <Plus size={12} /> Add day
+          </button>
+        </div>
+        <div className="grid md:grid-cols-2 gap-x-4 gap-y-2">
+          {days.map((d, i) => (
+            <div key={i} className="flex gap-2 items-center">
+              <input type="date" className={inputCls} value={d.date}
+                onChange={(e) => setDays(days.map((x, j) => (j === i ? { ...x, date: e.target.value } : x)))} />
+              <input className={`${inputCls} w-24`} value={d.pct} placeholder="% e.g. 0.8"
+                onChange={(e) => setDays(days.map((x, j) => (j === i ? { ...x, pct: e.target.value } : x)))} />
+              <button type="button" onClick={() => setDays(days.filter((_, j) => j !== i))}
+                className="p-1.5 rounded border border-danger/30 text-danger hover:bg-danger/10 shrink-0">
+                <Trash2 size={12} />
+              </button>
+            </div>
+          ))}
+        </div>
+        <p className="text-xxs text-text-tertiary">
+          Pin a return to a specific date. Any month that has at least one day here is driven
+          entirely by its daily rows — that month&apos;s <em>Monthly returns</em> entry is ignored, and
+          the month total is the sum of its daily %s. Negative % makes a losing day. Future dates
+          are skipped.
+        </p>
       </div>
 
       {/* Preview */}

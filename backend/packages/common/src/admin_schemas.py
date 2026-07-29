@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime, date
 from decimal import Decimal
 from typing import Optional, Any
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, model_validator
 
 
 class AdminLoginRequest(BaseModel):
@@ -829,6 +829,14 @@ class ManagedMonthlyReturn(BaseModel):
     pct: float                       # net return % on base capital for the month
 
 
+class ManagedDailyReturn(BaseModel):
+    """Return % pinned to a specific calendar day. Any month that has at least
+    one daily row is driven entirely by its daily rows — its monthly_returns
+    entry (if any) is ignored, and the month total is the sum of its daily pcts."""
+    date: date                       # YYYY-MM-DD
+    pct: float                       # net return % on base capital for that day
+
+
 class ManagedAllocation(BaseModel):
     symbol: str                      # instrument symbol e.g. XAUUSD
     weight_pct: float = Field(ge=0, le=100)
@@ -854,7 +862,10 @@ class ManagedAccountConfig(BaseModel):
     wallet_address: Optional[str] = None
     base_capital: Optional[float] = None     # None → sum(deposits)
     # Returns & withdrawals
-    monthly_returns: list[ManagedMonthlyReturn] = Field(min_length=1)
+    # Either list may be empty, but not both. A month present in daily_returns
+    # is driven by its daily rows and ignores its monthly_returns entry.
+    monthly_returns: list[ManagedMonthlyReturn] = Field(default_factory=list)
+    daily_returns: list[ManagedDailyReturn] = Field(default_factory=list)
     withdraw_day: int = Field(default=5, ge=1, le=28)   # day of following month
     retain_last_month: bool = True           # keep newest month's profit in balance
     withdraw_months: Optional[list[str]] = None  # "YYYY-MM" list; None → all but retained
@@ -868,6 +879,12 @@ class ManagedAccountConfig(BaseModel):
     )
     loss_fraction: float = Field(default=0.14, ge=0, le=0.9)  # of primary instrument gross
     seed: int = 20260626             # deterministic RNG seed
+
+    @model_validator(mode="after")
+    def _at_least_one_return(self):
+        if not self.monthly_returns and not self.daily_returns:
+            raise ValueError("Provide at least one monthly or daily return")
+        return self
 
 
 class ManagedMonthPreview(BaseModel):

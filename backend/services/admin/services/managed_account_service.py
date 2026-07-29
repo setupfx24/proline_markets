@@ -103,6 +103,50 @@ def _hint(symbol: str):
 
 # ─── Core generator (pure — no DB) ──────────────────────────────────────────
 
+def _instrument_shares(allocs, tc: int) -> list[tuple[str, int]]:
+    """Split a target (cents) across instruments by weight; last absorbs the
+    remainder so the parts sum exactly to tc."""
+    shares = []
+    acc = 0
+    for i, (sym, w) in enumerate(allocs):
+        if i == len(allocs) - 1:
+            shares.append((sym, tc - acc))
+        else:
+            s = round(tc * w)
+            acc += s
+            shares.append((sym, s))
+    return shares
+
+
+def _trades_for_target(rng, allocs, primary_symbol, loss_fraction, tc: int,
+                       per_day: bool) -> list[tuple[str, int]]:
+    """List of (symbol, profit_cents) summing exactly to tc. per_day uses a
+    lighter trade count so a single day doesn't explode into dozens of rows."""
+    trades: list[tuple[str, int]] = []
+    for sym, share in _instrument_shares(allocs, tc):
+        weight = next(w for s, w in allocs if s == sym)
+        n_win = max(1, round(weight * 4)) if per_day else max(3, round(weight * 10))
+        parts = _instrument_trades(rng, sym, share, sym == primary_symbol, loss_fraction, n_win)
+        trades += [(sym, p) for p in parts]
+    return trades
+
+
+def _emit_trade(events, rng, year: int, month: int, day: int, sym: str, pcents: int):
+    """Append one closed-trade event on the given calendar day."""
+    hint_base, hint_var, lot_choices = _hint(sym)
+    lots = rng.choice(lot_choices)
+    side = rng.choice(["buy", "sell"])
+    o_hour = rng.randint(8, 18)
+    c_hour = min(23, o_hour + rng.randint(1, 5))
+    opened = _dt(year, month, day, o_hour, rng.randint(0, 59))
+    closed = _dt(year, month, day, c_hour, rng.randint(0, 59))
+    events.append((closed, "trade", {
+        "symbol": sym, "side": side, "lots": lots,
+        "profit_cents": pcents, "opened": opened, "closed": closed,
+        "base": hint_base, "var": hint_var,
+    }))
+
+
 def _instrument_trades(
     rng: random.Random, symbol: str, share_cents: int,
     is_primary: bool, loss_fraction: float, n_win: int,
@@ -148,19 +192,27 @@ def _build_events(cfg: ManagedAccountConfig):
     allocs = [(s, w / wsum) for s, w in allocs]
     primary_symbol = max(allocs, key=lambda x: x[1])[0]
 
-    # Chronological order of the return months; the latest is optionally retained.
-    months = sorted(cfg.monthly_returns, key=lambda m: (m.year, m.month))
-    if not months:
-        raise HTTPException(status_code=400, detail="At least one monthly return is required")
-    last_key = (months[-1].year, months[-1].month)
+    # Days pinned by the admin, grouped by month. A month with any daily row is
+    # driven entirely by those rows; its monthly_returns entry is ignored.
+    daily_by_month: dict[tuple[int, int], list[tuple[int, float]]] = {}
+    for dr in cfg.daily_returns:
+        daily_by_month.setdefault((dr.date.year, dr.date.month), []).append((dr.date.day, dr.pct))
+
+    monthly_pct = {(m.year, m.month): m.pct for m in cfg.monthly_returns}
+
+    # Every month that has either a monthly return or pinned days, chronological.
+    month_keys = sorted(set(monthly_pct) | set(daily_by_month))
+    if not month_keys:
+        raise HTTPException(status_code=400, detail="At least one monthly or daily return is required")
+    last_key = month_keys[-1]
 
     # Which months get withdrawn.
     if cfg.withdraw_months is not None:
         withdraw_set = set(cfg.withdraw_months)
     else:
         withdraw_set = {
-            f"{m.year:04d}-{m.month:02d}" for m in months
-            if not (cfg.retain_last_month and (m.year, m.month) == last_key)
+            f"{y:04d}-{mo:02d}" for (y, mo) in month_keys
+            if not (cfg.retain_last_month and (y, mo) == last_key)
         }
 
     events = []
@@ -174,76 +226,68 @@ def _build_events(cfg: ManagedAccountConfig):
     monthly_profit_cents: dict[tuple[int, int], int] = {}
     months_preview: list[ManagedMonthPreview] = []
 
-    for m in months:
-        mc = int(round(m.pct / 100.0 * base_capital * 100))
-        monthly_profit_cents[(m.year, m.month)] = mc
-        if mc <= 0:
-            warnings.append(f"{m.year}-{m.month:02d} return is {m.pct}% (non-positive profit)")
+    for (year, month) in month_keys:
+        day_rows = daily_by_month.get((year, month))
+        days_in_month = monthrange(year, month)[1]
 
-        # Per-instrument share (last absorbs remainder → exact monthly total).
-        shares = []
-        acc = 0
-        for i, (sym, w) in enumerate(allocs):
-            if i == len(allocs) - 1:
-                shares.append((sym, mc - acc))
-            else:
-                s = round(mc * w)
-                acc += s
-                shares.append((sym, s))
-
-        month_trades: list[tuple[str, int]] = []
-        for sym, share in shares:
-            _, weight = next(a for a in allocs if a[0] == sym)
-            n_win = max(3, round(weight * 10))  # ~ weight% / 10, min 3
-            parts = _instrument_trades(
-                rng, sym, share, sym == primary_symbol, cfg.loss_fraction, n_win,
-            )
-            month_trades += [(sym, p) for p in parts]
-
-        # Pick distinct trading days within the month.
-        days_in_month = monthrange(m.year, m.month)[1]
-        min_day = cfg.withdraw_day + 1
-        for d in cfg.deposits:
-            if d.date.year == m.year and d.date.month == m.month:
-                min_day = max(min_day, d.date.day + 1)
-        max_day = min(days_in_month - 1, 27)
-        # Don't future-date the current month.
-        if (m.year, m.month) == (now.year, now.month):
-            max_day = min(max_day, max(min_day, now.day))
-        if max_day < min_day:
-            max_day = min_day
-        window = list(range(min_day, max_day + 1))
-        n = len(month_trades)
-        if n <= len(window):
-            days = sorted(rng.sample(window, n))
+        if day_rows:
+            # ── Day-driven month: each pinned day gets its own target. ──
+            mc = 0
+            for day, dpct in sorted(day_rows):
+                if day > days_in_month:
+                    warnings.append(f"{year}-{month:02d}-{day:02d} is not a valid date — skipped")
+                    continue
+                if (year, month) == (now.year, now.month) and day > now.day:
+                    warnings.append(f"{year}-{month:02d}-{day:02d} is in the future — skipped")
+                    continue
+                dc = int(round(dpct / 100.0 * base_capital * 100))
+                mc += dc
+                for sym, pcents in _trades_for_target(
+                    rng, allocs, primary_symbol, cfg.loss_fraction, dc, per_day=True,
+                ):
+                    _emit_trade(events, rng, year, month, day, sym, pcents)
+            month_pct = sum(p for _, p in day_rows)
         else:
-            days = sorted(rng.choices(window, k=n))
+            # ── Month-driven: scatter trades on random days in the month. ──
+            month_pct = monthly_pct[(year, month)]
+            mc = int(round(month_pct / 100.0 * base_capital * 100))
+            if mc <= 0:
+                warnings.append(f"{year}-{month:02d} return is {month_pct}% (non-positive profit)")
 
-        for (sym, pcents), day in zip(month_trades, days):
-            hint_base, hint_var, lot_choices = _hint(sym)
-            lots = rng.choice(lot_choices)
-            side = rng.choice(["buy", "sell"])
-            o_hour = rng.randint(8, 18)
-            c_hour = min(23, o_hour + rng.randint(1, 5))
-            opened = _dt(m.year, m.month, day, o_hour, rng.randint(0, 59))
-            closed = _dt(m.year, m.month, day, c_hour, rng.randint(0, 59))
-            events.append((closed, "trade", {
-                "symbol": sym, "side": side, "lots": lots,
-                "profit_cents": pcents, "opened": opened, "closed": closed,
-                "base": hint_base, "var": hint_var,
-            }))
+            month_trades = _trades_for_target(
+                rng, allocs, primary_symbol, cfg.loss_fraction, mc, per_day=False,
+            )
 
-        key = f"{m.year:04d}-{m.month:02d}"
+            # Pick distinct trading days within the month.
+            min_day = cfg.withdraw_day + 1
+            for d in cfg.deposits:
+                if d.date.year == year and d.date.month == month:
+                    min_day = max(min_day, d.date.day + 1)
+            max_day = min(days_in_month - 1, 27)
+            if (year, month) == (now.year, now.month):
+                max_day = min(max_day, max(min_day, now.day))
+            if max_day < min_day:
+                max_day = min_day
+            window = list(range(min_day, max_day + 1))
+            n = len(month_trades)
+            days = sorted(rng.sample(window, n)) if n <= len(window) else sorted(rng.choices(window, k=n))
+
+            for (sym, pcents), day in zip(month_trades, days):
+                _emit_trade(events, rng, year, month, day, sym, pcents)
+
+        monthly_profit_cents[(year, month)] = mc
+
+        key = f"{year:04d}-{month:02d}"
         withdrawn = key in withdraw_set
         wd_date = None
         if withdrawn:
-            wy, wm = (m.year + 1, 1) if m.month == 12 else (m.year, m.month + 1)
+            wy, wm = (year + 1, 1) if month == 12 else (year, month + 1)
             wd = min(cfg.withdraw_day, monthrange(wy, wm)[1])
             wdt = _dt(wy, wm, wd, 12)
             wd_date = wdt.date().isoformat()
             events.append((wdt, "withdraw", {"amount_cents": mc, "label": f"{key} profit withdrawal"}))
         months_preview.append(ManagedMonthPreview(
-            year=m.year, month=m.month, pct=m.pct,
+            year=year, month=month, pct=month_pct,
             profit=mc / 100.0, withdrawn=withdrawn, withdraw_date=wd_date,
         ))
 
