@@ -837,6 +837,19 @@ class ManagedDailyReturn(BaseModel):
     pct: float                       # net return % on base capital for that day
 
 
+class ManagedManualTrade(BaseModel):
+    """One exact trade the admin dictates. Its P&L is used verbatim (no
+    calculation). On any day that has a manual trade, auto-generation is
+    suppressed for that day — only the admin's trades appear."""
+    date: date                       # YYYY-MM-DD (close day)
+    symbol: str                      # instrument symbol e.g. XAUUSD
+    side: str = Field(pattern="^(buy|sell)$")
+    lots: float = Field(gt=0)
+    open_price: float = Field(gt=0)
+    close_price: float = Field(gt=0)
+    pnl: float                       # USD, may be negative
+
+
 class ManagedAllocation(BaseModel):
     symbol: str                      # instrument symbol e.g. XAUUSD
     weight_pct: float = Field(ge=0, le=100)
@@ -866,6 +879,7 @@ class ManagedAccountConfig(BaseModel):
     # is driven by its daily rows and ignores its monthly_returns entry.
     monthly_returns: list[ManagedMonthlyReturn] = Field(default_factory=list)
     daily_returns: list[ManagedDailyReturn] = Field(default_factory=list)
+    manual_trades: list[ManagedManualTrade] = Field(default_factory=list)
     withdraw_day: int = Field(default=5, ge=1, le=28)   # day of following month
     retain_last_month: bool = True           # keep newest month's profit in balance
     withdraw_months: Optional[list[str]] = None  # "YYYY-MM" list; None → all but retained
@@ -882,8 +896,8 @@ class ManagedAccountConfig(BaseModel):
 
     @model_validator(mode="after")
     def _at_least_one_return(self):
-        if not self.monthly_returns and not self.daily_returns:
-            raise ValueError("Provide at least one monthly or daily return")
+        if not self.monthly_returns and not self.daily_returns and not self.manual_trades:
+            raise ValueError("Provide at least one monthly return, daily return, or manual trade")
         return self
 
 

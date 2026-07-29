@@ -10,6 +10,10 @@ import toast from 'react-hot-toast';
 interface DepositRow { date: string; amount: string }
 interface MonthRow { year: string; month: string; pct: string }
 interface DayRow { date: string; pct: string }
+interface ManualTradeRow {
+  date: string; symbol: string; side: string;
+  lots: string; open_price: string; close_price: string; pnl: string;
+}
 interface AllocRow { symbol: string; weight_pct: string }
 
 interface MonthPreview {
@@ -73,6 +77,7 @@ function ManagedAccountForm() {
   const [deposits, setDeposits] = useState<DepositRow[]>(DEFAULT_DEPOSITS);
   const [months, setMonths] = useState<MonthRow[]>(DEFAULT_MONTHS);
   const [days, setDays] = useState<DayRow[]>([]);
+  const [manualTrades, setManualTrades] = useState<ManualTradeRow[]>([]);
   const [allocs, setAllocs] = useState<AllocRow[]>(DEFAULT_ALLOC);
 
   const [preview, setPreview] = useState<Preview | null>(null);
@@ -107,6 +112,13 @@ function ManagedAccountForm() {
       })));
       setDays(((c.daily_returns as Array<{ date: string; pct: number }>) || []).map((d) => ({
         date: d.date, pct: String(d.pct),
+      })));
+      setManualTrades(((c.manual_trades as Array<{
+        date: string; symbol: string; side: string; lots: number;
+        open_price: number; close_price: number; pnl: number;
+      }>) || []).map((t) => ({
+        date: t.date, symbol: t.symbol, side: t.side, lots: String(t.lots),
+        open_price: String(t.open_price), close_price: String(t.close_price), pnl: String(t.pnl),
       })));
       setAllocs(((c.instrument_allocation as Array<{ symbol: string; weight_pct: number }>) || []).map((a) => ({
         symbol: a.symbol, weight_pct: String(a.weight_pct),
@@ -146,6 +158,13 @@ function ManagedAccountForm() {
     daily_returns: days
       .filter((d) => d.date && d.pct !== '')
       .map((d) => ({ date: d.date, pct: parseFloat(d.pct) || 0 })),
+    manual_trades: manualTrades
+      .filter((t) => t.date && t.symbol && t.lots && t.open_price && t.close_price && t.pnl !== '')
+      .map((t) => ({
+        date: t.date, symbol: t.symbol.trim().toUpperCase(), side: t.side || 'buy',
+        lots: parseFloat(t.lots) || 0, open_price: parseFloat(t.open_price) || 0,
+        close_price: parseFloat(t.close_price) || 0, pnl: parseFloat(t.pnl) || 0,
+      })),
     instrument_allocation: allocs
       .filter((a) => a.symbol && a.weight_pct !== '')
       .map((a) => ({ symbol: a.symbol.trim().toUpperCase(), weight_pct: parseFloat(a.weight_pct) || 0 })),
@@ -159,9 +178,10 @@ function ManagedAccountForm() {
     if (deposits.filter((d) => d.date && d.amount).length === 0) return 'At least one deposit is required';
     if (
       months.filter((m) => m.year && m.month && m.pct !== '').length === 0 &&
-      days.filter((d) => d.date && d.pct !== '').length === 0
+      days.filter((d) => d.date && d.pct !== '').length === 0 &&
+      manualTrades.filter((t) => t.date && t.symbol && t.pnl !== '').length === 0
     )
-      return 'Add at least one monthly or daily return';
+      return 'Add at least one monthly return, daily return, or manual trade';
     if (allocs.filter((a) => a.symbol && a.weight_pct !== '').length === 0) return 'At least one instrument allocation is required';
     return null;
   };
@@ -425,6 +445,60 @@ function ManagedAccountForm() {
           entirely by its daily rows — that month&apos;s <em>Monthly returns</em> entry is ignored, and
           the month total is the sum of its daily %s. Negative % makes a losing day. Future dates
           are skipped.
+        </p>
+      </div>
+
+      {/* Manual trades */}
+      <div className={cardCls}>
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-text-primary">Manual trades</h3>
+          <button type="button"
+            onClick={() => setManualTrades([...manualTrades, {
+              date: '', symbol: 'XAUUSD', side: 'buy',
+              lots: '', open_price: '', close_price: '', pnl: '',
+            }])}
+            className="inline-flex items-center gap-1 text-xxs text-buy hover:underline">
+            <Plus size={12} /> Add trade
+          </button>
+        </div>
+        {manualTrades.length > 0 && (
+          <div className="hidden md:grid grid-cols-[1.4fr_1fr_0.8fr_0.8fr_1fr_1fr_1fr_auto] gap-2 text-xxs text-text-tertiary px-0.5">
+            <span>Date</span><span>Symbol</span><span>Side</span><span>Lots</span>
+            <span>Open</span><span>Close</span><span>P&amp;L ($)</span><span />
+          </div>
+        )}
+        {manualTrades.map((t, i) => {
+          const upd = (patch: Partial<ManualTradeRow>) =>
+            setManualTrades(manualTrades.map((x, j) => (j === i ? { ...x, ...patch } : x)));
+          return (
+            <div key={i} className="grid grid-cols-2 md:grid-cols-[1.4fr_1fr_0.8fr_0.8fr_1fr_1fr_1fr_auto] gap-2 items-center">
+              <input type="date" className={inputCls} value={t.date}
+                onChange={(e) => upd({ date: e.target.value })} />
+              <input className={inputCls} value={t.symbol} placeholder="XAUUSD"
+                onChange={(e) => upd({ symbol: e.target.value })} />
+              <select className={inputCls} value={t.side} onChange={(e) => upd({ side: e.target.value })}>
+                <option value="buy">Buy</option>
+                <option value="sell">Sell</option>
+              </select>
+              <input className={inputCls} value={t.lots} placeholder="Lots"
+                onChange={(e) => upd({ lots: e.target.value })} />
+              <input className={inputCls} value={t.open_price} placeholder="Open"
+                onChange={(e) => upd({ open_price: e.target.value })} />
+              <input className={inputCls} value={t.close_price} placeholder="Close"
+                onChange={(e) => upd({ close_price: e.target.value })} />
+              <input className={inputCls} value={t.pnl} placeholder="P&L $"
+                onChange={(e) => upd({ pnl: e.target.value })} />
+              <button type="button" onClick={() => setManualTrades(manualTrades.filter((_, j) => j !== i))}
+                className="p-1.5 rounded border border-danger/30 text-danger hover:bg-danger/10 shrink-0 justify-self-end">
+                <Trash2 size={12} />
+              </button>
+            </div>
+          );
+        })}
+        <p className="text-xxs text-text-tertiary">
+          Each row is one exact closed trade — the P&amp;L is used as-is (no calculation). On any day
+          that has a manual trade, auto-generation is skipped for that day, so only these trades
+          appear. Negative P&amp;L is a losing trade. Future dates are skipped.
         </p>
       </div>
 

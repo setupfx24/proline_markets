@@ -132,7 +132,8 @@ def _trades_for_target(rng, allocs, primary_symbol, loss_fraction, tc: int,
 
 
 def _emit_trade(events, rng, year: int, month: int, day: int, sym: str, pcents: int):
-    """Append one closed-trade event on the given calendar day."""
+    """Append one auto-generated closed-trade event on the given calendar day.
+    Prices are synthesised later from a hint; only the profit is authoritative."""
     hint_base, hint_var, lot_choices = _hint(sym)
     lots = rng.choice(lot_choices)
     side = rng.choice(["buy", "sell"])
@@ -144,6 +145,23 @@ def _emit_trade(events, rng, year: int, month: int, day: int, sym: str, pcents: 
         "symbol": sym, "side": side, "lots": lots,
         "profit_cents": pcents, "opened": opened, "closed": closed,
         "base": hint_base, "var": hint_var,
+    }))
+
+
+def _emit_manual_trade(events, rng, mt):
+    """Append the admin's exact trade — symbol, side, lots, prices and P&L used
+    verbatim. Explicit open_price/close_price mark it so generate() does not
+    recompute the close from the profit."""
+    y, mo, day = mt.date.year, mt.date.month, mt.date.day
+    o_hour = rng.randint(8, 18)
+    c_hour = min(23, o_hour + rng.randint(1, 5))
+    opened = _dt(y, mo, day, o_hour, rng.randint(0, 59))
+    closed = _dt(y, mo, day, c_hour, rng.randint(0, 59))
+    events.append((closed, "trade", {
+        "symbol": mt.symbol.upper(), "side": mt.side.lower(), "lots": float(mt.lots),
+        "profit_cents": int(round(mt.pnl * 100)),
+        "opened": opened, "closed": closed,
+        "open_price": float(mt.open_price), "close_price": float(mt.close_price),
     }))
 
 
@@ -198,12 +216,18 @@ def _build_events(cfg: ManagedAccountConfig):
     for dr in cfg.daily_returns:
         daily_by_month.setdefault((dr.date.year, dr.date.month), []).append((dr.date.day, dr.pct))
 
+    # Exact admin-dictated trades, grouped by month. A day with a manual trade
+    # suppresses auto-generation for that day (only the manual trades appear).
+    manual_by_month: dict[tuple[int, int], list] = {}
+    for mt in cfg.manual_trades:
+        manual_by_month.setdefault((mt.date.year, mt.date.month), []).append(mt)
+
     monthly_pct = {(m.year, m.month): m.pct for m in cfg.monthly_returns}
 
-    # Every month that has either a monthly return or pinned days, chronological.
-    month_keys = sorted(set(monthly_pct) | set(daily_by_month))
+    # Every month referenced by any return or manual trade, chronological.
+    month_keys = sorted(set(monthly_pct) | set(daily_by_month) | set(manual_by_month))
     if not month_keys:
-        raise HTTPException(status_code=400, detail="At least one monthly or daily return is required")
+        raise HTTPException(status_code=400, detail="At least one monthly return, daily return, or manual trade is required")
     last_key = month_keys[-1]
 
     # Which months get withdrawn.
@@ -230,10 +254,29 @@ def _build_events(cfg: ManagedAccountConfig):
         day_rows = daily_by_month.get((year, month))
         days_in_month = monthrange(year, month)[1]
 
+        # Emit the admin's exact trades first, and record which days they cover
+        # so auto-generation can skip those days. manual_cents is realised P&L.
+        manual_days: set[int] = set()
+        manual_cents = 0
+        for mt in manual_by_month.get((year, month), []):
+            day = mt.date.day
+            if day > days_in_month:
+                warnings.append(f"manual trade {mt.date.isoformat()} is not a valid date — skipped")
+                continue
+            if (year, month) == (now.year, now.month) and day > now.day:
+                warnings.append(f"manual trade {mt.date.isoformat()} is in the future — skipped")
+                continue
+            manual_days.add(day)
+            manual_cents += int(round(mt.pnl * 100))
+            _emit_manual_trade(events, rng, mt)
+
+        # auto_cents is the profit actually produced by auto-generation below.
+        auto_cents = 0
         if day_rows:
             # ── Day-driven month: each pinned day gets its own target. ──
-            mc = 0
             for day, dpct in sorted(day_rows):
+                if day in manual_days:
+                    continue  # manual trades own this day
                 if day > days_in_month:
                     warnings.append(f"{year}-{month:02d}-{day:02d} is not a valid date — skipped")
                     continue
@@ -241,24 +284,17 @@ def _build_events(cfg: ManagedAccountConfig):
                     warnings.append(f"{year}-{month:02d}-{day:02d} is in the future — skipped")
                     continue
                 dc = int(round(dpct / 100.0 * base_capital * 100))
-                mc += dc
+                auto_cents += dc
                 for sym, pcents in _trades_for_target(
                     rng, allocs, primary_symbol, cfg.loss_fraction, dc, per_day=True,
                 ):
                     _emit_trade(events, rng, year, month, day, sym, pcents)
             month_pct = sum(p for _, p in day_rows)
-        else:
+        elif (year, month) in monthly_pct:
             # ── Month-driven: scatter trades on random days in the month. ──
             month_pct = monthly_pct[(year, month)]
-            mc = int(round(month_pct / 100.0 * base_capital * 100))
-            if mc <= 0:
-                warnings.append(f"{year}-{month:02d} return is {month_pct}% (non-positive profit)")
 
-            month_trades = _trades_for_target(
-                rng, allocs, primary_symbol, cfg.loss_fraction, mc, per_day=False,
-            )
-
-            # Pick distinct trading days within the month.
+            # Eligible days, excluding any the admin pinned a manual trade to.
             min_day = cfg.withdraw_day + 1
             for d in cfg.deposits:
                 if d.date.year == year and d.date.month == month:
@@ -268,19 +304,34 @@ def _build_events(cfg: ManagedAccountConfig):
                 max_day = min(max_day, max(min_day, now.day))
             if max_day < min_day:
                 max_day = min_day
-            window = list(range(min_day, max_day + 1))
-            n = len(month_trades)
-            days = sorted(rng.sample(window, n)) if n <= len(window) else sorted(rng.choices(window, k=n))
+            window = [d for d in range(min_day, max_day + 1) if d not in manual_days]
 
-            for (sym, pcents), day in zip(month_trades, days):
-                _emit_trade(events, rng, year, month, day, sym, pcents)
+            if not window:
+                warnings.append(f"{year}-{month:02d}: every eligible day is taken by a manual trade — monthly return not applied")
+            else:
+                auto_cents = int(round(month_pct / 100.0 * base_capital * 100))
+                if auto_cents <= 0:
+                    warnings.append(f"{year}-{month:02d} return is {month_pct}% (non-positive profit)")
+                month_trades = _trades_for_target(
+                    rng, allocs, primary_symbol, cfg.loss_fraction, auto_cents, per_day=False,
+                )
+                n = len(month_trades)
+                days = sorted(rng.sample(window, n)) if n <= len(window) else sorted(rng.choices(window, k=n))
+                for (sym, pcents), day in zip(month_trades, days):
+                    _emit_trade(events, rng, year, month, day, sym, pcents)
+        else:
+            # ── Manual-only month: no auto target. ──
+            month_pct = 0.0
 
+        # Realised month profit = auto + manual. Used for withdrawal so the
+        # balance stays exact even when manual trades replace auto days.
+        mc = auto_cents + manual_cents
         monthly_profit_cents[(year, month)] = mc
 
         key = f"{year:04d}-{month:02d}"
         withdrawn = key in withdraw_set
         wd_date = None
-        if withdrawn:
+        if withdrawn and mc != 0:
             wy, wm = (year + 1, 1) if month == 12 else (year, month + 1)
             wd = min(cfg.withdraw_day, monthrange(wy, wm)[1])
             wdt = _dt(wy, wm, wd, 12)
@@ -288,7 +339,7 @@ def _build_events(cfg: ManagedAccountConfig):
             events.append((wdt, "withdraw", {"amount_cents": mc, "label": f"{key} profit withdrawal"}))
         months_preview.append(ManagedMonthPreview(
             year=year, month=month, pct=month_pct,
-            profit=mc / 100.0, withdrawn=withdrawn, withdraw_date=wd_date,
+            profit=mc / 100.0, withdrawn=withdrawn and mc != 0, withdraw_date=wd_date,
         ))
 
     # Running balance (cents), chronological.
@@ -489,10 +540,15 @@ async def generate(
             cs = float(inst.contract_size or Decimal("100000"))
             profit = p["profit_cents"] / 100.0
             lots = p["lots"]
-            sign = 1 if p["side"] == "buy" else -1
-            open_price = round(p["base"] + rng.uniform(-p["var"], p["var"]), digits)
-            denom = sign * lots * cs
-            close_price = round(open_price + (profit / denom if denom else 0), digits)
+            if p.get("open_price") is not None:
+                # Manual trade — use the admin's exact prices verbatim.
+                open_price = round(p["open_price"], digits)
+                close_price = round(p["close_price"], digits)
+            else:
+                sign = 1 if p["side"] == "buy" else -1
+                open_price = round(p["base"] + rng.uniform(-p["var"], p["var"]), digits)
+                denom = sign * lots * cs
+                close_price = round(open_price + (profit / denom if denom else 0), digits)
             pos = Position(
                 account_id=account.id, instrument_id=inst.id, side=p["side"],
                 status="closed", lots=Decimal(str(lots)),
