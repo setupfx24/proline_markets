@@ -49,6 +49,46 @@ type BulkCloseType = 'all' | 'profit' | 'loss';
 
 type TabId = 'open' | 'pending' | 'history';
 
+// Closed-positions date filter. Week/month are calendar periods (since Monday /
+// since the 1st); 3m/6m are rolling. `all` sends no bound.
+const HISTORY_RANGES = [
+  { id: 'today', label: 'Today' },
+  { id: 'week', label: 'This week' },
+  { id: 'month', label: 'This month' },
+  { id: '3m', label: 'Last 3 months' },
+  { id: '6m', label: 'Last 6 months' },
+  { id: 'all', label: 'All' },
+] as const;
+type HistoryRange = (typeof HISTORY_RANGES)[number]['id'];
+
+/** Local-time lower bound for a range, or null for "all". */
+function historyRangeStart(range: HistoryRange): Date | null {
+  const now = new Date();
+  const midnightToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  switch (range) {
+    case 'today':
+      return midnightToday;
+    case 'week': {
+      const mondayOffset = (midnightToday.getDay() + 6) % 7; // Sun=0 → 6, Mon=1 → 0
+      return new Date(midnightToday.getTime() - mondayOffset * 86400000);
+    }
+    case 'month':
+      return new Date(now.getFullYear(), now.getMonth(), 1);
+    case '3m': {
+      const d = new Date(now);
+      d.setMonth(d.getMonth() - 3);
+      return d;
+    }
+    case '6m': {
+      const d = new Date(now);
+      d.setMonth(d.getMonth() - 6);
+      return d;
+    }
+    default:
+      return null;
+  }
+}
+
 /** Maps API close_reason (sl, tp, manual, …) to a short label + badge style for history.
  *  When a trigger price is available (SL/TP hits close at the level itself), the label
  *  includes "@ <price>" so the user sees exactly where it fired. */
@@ -313,6 +353,7 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
   const [activeTab, setActiveTab] = useState<TabId>('open');
   const [historyTrades, setHistoryTrades] = useState<ClosedTrade[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyRange, setHistoryRange] = useState<HistoryRange>('all');
   const [closeModal, setCloseModal] = useState<CloseModal>(null);
   const [closeSubmitting, setCloseSubmitting] = useState(false);
   const [toolbarBusy, setToolbarBusy] = useState(false);
@@ -371,10 +412,12 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
   const loadHistory = useCallback(async () => {
     setHistoryLoading(true);
     try {
-      const res = await api.get<{ items?: ClosedTrade[] } | ClosedTrade[]>('/portfolio/trades', {
-        page: '1',
-        per_page: '200',
-      });
+      // Filter server-side: date_from bounds the period, so the 200-row cap
+      // applies within it rather than only to the most recent 200 overall.
+      const params: Record<string, string> = { page: '1', per_page: '200' };
+      const start = historyRangeStart(historyRange);
+      if (start) params.date_from = start.toISOString();
+      const res = await api.get<{ items?: ClosedTrade[] } | ClosedTrade[]>('/portfolio/trades', params);
       setHistoryTrades(
         (res && typeof res === 'object' && 'items' in res ? res.items : Array.isArray(res) ? res : []) || [],
       );
@@ -382,7 +425,7 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
       setHistoryTrades([]);
     }
     setHistoryLoading(false);
-  }, []);
+  }, [historyRange]);
 
   useEffect(() => {
     if (activeTab === 'history') void loadHistory();
@@ -1347,6 +1390,25 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
 
             {activeTab === 'history' && (
               <div className="min-w-0 w-full flex-1 flex flex-col min-h-0 overflow-hidden">
+                {/* Date-range filter. Defaults to All; changing it refetches
+                    with a date_from bound. */}
+                <div className="flex items-center gap-1 px-2 py-1.5 border-b border-border-glass/50 overflow-x-auto shrink-0">
+                  {HISTORY_RANGES.map((r) => (
+                    <button
+                      key={r.id}
+                      type="button"
+                      onClick={() => setHistoryRange(r.id)}
+                      className={clsx(
+                        'px-2.5 py-1 rounded-md text-[11px] font-medium whitespace-nowrap transition-colors',
+                        historyRange === r.id
+                          ? 'bg-accent/15 text-accent'
+                          : 'text-text-tertiary hover:text-text-primary hover:bg-bg-hover',
+                      )}
+                    >
+                      {r.label}
+                    </button>
+                  ))}
+                </div>
                 {historyLoading ? (
                   <div className="px-4 py-12 text-center text-text-tertiary animate-pulse text-sm flex-1 flex items-center justify-center min-h-[120px]">
                     Loading history…
