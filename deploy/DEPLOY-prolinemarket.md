@@ -336,17 +336,28 @@ $COMPOSE ps                                  # status
 $COMPOSE logs -f gateway                      # live logs
 $COMPOSE restart gateway                      # restart one service
 
-# Redeploy after a git pull (frontend MUST be rebuilt, not just restarted):
+# Redeploy after a git pull — USE THE SCRIPT (frontends must be rebuilt, not restarted):
 git pull
-APP_VERSION=$(date +%Y%m%d-%H%M%S) $COMPOSE build --no-cache trader-frontend admin-frontend
-$COMPOSE up -d
+./deploy/redeploy.sh                                  # market-data, admin-api, both frontends
+./deploy/redeploy.sh trader-frontend                  # or just one service
 
 # Full rebuild + migrations
 git pull
-APP_VERSION=$(date +%Y%m%d-%H%M%S) $COMPOSE build
-$COMPOSE up -d
+./deploy/redeploy.sh gateway admin-api market-data b-book-engine risk-engine \
+                     trader-frontend admin-frontend
 $COMPOSE --profile migrate run --rm migrate
 ```
+
+> **Do not** run `$COMPOSE build` for both frontends in one command. Compose builds
+> services in parallel, and each Next.js build is allowed a 4 GB heap
+> (`--max-old-space-size=4096` in the Dockerfiles) — two at once will OOM a small
+> box and the kernel kills running containers, which is exactly how a deploy ends
+> in a 502. `redeploy.sh` builds one at a time, and only swaps containers after
+> **every** build has succeeded, so a failed build can never take the site down.
+>
+> `--no-cache` is also unnecessary: any source change already invalidates the
+> builder's `COPY . .` layer, so the app rebuilds. All `--no-cache` adds is a
+> repeat of `npm ci` — double the time and double the memory pressure.
 
 ---
 
@@ -356,7 +367,8 @@ $COMPOSE --profile migrate run --rm migrate
 |---|---|
 | Cloudflare **521** (origin down) | nginx not listening on 443 → `sudo systemctl status nginx`, `sudo nginx -t` |
 | Cloudflare **525** (SSL handshake) | `origin.pem` / `origin-key.pem` wrong or mismatched in `/etc/ssl/cloudflare/` |
-| **502** Bad Gateway | A container crashed → `$COMPOSE ps`, then `$COMPOSE logs <svc>` |
+| **502** Bad Gateway | Nothing listening on 3012/3013 → `$COMPOSE ps`, `$COMPOSE logs --tail=100 trader-frontend`. Recover with `$COMPOSE up -d trader-frontend admin-frontend`. If it happens on every deploy, see the build note above — use `./deploy/redeploy.sh`. |
+| **502 right after a build** | The build OOM-killed the running container. Confirm with `dmesg -T \| grep -i "out of memory"` and `free -h`; fix by adding swap (Phase 2) and deploying via `./deploy/redeploy.sh`. |
 | Prices/chart not updating | Cloudflare **Network → WebSockets** must be ON |
 | Admin login fails | Migrations not run → `$COMPOSE --profile migrate run --rm migrate` |
 | CORS errors | `CORS_ORIGINS` must match the domains exactly, no trailing slash |
