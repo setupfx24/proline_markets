@@ -395,12 +395,18 @@ _redis_url = os.getenv("REDIS_URL", "redis://redis:6379/0")
 _redis_prices = aioredis.from_url(_redis_url.rsplit("/", 1)[0] + "/0", decode_responses=True)
 
 
+# Segments the platform does not quote — kept out of the picker entirely.
+_EXCLUDED_PICKER_SEGMENTS = {"stocks", "equities", "shares"}
+
+
 async def live_instruments(db: AsyncSession) -> dict:
-    """Every tradable instrument, grouped by segment, with its live feed price.
+    """Instruments the feed is actually quoting, grouped by segment.
 
     ``bid``/``ask`` come from the market-data feed's ``tick:SYMBOL`` snapshot in
-    Redis (Infoway / LP). Symbols with no live tick are still returned with null
-    prices so the admin can still pick them and type the price by hand.
+    Redis (Infoway / LP). Only symbols with a live tick are returned — an entry
+    the admin cannot get a price for is just a trap in the dropdown. If nothing
+    is quoting at all (feed down), the full list is returned instead so the form
+    still works and prices can be typed by hand.
     """
     r = await db.execute(
         select(Instrument, InstrumentSegment.name)
@@ -418,9 +424,12 @@ async def live_instruments(db: AsyncSession) -> dict:
     except Exception:
         ticks = [None] * len(rows)
 
-    items = []
-    segments: list[str] = []
+    live: list[dict] = []
+    no_feed: list[dict] = []
     for (inst, seg_name), raw in zip(rows, ticks):
+        seg = seg_name or "other"
+        if seg.lower() in _EXCLUDED_PICKER_SEGMENTS:
+            continue
         bid = ask = None
         ts = None
         if raw:
@@ -431,10 +440,7 @@ async def live_instruments(db: AsyncSession) -> dict:
                 ts = t.get("timestamp")
             except (ValueError, KeyError, TypeError):
                 bid = ask = None
-        seg = seg_name or "other"
-        if seg not in segments:
-            segments.append(seg)
-        items.append({
+        item = {
             "symbol": inst.symbol,
             "display_name": inst.display_name or inst.symbol,
             "segment": seg,
@@ -444,7 +450,14 @@ async def live_instruments(db: AsyncSession) -> dict:
             "ask": ask,
             "price": round((bid + ask) / 2, 8) if bid is not None and ask is not None else None,
             "timestamp": ts,
-        })
+        }
+        (live if bid is not None else no_feed).append(item)
+
+    items = live or no_feed
+    segments: list[str] = []
+    for it in items:
+        if it["segment"] not in segments:
+            segments.append(it["segment"])
     return {"items": items, "segments": segments}
 
 
