@@ -48,10 +48,11 @@ wait_ready() {
   deadline=$((SECONDS + timeout))
 
   if [ -z "$url" ]; then
+    # No published port (e.g. market-data) — plain `ps` text works across every
+    # compose version, unlike --format/--status which differ between them.
     while [ $SECONDS -lt $deadline ]; do
-      case "$("${COMPOSE[@]}" ps --format '{{.State}}' "$svc" 2>/dev/null | head -1)" in
-        running) echo "   OK   $svc is running"; return 0 ;;
-        restarting|exited|dead) break ;;
+      case "$("${COMPOSE[@]}" ps "$svc" 2>/dev/null | tail -n +2)" in
+        *running*|*" Up "*) echo "   OK   $svc is running"; return 0 ;;
       esac
       sleep 2
     done
