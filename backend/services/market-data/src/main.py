@@ -48,6 +48,13 @@ STALE_REFRESH_INTERVAL_SEC = 30.0
 # Segments the platform does not quote — never subscribed on the upstream feed.
 EXCLUDED_FEED_SEGMENTS = {"stocks", "equities", "shares"}
 
+# Infoway fallback timing. The wait must outlast a redeploy handover: until the
+# old container's sockets are released the key is over its connection limit and
+# every attempt is answered with HTTP 429.
+INFOWAY_FALLBACK_AFTER_SEC = 180.0
+INFOWAY_RETRY_INTERVAL_SEC = 300.0
+INFOWAY_PROBE_SEC = 45.0
+
 
 def _feed_category(segment_name: str) -> str:
     """Map a DB segment to the feed's category (only 'crypto' is behaviourally
@@ -272,26 +279,63 @@ class MarketDataService:
             self.aggregator.update(symbol, bid, ask, ts)
             self._tick_count += 1
 
-    async def _infoway_fallback_watchdog(self) -> None:
-        """If Infoway never delivers ticks (bad key, network, symbol mismatch), use simulator."""
-        try:
-            await asyncio.sleep(55.0)
-        except asyncio.CancelledError:
-            raise
-        if not self.running or self._tick_count > 0:
-            return
-        if not isinstance(self.feed, InfowayFeed):
-            return
-        logger.error(
-            "Infoway: no ticks in 55s — check INFOWAY_API_KEY, outbound HTTPS/WSS, and symbol codes. "
-            "Falling back to simulated feed so quotes appear."
-        )
+    async def _use_simulator(self) -> None:
         try:
             await self.feed.stop()
         except Exception as exc:
-            logger.warning("Stopping Infoway feed: %s", exc)
+            logger.warning("Stopping feed: %s", exc)
         self.feed = FeedSimulator(tick_rate_multiplier=1.0)
         asyncio.create_task(self.feed.start())
+
+    async def _use_infoway(self) -> None:
+        try:
+            await self.feed.stop()
+        except Exception as exc:
+            logger.warning("Stopping feed: %s", exc)
+        instruments = await self._instruments_from_db() or INSTRUMENTS
+        self.feed = InfowayFeed(self._infoway_key, instruments)
+        asyncio.create_task(self.feed.start())
+
+    async def _infoway_fallback_watchdog(self) -> None:
+        """Keep quotes moving if Infoway is unreachable — but never permanently.
+
+        Right after a redeploy the previous container's sockets are still counted
+        against the key, so the new one is answered with HTTP 429 for up to a
+        minute. The old 55s window turned that into a one-way switch to simulated
+        prices that survived until somebody noticed and restarted the service, so
+        the platform quietly served fake quotes. Now the wait is long enough to
+        ride out the handover, and the simulator is only ever temporary.
+        """
+        try:
+            await asyncio.sleep(INFOWAY_FALLBACK_AFTER_SEC)
+        except asyncio.CancelledError:
+            raise
+        if not self.running or self._tick_count > 0 or not isinstance(self.feed, InfowayFeed):
+            return
+
+        logger.error(
+            "Infoway: no ticks in %.0fs — check INFOWAY_API_KEY, outbound HTTPS/WSS, symbol codes "
+            "and the plan's connection limit. Serving SIMULATED prices meanwhile; retrying every %.0fs.",
+            INFOWAY_FALLBACK_AFTER_SEC, INFOWAY_RETRY_INTERVAL_SEC,
+        )
+        await self._use_simulator()
+
+        while self.running:
+            await asyncio.sleep(INFOWAY_RETRY_INTERVAL_SEC)
+            if not self.running or isinstance(self.feed, InfowayFeed):
+                return
+
+            logger.warning("Retrying Infoway (currently on SIMULATED prices)…")
+            await self._use_infoway()
+            await asyncio.sleep(3.0)          # let the simulator's queue drain
+            before = self._tick_count
+            await asyncio.sleep(INFOWAY_PROBE_SEC)
+
+            if self._tick_count > before:
+                logger.info("Infoway is delivering again — live prices restored")
+                return
+            logger.warning("Infoway still unavailable — back to simulated prices")
+            await self._use_simulator()
 
     async def _auto_seed_bars(self) -> None:
         """Wait for first ticks to arrive, then seed historical bars if Redis is empty."""

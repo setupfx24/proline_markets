@@ -17,6 +17,11 @@ logger = logging.getLogger("market-data.infoway")
 
 INFOWAY_WS_BASE = "wss://data.infoway.io/ws"
 
+# Reconnect backoff. Infoway answers HTTP 429 while the key is over its
+# concurrent-connection limit, so a fixed short retry just keeps it there.
+RECONNECT_BASE_SEC = 5
+RECONNECT_MAX_SEC = 60
+
 # Platform symbol -> Infoway product code (crypto uses *USDT on Infoway).
 CRYPTO_INFOWAY_CODES: Dict[str, str] = {
     "BTCUSD": "BTCUSDT",
@@ -230,6 +235,7 @@ class InfowayFeed:
         # One depth subscription per connection; comma-separated codes.
         codes_str = ",".join(sorted(set(codes)))
         url = self._ws_url(business)
+        backoff = RECONNECT_BASE_SEC
 
         while self._running:
             hb_task: Optional[asyncio.Task] = None
@@ -255,6 +261,7 @@ class InfowayFeed:
                         len(set(codes)),
                     )
 
+                    backoff = RECONNECT_BASE_SEC  # connected — reset the backoff
                     hb_task = asyncio.create_task(self._heartbeat_loop(ws))
 
                     async for raw in ws:
@@ -278,8 +285,14 @@ class InfowayFeed:
             except asyncio.CancelledError:
                 break
             except Exception as exc:
-                logger.warning("Infoway [%s] WebSocket error: %s — reconnect in 5s", business, exc)
-                await asyncio.sleep(5)
+                # Retrying every few seconds keeps the key over its connection
+                # limit — the usual cause of a 429 storm right after a redeploy,
+                # while the previous container's sockets are still counted.
+                logger.warning(
+                    "Infoway [%s] WebSocket error: %s — reconnect in %ds", business, exc, backoff,
+                )
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, RECONNECT_MAX_SEC)
             finally:
                 if hb_task:
                     hb_task.cancel()
