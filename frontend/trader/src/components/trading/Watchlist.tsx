@@ -12,8 +12,10 @@ import { BellOff, ChevronUp, Star, TrendingUp } from 'lucide-react';
 
 type Trend = 'up' | 'down' | 'neutral';
 
-const TERMINAL_GROUPS = ['FOREX', 'CRYPTO', 'INDICES', 'METALS', 'COMMODITIES', 'STOCKS'] as const;
-type TerminalGroup = (typeof TERMINAL_GROUPS)[number];
+const TERMINAL_GROUPS = ['FOREX', 'METALS', 'ENERGIES', 'COMMODITIES', 'INDICES', 'CRYPTO'] as const;
+type TerminalGroup = (typeof TERMINAL_GROUPS)[number] | 'STOCKS';
+/** Stocks are not offered in the terminal — symbols in this group are dropped. */
+const HIDDEN_GROUPS = new Set<TerminalGroup>(['STOCKS']);
 
 const SYMBOL_EMOJI: Record<string, string> = {
   BTCUSD: '₿',
@@ -41,17 +43,17 @@ const SYMBOL_EMOJI: Record<string, string> = {
 
 function terminalGroup(symbol: string, instruments: InstrumentInfo[]): TerminalGroup {
   const u = symbol.toUpperCase();
-  if (u === 'XAUUSD' || u === 'XAGUSD') return 'METALS';
-  if (u === 'USOIL') return 'COMMODITIES';
+  if (u === 'XAUUSD' || u === 'XAGUSD' || u === 'XPTUSD' || u === 'XPDUSD') return 'METALS';
   const m = SYMBOL_META[symbol];
   const inst = instruments.find((i) => i.symbol === symbol);
   const seg = String(inst?.segment || m?.segment || '').toLowerCase();
   if (seg.includes('crypto')) return 'CRYPTO';
   if (seg.includes('indices') || seg.includes('index')) return 'INDICES';
+  if (seg.includes('energ')) return 'ENERGIES';
   if (seg.includes('commodit')) return 'COMMODITIES';
   if (seg.includes('metal')) return 'METALS';
-  if (seg.includes('stock') || seg.includes('equit')) return 'STOCKS';
-  if (seg.includes('forex') || seg.includes('fx')) return 'FOREX';
+  if (seg.includes('stock') || seg.includes('equit') || seg.includes('share')) return 'STOCKS';
+  if (seg.includes('forex') || seg.includes('fx') || seg.includes('currenc')) return 'FOREX';
   // Fallback: check SYMBOL_META
   if (m?.segment === 'Crypto') return 'CRYPTO';
   if (m?.segment === 'Indices') return 'INDICES';
@@ -59,7 +61,7 @@ function terminalGroup(symbol: string, instruments: InstrumentInfo[]): TerminalG
   return 'FOREX';
 }
 
-const SEGMENTS = ['All', 'Forex', 'Crypto', 'Indices', 'Commodities', 'Metals', 'Stocks'];
+const SEGMENTS = ['All', 'Forex', 'Metals', 'Energies', 'Commodities', 'Indices', 'Crypto'];
 
 /** True if `query` appears in symbol, backend display_name, or SYMBOL_META.display.
     Lets users find XAUUSD/XAGUSD by typing 'gold'/'silver' etc. */
@@ -116,7 +118,11 @@ const SYMBOL_META: Record<string, { display: string; segment: string }> = {
   DOGEUSD: { display: 'Dogecoin', segment: 'Crypto' },
 };
 
-function getDigits(symbol: string): number {
+function getDigits(symbol: string, instruments: InstrumentInfo[] = []): number {
+  // Catalog digits first — the hardcoded table below only covers the original
+  // symbol set and would print 5 decimals for anything newer.
+  const d = instruments.find((i) => i.symbol === symbol)?.digits;
+  if (d != null && Number.isFinite(d)) return d;
   if (['USDJPY', 'EURJPY', 'GBPJPY', 'AUDJPY', 'CADJPY', 'NZDJPY'].includes(symbol)) return 3;
   if (symbol === 'XRPUSD') return 4;
   if (['XAUUSD', 'USOIL', 'BTCUSD', 'ETHUSD', 'LTCUSD', 'SOLUSD', 'DOGUSD', 'DOGEUSD'].includes(symbol))
@@ -139,7 +145,7 @@ function spreadInPips(symbol: string, bid: number, ask: number, instruments: Ins
   if (pip != null) {
     return Math.round(width / pip);
   }
-  const digits = getDigits(symbol);
+  const digits = getDigits(symbol, instruments);
   return Math.round(width * Math.pow(10, digits - 1));
 }
 
@@ -154,7 +160,7 @@ function sessionPipChange(
   if (pip != null) {
     return Math.round((bid - sessionOpen) / pip);
   }
-  const digits = getDigits(symbol);
+  const digits = getDigits(symbol, instruments);
   return Math.round((bid - sessionOpen) * Math.pow(10, digits - 1));
 }
 
@@ -298,8 +304,10 @@ export default function Watchlist({ variant = 'default', onExitMarkets }: Watchl
     for (const inst of instruments) {
       syms.add(inst.symbol);
     }
-    // Only show symbols that have a live price tick
-    return Array.from(syms).filter((s) => prices[s] != null);
+    // Only show symbols that have a live price tick, and never stocks.
+    return Array.from(syms).filter(
+      (s) => prices[s] != null && !HIDDEN_GROUPS.has(terminalGroup(s, instruments)),
+    );
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [watchlist, instruments, priceCount]);
 
@@ -322,13 +330,25 @@ export default function Watchlist({ variant = 'default', onExitMarkets }: Watchl
     return true;
   });
 
+  /** Per-tab instrument counts for the current search — "METALS (7)". */
+  const tabCounts = (() => {
+    const counts: Record<string, number> = { All: filteredTerminal.length, Starred: 0 };
+    for (const s of filteredTerminal) {
+      const g = terminalGroup(s, instruments);
+      counts[g] = (counts[g] || 0) + 1;
+      if (watchlist.includes(s)) counts.Starred += 1;
+    }
+    return counts;
+  })();
+
   const groupedTerminal = (() => {
     const buckets: Record<TerminalGroup, string[]> = {
       FOREX: [],
-      CRYPTO: [],
-      INDICES: [],
       METALS: [],
+      ENERGIES: [],
       COMMODITIES: [],
+      INDICES: [],
+      CRYPTO: [],
       STOCKS: [],
     };
     for (const s of filteredTerminal) {
@@ -439,7 +459,7 @@ export default function Watchlist({ variant = 'default', onExitMarkets }: Watchl
                       </div>
                       {syms.map((symbol) => {
                         const tick = prices[symbol];
-                        const digits = getDigits(symbol);
+                        const digits = getDigits(symbol, instruments);
                         const sel = symbol === selectedSymbol;
                         return (
                           <button
@@ -539,7 +559,11 @@ export default function Watchlist({ variant = 'default', onExitMarkets }: Watchl
           <div className="shrink-0 border-b border-border-glass bg-bg-secondary">
             <div className="flex overflow-x-auto no-scrollbar scrollbar-none">
               {(['Starred', 'All', ...TERMINAL_GROUPS] as const).map((tab) => {
-                const label = tab === 'Starred' ? '★ Favourites' : tab === 'All' ? 'All' : tab;
+                const count = tabCounts[tab] || 0;
+                // Hide a category tab the live feed has nothing for.
+                if (tab !== 'Starred' && tab !== 'All' && count === 0) return null;
+                const name = tab === 'Starred' ? '★ Favourites' : tab === 'All' ? 'All' : tab;
+                const label = `${name} (${count})`;
                 const active = segment === (tab === 'Starred' ? 'Starred' : tab);
                 return (
                   <button
@@ -596,7 +620,7 @@ export default function Watchlist({ variant = 'default', onExitMarkets }: Watchl
 
               return displaySymbols.map((symbol: string) => {
                 const tick = prices[symbol];
-                const digits = getDigits(symbol);
+                const digits = getDigits(symbol, instruments);
                 const meta = SYMBOL_META[symbol];
                 const sel = symbol === selectedSymbol;
                 const isWatchlisted = watchlist.includes(symbol);

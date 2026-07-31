@@ -1432,9 +1432,6 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
                               <div className="flex items-center gap-2">
                                 <span className="text-sm font-bold text-text-primary">{trade.symbol}</span>
                                 <span className={clsx('text-[10px] font-bold uppercase', trade.side === 'buy' ? 'text-buy' : 'text-sell')}>{trade.side}</span>
-                                <span className={clsx('text-[10px] px-1.5 py-0.5 rounded-sm font-medium', trade.trade_type === 'copy_trade' ? 'bg-info/15 text-info' : 'bg-success/15 text-success')}>
-                                  {trade.trade_type === 'copy_trade' ? 'Copy' : 'Real'}
-                                </span>
                               </div>
                               <span className="font-mono text-sm font-bold tabular-nums" style={{ color: net >= 0 ? '#2962FF' : '#FF2440' }}>
                                 {net >= 0 ? '+' : ''}${net.toFixed(2)}
@@ -1464,7 +1461,6 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
                     <thead>
                       <tr className={theadRowClass}>
                         <th className={th}>Symbol</th>
-                        <th className={th}>Type</th>
                         <th className={th}>Side</th>
                         <th className={th}>Qty</th>
                         <th className={th}>Open</th>
@@ -1489,11 +1485,6 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
                         return (
                           <tr key={trade.id} className={tbodyRowClass}>
                             <td className={clsx(td, 'font-bold')}>{trade.symbol}</td>
-                            <td className={td}>
-                              <span className={clsx('text-[10px] px-1.5 py-0.5 rounded-sm font-medium', trade.trade_type === 'copy_trade' ? 'bg-info/15 text-info' : 'bg-success/15 text-success')}>
-                                {trade.trade_type === 'copy_trade' ? 'Copy' : 'Real'}
-                              </span>
-                            </td>
                             <td className={td}>
                               <span
                                 className={clsx(
@@ -1528,7 +1519,7 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
                       })}
                       {historyTrades.length === 0 && (
                         <tr>
-                          <td colSpan={11} className="px-4 py-12 text-center text-sm text-text-tertiary">
+                          <td colSpan={8} className="px-4 py-12 text-center text-sm text-text-tertiary">
                             No trade history
                           </td>
                         </tr>

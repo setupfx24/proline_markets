@@ -4,7 +4,7 @@ import { Suspense, useCallback, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { adminApi } from '@/lib/api';
-import { Loader2, Plus, Trash2, ArrowLeft, Eye, Save, Briefcase } from 'lucide-react';
+import { Loader2, Plus, Trash2, ArrowLeft, Eye, Save, Briefcase, RefreshCw } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 interface DepositRow { date: string; amount: string }
@@ -13,8 +13,32 @@ interface DayRow { date: string; pct: string }
 interface ManualTradeRow {
   date: string; symbol: string; side: string;
   lots: string; open_price: string; close_price: string; pnl: string;
+  close_reason: string; close_time: string;
+  /** true once the admin types a P&L by hand — stops the auto calculation. */
+  pnlManual?: boolean;
 }
 interface AllocRow { symbol: string; weight_pct: string }
+
+/** One instrument from the live feed (Infoway / LP), as served by the admin API. */
+interface Quote {
+  symbol: string;
+  display_name: string;
+  segment: string;
+  digits: number;
+  contract_size: number;
+  bid: number | null;
+  ask: number | null;
+  price: number | null;
+  timestamp: string | null;
+}
+
+const CLOSE_REASONS = [
+  { value: 'manual', label: 'Manual close' },
+  { value: 'tp', label: 'Take profit' },
+  { value: 'sl', label: 'Stop loss' },
+  { value: 'admin', label: 'Admin' },
+  { value: 'margin', label: 'Margin' },
+];
 
 interface MonthPreview {
   year: number; month: number; pct: number; profit: number;
@@ -84,6 +108,63 @@ function ManagedAccountForm() {
   const [previewing, setPreviewing] = useState(false);
   const [saving, setSaving] = useState(false);
 
+  const [quotes, setQuotes] = useState<Quote[]>([]);
+  const [quotesAt, setQuotesAt] = useState<string>('');
+  const [quotesLoading, setQuotesLoading] = useState(false);
+
+  const loadQuotes = useCallback(async (notify = false) => {
+    setQuotesLoading(true);
+    try {
+      const r = await adminApi.get<{ items: Quote[] }>('/managed-accounts/instruments/live');
+      setQuotes(r.items || []);
+      setQuotesAt(new Date().toLocaleTimeString());
+      if (notify) toast.success('Live prices refreshed');
+    } catch (e: unknown) {
+      if (notify) toast.error(e instanceof Error ? e.message : 'Failed to load live prices');
+    } finally {
+      setQuotesLoading(false);
+    }
+  }, []);
+
+  // Keep the symbol picker's prices live while the form is open.
+  useEffect(() => {
+    void loadQuotes();
+    const t = setInterval(() => { void loadQuotes(); }, 15000);
+    return () => clearInterval(t);
+  }, [loadQuotes]);
+
+  const quoteOf = useCallback(
+    (symbol: string) => quotes.find((q) => q.symbol === symbol.trim().toUpperCase()),
+    [quotes],
+  );
+
+  // Segments in feed order, each with its instruments — drives the <optgroup>s.
+  const quotesBySegment = quotes.reduce<Record<string, Quote[]>>((acc, q) => {
+    (acc[q.segment] ||= []).push(q);
+    return acc;
+  }, {});
+
+  const fmtPrice = (n: number | null | undefined, digits: number) =>
+    n == null ? '—' : n.toFixed(Math.min(digits, 8));
+
+  /** Live entry price for a side: buy fills at the ask, sell at the bid. */
+  const entryPrice = (q: Quote | undefined, side: string): number | null => {
+    if (!q) return null;
+    const p = side === 'sell' ? q.bid : q.ask;
+    return p ?? q.price ?? null;
+  };
+
+  /** (close − open) × direction × lots × contract size. */
+  const calcPnl = (row: ManualTradeRow): string => {
+    const q = quoteOf(row.symbol);
+    const open = parseFloat(row.open_price);
+    const close = parseFloat(row.close_price);
+    const lots = parseFloat(row.lots);
+    if (!q || !Number.isFinite(open) || !Number.isFinite(close) || !Number.isFinite(lots)) return row.pnl;
+    const dir = row.side === 'sell' ? -1 : 1;
+    return ((close - open) * dir * lots * q.contract_size).toFixed(2);
+  };
+
   const loadExisting = useCallback(async () => {
     if (!editId) return;
     setLoading(true);
@@ -116,9 +197,12 @@ function ManagedAccountForm() {
       setManualTrades(((c.manual_trades as Array<{
         date: string; symbol: string; side: string; lots: number;
         open_price: number; close_price: number; pnl: number;
+        close_reason?: string; close_time?: string | null;
       }>) || []).map((t) => ({
         date: t.date, symbol: t.symbol, side: t.side, lots: String(t.lots),
         open_price: String(t.open_price), close_price: String(t.close_price), pnl: String(t.pnl),
+        close_reason: t.close_reason || 'manual', close_time: t.close_time || '',
+        pnlManual: true,
       })));
       setAllocs(((c.instrument_allocation as Array<{ symbol: string; weight_pct: number }>) || []).map((a) => ({
         symbol: a.symbol, weight_pct: String(a.weight_pct),
@@ -164,6 +248,8 @@ function ManagedAccountForm() {
         date: t.date, symbol: t.symbol.trim().toUpperCase(), side: t.side || 'buy',
         lots: parseFloat(t.lots) || 0, open_price: parseFloat(t.open_price) || 0,
         close_price: parseFloat(t.close_price) || 0, pnl: parseFloat(t.pnl) || 0,
+        close_reason: t.close_reason || 'manual',
+        close_time: t.close_time || null,
       })),
     instrument_allocation: allocs
       .filter((a) => a.symbol && a.weight_pct !== '')
@@ -452,53 +538,151 @@ function ManagedAccountForm() {
       <div className={cardCls}>
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-semibold text-text-primary">Manual trades</h3>
-          <button type="button"
-            onClick={() => setManualTrades([...manualTrades, {
-              date: '', symbol: 'XAUUSD', side: 'buy',
-              lots: '', open_price: '', close_price: '', pnl: '',
-            }])}
-            className="inline-flex items-center gap-1 text-xxs text-buy hover:underline">
-            <Plus size={12} /> Add trade
-          </button>
-        </div>
-        {manualTrades.length > 0 && (
-          <div className="hidden md:grid grid-cols-[1.4fr_1fr_0.8fr_0.8fr_1fr_1fr_1fr_auto] gap-2 text-xxs text-text-tertiary px-0.5">
-            <span>Date</span><span>Symbol</span><span>Side</span><span>Lots</span>
-            <span>Open</span><span>Close</span><span>P&amp;L ($)</span><span />
+          <div className="flex items-center gap-3">
+            <button type="button" onClick={() => void loadQuotes(true)}
+              className="inline-flex items-center gap-1 text-xxs text-text-tertiary hover:text-text-primary">
+              <RefreshCw size={11} className={quotesLoading ? 'animate-spin' : ''} />
+              {quotes.length ? `${quotes.length} symbols${quotesAt ? ` · ${quotesAt}` : ''}` : 'Load live prices'}
+            </button>
+            <button type="button"
+              onClick={() => setManualTrades([...manualTrades, {
+                date: new Date().toISOString().slice(0, 10), symbol: '', side: 'buy',
+                lots: '', open_price: '', close_price: '', pnl: '',
+                close_reason: 'manual', close_time: '',
+              }])}
+              className="inline-flex items-center gap-1 text-xxs text-buy hover:underline">
+              <Plus size={12} /> Add trade
+            </button>
           </div>
-        )}
+        </div>
+
         {manualTrades.map((t, i) => {
+          const rows = manualTrades;
           const upd = (patch: Partial<ManualTradeRow>) =>
-            setManualTrades(manualTrades.map((x, j) => (j === i ? { ...x, ...patch } : x)));
+            setManualTrades(rows.map((x, j) => {
+              if (j !== i) return x;
+              const next = { ...x, ...patch };
+              // Keep P&L in step with symbol / side / lots / prices until the
+              // admin overrides it by typing into the P&L box.
+              if (!next.pnlManual && patch.pnl === undefined) next.pnl = calcPnl(next);
+              return next;
+            }));
+          const q = quoteOf(t.symbol);
+          const live = entryPrice(q, t.side);
           return (
-            <div key={i} className="grid grid-cols-2 md:grid-cols-[1.4fr_1fr_0.8fr_0.8fr_1fr_1fr_1fr_auto] gap-2 items-center">
-              <input type="date" className={inputCls} value={t.date}
-                onChange={(e) => upd({ date: e.target.value })} />
-              <input className={inputCls} value={t.symbol} placeholder="XAUUSD"
-                onChange={(e) => upd({ symbol: e.target.value })} />
-              <select className={inputCls} value={t.side} onChange={(e) => upd({ side: e.target.value })}>
-                <option value="buy">Buy</option>
-                <option value="sell">Sell</option>
-              </select>
-              <input className={inputCls} value={t.lots} placeholder="Lots"
-                onChange={(e) => upd({ lots: e.target.value })} />
-              <input className={inputCls} value={t.open_price} placeholder="Open"
-                onChange={(e) => upd({ open_price: e.target.value })} />
-              <input className={inputCls} value={t.close_price} placeholder="Close"
-                onChange={(e) => upd({ close_price: e.target.value })} />
-              <input className={inputCls} value={t.pnl} placeholder="P&L $"
-                onChange={(e) => upd({ pnl: e.target.value })} />
-              <button type="button" onClick={() => setManualTrades(manualTrades.filter((_, j) => j !== i))}
-                className="p-1.5 rounded border border-danger/30 text-danger hover:bg-danger/10 shrink-0 justify-self-end">
-                <Trash2 size={12} />
-              </button>
+            <div key={i} className="rounded-md border border-border-primary bg-bg-tertiary/30 p-2.5 space-y-2">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                <div>
+                  <label className={labelCls}>Date</label>
+                  <input type="date" className={inputCls} value={t.date}
+                    onChange={(e) => upd({ date: e.target.value })} />
+                </div>
+                <div>
+                  <label className={labelCls}>Symbol (live feed)</label>
+                  <select className={inputCls} value={t.symbol}
+                    onChange={(e) => {
+                      const sym = e.target.value;
+                      const nq = quotes.find((x) => x.symbol === sym);
+                      const p = entryPrice(nq, t.side);
+                      // Selecting a symbol stamps the price that is running right
+                      // now as the open; the close stays the admin's to set.
+                      upd(p != null
+                        ? { symbol: sym, open_price: p.toFixed(Math.min(nq?.digits ?? 2, 8)) }
+                        : { symbol: sym });
+                    }}>
+                    <option value="">Select symbol…</option>
+                    {/* Symbol typed on an older row but missing from the feed. */}
+                    {t.symbol && !q ? <option value={t.symbol}>{t.symbol} (no feed)</option> : null}
+                    {Object.entries(quotesBySegment).map(([seg, list]) => (
+                      <optgroup key={seg} label={seg.toUpperCase()}>
+                        {list.map((qq) => (
+                          <option key={qq.symbol} value={qq.symbol}>
+                            {qq.symbol} — {qq.price != null ? fmtPrice(qq.price, qq.digits) : 'no feed'}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className={labelCls}>Side</label>
+                  <select className={inputCls} value={t.side}
+                    onChange={(e) => {
+                      const side = e.target.value;
+                      const p = entryPrice(q, side);
+                      // Buy fills at the ask, sell at the bid — re-stamp the open.
+                      upd(p != null && !t.open_price
+                        ? { side, open_price: p.toFixed(Math.min(q?.digits ?? 2, 8)) }
+                        : { side });
+                    }}>
+                    <option value="buy">Buy</option>
+                    <option value="sell">Sell</option>
+                  </select>
+                </div>
+                <div>
+                  <label className={labelCls}>Qty (lots)</label>
+                  <input className={inputCls} value={t.lots} placeholder="1.00"
+                    onChange={(e) => upd({ lots: e.target.value })} />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+                <div>
+                  <label className={labelCls}>
+                    Open{live != null && <span className="text-buy"> · live {fmtPrice(live, q?.digits ?? 2)}</span>}
+                  </label>
+                  <div className="flex gap-1">
+                    <input className={inputCls} value={t.open_price} placeholder="Open"
+                      onChange={(e) => upd({ open_price: e.target.value })} />
+                    {live != null && (
+                      <button type="button" title="Use live price"
+                        onClick={() => upd({ open_price: live.toFixed(Math.min(q?.digits ?? 2, 8)) })}
+                        className="px-1.5 rounded border border-border-primary text-text-tertiary hover:text-buy hover:border-buy/40 shrink-0">
+                        <RefreshCw size={11} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <div>
+                  <label className={labelCls}>Close</label>
+                  <input className={inputCls} value={t.close_price} placeholder="Close"
+                    onChange={(e) => upd({ close_price: e.target.value })} />
+                </div>
+                <div>
+                  <label className={labelCls}>P&amp;L ($){!t.pnlManual && <span className="text-text-tertiary"> · auto</span>}</label>
+                  <input className={inputCls} value={t.pnl} placeholder="P&L $"
+                    onChange={(e) => upd({ pnl: e.target.value, pnlManual: true })} />
+                </div>
+                <div>
+                  <label className={labelCls}>Close reason</label>
+                  <select className={inputCls} value={t.close_reason}
+                    onChange={(e) => upd({ close_reason: e.target.value })}>
+                    {CLOSE_REASONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className={labelCls}>Closed at (optional)</label>
+                  <div className="flex gap-1">
+                    <input type="time" className={inputCls} value={t.close_time}
+                      onChange={(e) => upd({ close_time: e.target.value })} />
+                    <button type="button" onClick={() => setManualTrades(rows.filter((_, j) => j !== i))}
+                      className="p-1.5 rounded border border-danger/30 text-danger hover:bg-danger/10 shrink-0">
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
           );
         })}
+
         <p className="text-xxs text-text-tertiary">
-          Each row is one exact closed trade — the P&amp;L is used as-is (no calculation). On any day
-          that has a manual trade, auto-generation is skipped for that day, so only these trades
-          appear. Negative P&amp;L is a losing trade. Future dates are skipped.
+          Each row is one exact closed trade on that date. Pick the symbol from the live feed — any
+          segment — and its running price is stamped as the <em>Open</em>; the <em>Close</em> is
+          yours to set. P&amp;L is calculated from the prices, lots and contract size, and is used
+          verbatim once you type over it. On any day that has a manual trade, auto-generation is
+          skipped for that day, so only these trades appear. Negative P&amp;L is a losing trade.
+          Future dates are skipped.
         </p>
       </div>
 

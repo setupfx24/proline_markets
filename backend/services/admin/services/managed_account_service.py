@@ -13,18 +13,21 @@ All money math is done in integer cents so monthly sums are exact; the generator
 is deterministic for a given config (fixed RNG seed) so regeneration is stable.
 Open/close prices are cosmetic — the stored per-trade ``profit`` is authoritative.
 """
+import json
+import os
 import random
 import uuid
 from calendar import monthrange
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
 
+import redis.asyncio as aioredis
 from fastapi import HTTPException
 from sqlalchemy import select, delete, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.common.src.models import (
-    User, TradingAccount, AccountGroup, Instrument,
+    User, TradingAccount, AccountGroup, Instrument, InstrumentSegment,
     Deposit, Withdrawal, Transaction, Position, Order, TradeHistory,
     ManagedAccount,
 )
@@ -148,20 +151,43 @@ def _emit_trade(events, rng, year: int, month: int, day: int, sym: str, pcents: 
     }))
 
 
+def _parse_hhmm(value) -> tuple[int, int] | None:
+    """'HH:MM' (or 'HH:MM:SS') → (hour, minute); None when unset/unparseable."""
+    if not value:
+        return None
+    parts = str(value).strip().split(":")
+    try:
+        h, m = int(parts[0]), int(parts[1])
+    except (IndexError, ValueError):
+        return None
+    if not (0 <= h <= 23 and 0 <= m <= 59):
+        return None
+    return h, m
+
+
 def _emit_manual_trade(events, rng, mt):
     """Append the admin's exact trade — symbol, side, lots, prices and P&L used
     verbatim. Explicit open_price/close_price mark it so generate() does not
     recompute the close from the profit."""
     y, mo, day = mt.date.year, mt.date.month, mt.date.day
-    o_hour = rng.randint(8, 18)
-    c_hour = min(23, o_hour + rng.randint(1, 5))
-    opened = _dt(y, mo, day, o_hour, rng.randint(0, 59))
-    closed = _dt(y, mo, day, c_hour, rng.randint(0, 59))
+    hhmm = _parse_hhmm(getattr(mt, "close_time", None))
+    if hhmm:
+        # Admin pinned the close clock time; open a few hours earlier, same day.
+        c_hour, c_min = hhmm
+        closed = _dt(y, mo, day, c_hour, c_min)
+        o_hour = max(0, c_hour - rng.randint(1, 4))
+        opened = _dt(y, mo, day, o_hour, rng.randint(0, 59) if o_hour != c_hour else max(0, c_min - 5))
+    else:
+        o_hour = rng.randint(8, 18)
+        c_hour = min(23, o_hour + rng.randint(1, 5))
+        opened = _dt(y, mo, day, o_hour, rng.randint(0, 59))
+        closed = _dt(y, mo, day, c_hour, rng.randint(0, 59))
     events.append((closed, "trade", {
         "symbol": mt.symbol.upper(), "side": mt.side.lower(), "lots": float(mt.lots),
         "profit_cents": int(round(mt.pnl * 100)),
         "opened": opened, "closed": closed,
         "open_price": float(mt.open_price), "close_price": float(mt.close_price),
+        "close_reason": (getattr(mt, "close_reason", None) or "manual").lower(),
     }))
 
 
@@ -362,6 +388,66 @@ def _build_events(cfg: ManagedAccountConfig):
             total_withdrawn_cents / 100.0, final_balance, warnings)
 
 
+# ─── Live instrument quotes (symbol picker) ─────────────────────────────────
+
+# Admin runs on Redis db 1 but the market feed writes ticks to db 0 — read db 0.
+_redis_url = os.getenv("REDIS_URL", "redis://redis:6379/0")
+_redis_prices = aioredis.from_url(_redis_url.rsplit("/", 1)[0] + "/0", decode_responses=True)
+
+
+async def live_instruments(db: AsyncSession) -> dict:
+    """Every tradable instrument, grouped by segment, with its live feed price.
+
+    ``bid``/``ask`` come from the market-data feed's ``tick:SYMBOL`` snapshot in
+    Redis (Infoway / LP). Symbols with no live tick are still returned with null
+    prices so the admin can still pick them and type the price by hand.
+    """
+    r = await db.execute(
+        select(Instrument, InstrumentSegment.name)
+        .outerjoin(InstrumentSegment, Instrument.segment_id == InstrumentSegment.id)
+        .where(Instrument.is_active == True)  # noqa: E712
+        .order_by(InstrumentSegment.name, Instrument.symbol)
+    )
+    rows = r.all()
+    if not rows:
+        return {"items": [], "segments": []}
+
+    ticks: list[str | None] = []
+    try:
+        ticks = await _redis_prices.mget([f"tick:{inst.symbol}" for inst, _ in rows])
+    except Exception:
+        ticks = [None] * len(rows)
+
+    items = []
+    segments: list[str] = []
+    for (inst, seg_name), raw in zip(rows, ticks):
+        bid = ask = None
+        ts = None
+        if raw:
+            try:
+                t = json.loads(raw)
+                bid = float(t["bid"])
+                ask = float(t["ask"])
+                ts = t.get("timestamp")
+            except (ValueError, KeyError, TypeError):
+                bid = ask = None
+        seg = seg_name or "other"
+        if seg not in segments:
+            segments.append(seg)
+        items.append({
+            "symbol": inst.symbol,
+            "display_name": inst.display_name or inst.symbol,
+            "segment": seg,
+            "digits": inst.digits or 2,
+            "contract_size": float(inst.contract_size or 100000),
+            "bid": bid,
+            "ask": ask,
+            "price": round((bid + ask) / 2, 8) if bid is not None and ask is not None else None,
+            "timestamp": ts,
+        })
+    return {"items": items, "segments": segments}
+
+
 # ─── Public API ─────────────────────────────────────────────────────────────
 
 def preview(cfg: ManagedAccountConfig) -> ManagedAccountPreview:
@@ -380,12 +466,16 @@ def preview(cfg: ManagedAccountConfig) -> ManagedAccountPreview:
 
 
 async def _resolve_instruments(cfg: ManagedAccountConfig, db: AsyncSession) -> dict[str, Instrument]:
-    """Map each configured symbol → Instrument row (trying aliases). Errors if missing."""
+    """Map each configured symbol → Instrument row (trying aliases). Errors if
+    missing. Covers both the instrument mix and every manual-trade symbol — a
+    manual trade may use any instrument on the platform, from any segment."""
     resolved: dict[str, Instrument] = {}
-    for a in cfg.instrument_allocation:
-        if a.weight_pct <= 0:
+    wanted = [a.symbol for a in cfg.instrument_allocation if a.weight_pct > 0]
+    wanted += [mt.symbol for mt in cfg.manual_trades]
+    for raw_symbol in wanted:
+        sym = raw_symbol.replace("/", "").upper()
+        if sym in resolved:
             continue
-        sym = a.symbol.replace("/", "").upper()
         candidates = _SYMBOL_ALIASES.get(sym, [sym])
         inst = None
         for cand in candidates:
@@ -396,7 +486,7 @@ async def _resolve_instruments(cfg: ManagedAccountConfig, db: AsyncSession) -> d
         if not inst:
             raise HTTPException(
                 status_code=400,
-                detail=f"Instrument '{a.symbol}' not found in the platform (tried: {', '.join(candidates)})",
+                detail=f"Instrument '{raw_symbol}' not found in the platform (tried: {', '.join(candidates)})",
             )
         resolved[sym] = inst
     return resolved
@@ -533,7 +623,9 @@ async def generate(
                 description=f"{cfg.pay_currency} deposit {amt:,.0f}", created_at=sort_dt,
             ))
         elif kind == "trade":
-            inst = instruments.get(p["symbol"].upper())
+            # Same normalisation _resolve_instruments keyed the map with, so a
+            # symbol written as "EUR/USD" still finds its row.
+            inst = instruments.get(p["symbol"].replace("/", "").upper())
             if inst is None:
                 continue
             digits = inst.digits or 2
@@ -564,7 +656,8 @@ async def generate(
                 side=p["side"], lots=Decimal(str(lots)),
                 open_price=_q(open_price, digits), close_price=_q(close_price, digits),
                 swap=Decimal("0"), commission=Decimal("0"), profit=Decimal(str(round(profit, 2))),
-                opened_at=p["opened"], closed_at=p["closed"], close_reason="manual",
+                opened_at=p["opened"], closed_at=p["closed"],
+                close_reason=p.get("close_reason") or "manual",
             ))
             trades_count += 1
         elif kind == "withdraw":

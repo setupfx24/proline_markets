@@ -840,7 +840,10 @@ class ManagedDailyReturn(BaseModel):
 class ManagedManualTrade(BaseModel):
     """One exact trade the admin dictates. Its P&L is used verbatim (no
     calculation). On any day that has a manual trade, auto-generation is
-    suppressed for that day — only the admin's trades appear."""
+    suppressed for that day — only the admin's trades appear.
+
+    The symbol may be any instrument on the platform (any segment) — it does
+    not have to appear in ``instrument_allocation``."""
     date: date                       # YYYY-MM-DD (close day)
     symbol: str                      # instrument symbol e.g. XAUUSD
     side: str = Field(pattern="^(buy|sell)$")
@@ -848,6 +851,9 @@ class ManagedManualTrade(BaseModel):
     open_price: float = Field(gt=0)
     close_price: float = Field(gt=0)
     pnl: float                       # USD, may be negative
+    # How the trade closed — drives the "Close SL / TP / …" badge in the terminal.
+    close_reason: str = Field(default="manual", pattern="^(manual|sl|tp|admin|margin)$")
+    close_time: Optional[str] = None  # "HH:MM" close clock time; None → randomised
 
 
 class ManagedAllocation(BaseModel):

@@ -35,11 +35,25 @@ INFOWAY_SYMBOL_ALIASES: Dict[str, str] = {
 }
 
 
+def _infoway_code(symbol: str, category: str) -> str:
+    """Infoway product code for a platform symbol.
+
+    Explicit map wins; otherwise any crypto *USD pair maps to its *USDT product,
+    so instruments added later (BNBUSD, DOGEUSD, ADAUSD…) need no code change.
+    """
+    if symbol in CRYPTO_INFOWAY_CODES:
+        return CRYPTO_INFOWAY_CODES[symbol]
+    u = symbol.upper()
+    if category == "crypto" and u.endswith("USD"):
+        return f"{u[:-3]}USDT"
+    return symbol
+
+
 # Infoway push symbol -> platform symbol (handles USDT pairs and aliases).
 def _build_infoway_to_platform(instruments: Dict[str, dict]) -> Dict[str, str]:
     m: Dict[str, str] = {}
-    for plat, _info in instruments.items():
-        code = CRYPTO_INFOWAY_CODES.get(plat, plat)
+    for plat, info in instruments.items():
+        code = _infoway_code(plat, str(info.get("category") or ""))
         m[code.upper()] = plat
         m[plat.upper()] = plat
     for infoway_sym, plat in INFOWAY_SYMBOL_ALIASES.items():
@@ -71,14 +85,14 @@ class InfowayFeed:
     async def start(self) -> None:
         self._running = True
         common_codes = [
-            CRYPTO_INFOWAY_CODES.get(s, s)
+            _infoway_code(s, str(info.get("category") or ""))
             for s, info in self._instruments.items()
-            if info["category"] != "crypto"
+            if info.get("category") != "crypto"
         ]
         crypto_codes = [
-            CRYPTO_INFOWAY_CODES[s]
-            for s in self._instruments
-            if self._instruments[s]["category"] == "crypto"
+            _infoway_code(s, "crypto")
+            for s, info in self._instruments.items()
+            if info.get("category") == "crypto"
         ]
         logger.info(
             "Infoway feed starting — common=%d symbols, crypto=%d symbols",
@@ -164,7 +178,7 @@ class InfowayFeed:
             return
 
         info = self._instruments[symbol]
-        decimals = int(info["decimals"])
+        decimals = int(info.get("decimals") or 5)
         # Collapse provider bid/ask to mid so Infoway's own spread is not shown or
         # double-counted. Platform spread is applied when publishing (see market-data main).
         mid = (bid + ask) / 2.0

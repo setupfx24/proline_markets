@@ -9,10 +9,14 @@ import { tradingTerminalUrl } from '@/lib/tradingNav';
 import SymbolIcon from './SymbolIcon';
 
 type Trend = 'up' | 'down' | 'neutral';
-type Segment = 'All' | 'Forex' | 'Crypto' | 'Indices' | 'Commodities' | 'Metals' | 'Stocks';
+/** Any segment name the feed reports — the dropdown is built from live data. */
+type Segment = string;
 type View = 'instruments' | 'news';
 
-const SEGMENTS: Segment[] = ['All', 'Forex', 'Crypto', 'Indices', 'Commodities', 'Metals', 'Stocks'];
+/** Preferred display order; anything else the feed sends is appended after. */
+const SEGMENT_ORDER = ['Forex', 'Metals', 'Energies', 'Commodities', 'Indices', 'Crypto'];
+/** Segments never offered in the terminal. */
+const HIDDEN_SEGMENTS = new Set(['Stocks']);
 
 const SYMBOL_DESC: Record<string, string> = {
   EURUSD: 'Euro vs US Dollar',
@@ -47,7 +51,11 @@ const SYMBOL_DESC: Record<string, string> = {
   LNKUSD: 'Chainlink vs US Dollar',
 };
 
-function getDigits(symbol: string): number {
+function getDigits(symbol: string, instruments: InstrumentInfo[] = []): number {
+  // Catalog digits first — the hardcoded table below only covers the original
+  // symbol set and would print 5 decimals for anything newer.
+  const d = instruments.find((i) => i.symbol === symbol)?.digits;
+  if (d != null && Number.isFinite(d)) return d;
   if (['USDJPY', 'EURJPY', 'GBPJPY', 'AUDJPY', 'CADJPY', 'NZDJPY'].includes(symbol)) return 3;
   if (symbol === 'XRPUSD') return 4;
   if (['XAUUSD', 'USOIL', 'BTCUSD', 'ETHUSD', 'LTCUSD', 'SOLUSD', 'DOGUSD', 'DOGEUSD'].includes(symbol))
@@ -58,15 +66,21 @@ function getDigits(symbol: string): number {
 
 function segmentOf(symbol: string, instruments: InstrumentInfo[]): Segment {
   const u = symbol.toUpperCase();
-  if (u === 'XAUUSD' || u === 'XAGUSD') return 'Metals';
-  if (u === 'USOIL') return 'Commodities';
+  // Precious metals sit in the DB's 'commodities' segment but have always been
+  // their own category in the terminal.
+  if (u === 'XAUUSD' || u === 'XAGUSD' || u === 'XPTUSD' || u === 'XPDUSD') return 'Metals';
   const inst = instruments.find((i) => i.symbol === symbol);
   const seg = String(inst?.segment || '').toLowerCase();
   if (seg.includes('crypto')) return 'Crypto';
   if (seg.includes('indices') || seg.includes('index')) return 'Indices';
+  if (seg.includes('energ')) return 'Energies';
   if (seg.includes('commodit')) return 'Commodities';
   if (seg.includes('metal')) return 'Metals';
-  if (seg.includes('stock') || seg.includes('equit')) return 'Stocks';
+  if (seg.includes('stock') || seg.includes('equit') || seg.includes('share')) return 'Stocks';
+  if (seg.includes('forex') || seg.includes('fx') || seg.includes('currenc')) return 'Forex';
+  // Anything else the feed adds later becomes its own segment instead of being
+  // silently lumped into Forex.
+  if (seg) return seg.charAt(0).toUpperCase() + seg.slice(1);
   return 'Forex';
 }
 
@@ -163,28 +177,66 @@ export default function InstrumentsTable({ onExitMarkets, onViewNews }: Instrume
     return () => document.removeEventListener('mousedown', onDown);
   }, [segOpen]);
 
-  const rows = useMemo(() => {
-    /* When the user is searching, broaden the source to every priced
-       instrument so terms like 'silver'/'gold'/'bitcoin' can find symbols
-       that aren't already on the watchlist. */
-    const hasQuery = search.trim().length > 0;
-    const source: string[] = hasQuery
-      ? Array.from(new Set([...watchlist, ...instruments.map((i) => i.symbol)]))
-      : watchlist;
-    const q = search.toLowerCase();
-    return source
+  /* Everything the feed is actually quoting — the live tick decides what is
+     tradable, not a hardcoded watchlist. Re-runs on tick count, not on every
+     tick, so the list doesn't rebuild several times a second. */
+  const priceCount = Object.keys(prices).length;
+  const allSymbols = useMemo(() => {
+    const syms = new Set<string>([...watchlist, ...instruments.map((i) => i.symbol)]);
+    return Array.from(syms)
       .filter((s) => prices[s] != null)
-      .filter((s) => {
-        if (hasQuery) {
-          const inst = instruments.find((i) => i.symbol === s);
-          const hay = `${s} ${inst?.display_name || ''} ${SYMBOL_DESC[s] || ''}`.toLowerCase();
-          if (!hay.includes(q)) return false;
-        }
-        if (starredOnly && !starred.has(s)) return false;
-        if (segment !== 'All' && segmentOf(s, instruments) !== segment) return false;
-        return true;
+      .filter((s) => !HIDDEN_SEGMENTS.has(segmentOf(s, instruments)))
+      .sort((a, b) => {
+        const ia = SEGMENT_ORDER.indexOf(segmentOf(a, instruments));
+        const ib = SEGMENT_ORDER.indexOf(segmentOf(b, instruments));
+        const oa = ia === -1 ? SEGMENT_ORDER.length : ia;
+        const ob = ib === -1 ? SEGMENT_ORDER.length : ib;
+        return oa - ob || a.localeCompare(b);
       });
-  }, [watchlist, prices, search, segment, starred, starredOnly, instruments]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [watchlist, instruments, priceCount]);
+
+  /* Search + starred applied, segment NOT — the per-segment counts come from
+     this, so each number is exactly what picking that segment would show. */
+  const baseRows = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return allSymbols.filter((s) => {
+      if (q) {
+        const inst = instruments.find((i) => i.symbol === s);
+        const hay = `${s} ${inst?.display_name || ''} ${SYMBOL_DESC[s] || ''}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      if (starredOnly && !starred.has(s)) return false;
+      return true;
+    });
+  }, [allSymbols, instruments, search, starred, starredOnly]);
+
+  const segmentCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const s of baseRows) {
+      const seg = segmentOf(s, instruments);
+      counts[seg] = (counts[seg] || 0) + 1;
+    }
+    return counts;
+  }, [baseRows, instruments]);
+
+  /* Only segments that actually have instruments, in preferred order, plus the
+     current pick so the dropdown never loses its own selection. */
+  const segments = useMemo(() => {
+    const present = Object.keys(segmentCounts);
+    const ordered = SEGMENT_ORDER.filter((s) => present.includes(s));
+    const extra = present.filter((s) => !SEGMENT_ORDER.includes(s)).sort();
+    const list = ['All', ...ordered, ...extra];
+    if (segment !== 'All' && !list.includes(segment)) list.push(segment);
+    return list;
+  }, [segmentCounts, segment]);
+
+  const countFor = (s: Segment) => (s === 'All' ? baseRows.length : segmentCounts[s] || 0);
+
+  const rows = useMemo(
+    () => (segment === 'All' ? baseRows : baseRows.filter((s) => segmentOf(s, instruments) === segment)),
+    [baseRows, segment, instruments],
+  );
 
   const leverage = activeAccount?.leverage ?? 500;
 
@@ -262,14 +314,16 @@ export default function InstrumentsTable({ onExitMarkets, onViewNews }: Instrume
             onClick={() => setSegOpen((p) => !p)}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-border-primary bg-bg-secondary text-text-primary hover:border-border-secondary transition-colors min-w-[110px] justify-between"
           >
-            <span>{segment}</span>
+            <span>
+              {segment} <span className="text-text-tertiary font-normal">({countFor(segment)})</span>
+            </span>
             <ChevronDown
               className={clsx('w-3.5 h-3.5 text-text-tertiary transition-transform', segOpen && 'rotate-180')}
             />
           </button>
           {segOpen && (
-            <div className="absolute right-0 top-full mt-1 w-[140px] rounded-lg border border-border-primary bg-card shadow-2xl z-50 py-1">
-              {SEGMENTS.map((s) => (
+            <div className="absolute right-0 top-full mt-1 w-[170px] max-h-[320px] overflow-y-auto rounded-lg border border-border-primary bg-card shadow-2xl z-50 py-1">
+              {segments.map((s) => (
                 <button
                   key={s}
                   type="button"
@@ -278,13 +332,17 @@ export default function InstrumentsTable({ onExitMarkets, onViewNews }: Instrume
                     setSegOpen(false);
                   }}
                   className={clsx(
-                    'w-full text-left px-3 py-1.5 text-xs transition-colors',
+                    'w-full flex items-center justify-between gap-2 px-3 py-1.5 text-xs transition-colors',
                     s === segment
                       ? 'bg-accent/10 text-accent font-bold'
                       : 'text-text-secondary hover:bg-bg-hover',
                   )}
                 >
-                  {s}
+                  <span>
+                    {s} <span className={clsx('tabular-nums', s === segment ? 'text-accent' : 'text-text-tertiary')}>
+                      ({countFor(s)})
+                    </span>
+                  </span>
                 </button>
               ))}
             </div>
@@ -328,7 +386,7 @@ export default function InstrumentsTable({ onExitMarkets, onViewNews }: Instrume
         ) : (
           rows.map((symbol) => {
             const tick = prices[symbol];
-            const digits = getDigits(symbol);
+            const digits = getDigits(symbol, instruments);
             const sel = symbol === selectedSymbol;
             const bFlash = bidFlash[symbol];
             const aFlash = askFlash[symbol];

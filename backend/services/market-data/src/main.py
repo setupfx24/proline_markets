@@ -6,7 +6,12 @@ import signal
 import time
 from datetime import datetime, timezone
 
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
+
 from packages.common.src.config import get_settings
+from packages.common.src.database import AsyncSessionLocal
+from packages.common.src.models import Instrument
 from packages.common.src.redis_client import (
     CONFIG_INSTRUMENTS_RELOAD_CHANNEL,
     PriceChannel,
@@ -40,6 +45,22 @@ settings = get_settings()
 STALE_TICK_AFTER_SEC = 90.0
 STALE_REFRESH_INTERVAL_SEC = 30.0
 
+# Segments the platform does not quote — never subscribed on the upstream feed.
+EXCLUDED_FEED_SEGMENTS = {"stocks", "equities", "shares"}
+
+
+def _feed_category(segment_name: str) -> str:
+    """Map a DB segment to the feed's category (only 'crypto' is behaviourally
+    special — it rides Infoway's separate crypto socket)."""
+    s = (segment_name or "").lower()
+    if "crypto" in s:
+        return "crypto"
+    if "metal" in s or "commodit" in s or "energ" in s:
+        return "commodity"
+    if "ind" in s:
+        return "index"
+    return "forex_major"
+
 
 class MarketDataService:
     def __init__(self):
@@ -55,6 +76,9 @@ class MarketDataService:
             self.feed = CorecenLPFeed()
             logger.info("Price feed: Corecen LP (receiving pushes on /api/lp/prices/batch)")
         elif usable_infoway_api_key(raw_key):
+            # Subscribed symbols are refreshed from the DB in start(); this is
+            # the fallback list if that lookup fails.
+            self._infoway_key = raw_key
             self.feed = InfowayFeed(raw_key, INSTRUMENTS)
             self._infoway_watchdog_armed = True
             logger.info("Price feed: Infoway WebSocket (depth)")
@@ -75,6 +99,42 @@ class MarketDataService:
         self._last_mid: dict[str, float] = {}
         self._last_live_mono: dict[str, float] = {}
 
+    async def _instruments_from_db(self) -> dict[str, dict] | None:
+        """Feed subscription list built from the admin's instrument table.
+
+        Every active instrument (minus the segments we don't quote) gets a live
+        subscription, so adding an instrument in admin is enough to make it
+        stream — no code change. Returns None to keep the built-in catalog.
+        """
+        try:
+            async with AsyncSessionLocal() as db:
+                r = await db.execute(
+                    select(Instrument)
+                    .where(Instrument.is_active == True)  # noqa: E712
+                    .options(selectinload(Instrument.segment))
+                )
+                rows = r.scalars().unique().all()
+        except Exception as exc:
+            logger.warning("Instrument list from DB failed (%s) — using built-in catalog", exc)
+            return None
+
+        out: dict[str, dict] = {}
+        for inst in rows:
+            sym = (inst.symbol or "").strip().upper()
+            if not sym:
+                continue
+            seg = (inst.segment.name if inst.segment else "").lower()
+            if seg in EXCLUDED_FEED_SEGMENTS:
+                continue
+            builtin = INSTRUMENTS.get(sym, {})
+            out[sym] = {
+                **builtin,
+                "category": _feed_category(seg) if seg else builtin.get("category", "forex_major"),
+                "decimals": int(inst.digits if inst.digits is not None else builtin.get("decimals", 5)),
+                "pip": float(inst.pip_size if inst.pip_size is not None else builtin.get("pip", 0.0001)),
+            }
+        return out or None
+
     async def start(self):
         logger.info("Starting Market Data Service...")
 
@@ -82,6 +142,16 @@ class MarketDataService:
         signal.signal(signal.SIGTERM, lambda *_: setattr(self, "running", False))
 
         await self.store.init()
+
+        # Widen the Infoway subscription to every instrument the admin has live.
+        if isinstance(self.feed, InfowayFeed):
+            db_instruments = await self._instruments_from_db()
+            if db_instruments:
+                self.feed = InfowayFeed(self._infoway_key, db_instruments)
+                logger.info(
+                    "Infoway subscription from DB: %d instruments (built-in catalog has %d)",
+                    len(db_instruments), len(INSTRUMENTS),
+                )
 
         await self.spread_cache.reload_if_stale(force=True)
         await self._seed_last_mid_from_redis()

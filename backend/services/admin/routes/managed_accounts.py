@@ -24,6 +24,17 @@ async def list_managed_accounts(
     return await managed_account_service.list_all(db=db)
 
 
+# Declared before /{managed_id} so the literal path isn't parsed as a UUID.
+@router.get("/instruments/live")
+async def list_live_instruments(
+    admin: User = Depends(require_permission("managed_accounts.create")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Tradable instruments grouped by segment, each with its live feed price —
+    powers the symbol picker in the manual-trade rows."""
+    return await managed_account_service.live_instruments(db=db)
+
+
 @router.get("/{managed_id}")
 async def get_managed_account(
     managed_id: uuid.UUID,
