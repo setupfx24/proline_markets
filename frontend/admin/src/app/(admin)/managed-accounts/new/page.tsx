@@ -13,7 +13,10 @@ interface DayRow { date: string; pct: string }
 interface ManualTradeRow {
   date: string; symbol: string; side: string;
   lots: string; open_price: string; close_price: string; pnl: string;
-  close_reason: string; close_time: string;
+  /** Not editable in the form — carried through so re-saving an existing
+      account keeps whatever close reason it was generated with. */
+  close_reason: string;
+  close_time: string;
   /** true once the admin types a P&L by hand — stops the auto calculation. */
   pnlManual?: boolean;
 }
@@ -31,14 +34,6 @@ interface Quote {
   price: number | null;
   timestamp: string | null;
 }
-
-const CLOSE_REASONS = [
-  { value: 'manual', label: 'Manual close' },
-  { value: 'tp', label: 'Take profit' },
-  { value: 'sl', label: 'Stop loss' },
-  { value: 'admin', label: 'Admin' },
-  { value: 'margin', label: 'Margin' },
-];
 
 interface MonthPreview {
   year: number; month: number; pct: number; profit: number;
@@ -626,7 +621,7 @@ function ManagedAccountForm() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                 <div>
                   <label className={labelCls}>
                     Open{live != null && <span className="text-buy"> · live {fmtPrice(live, q?.digits ?? 2)}</span>}
@@ -652,13 +647,6 @@ function ManagedAccountForm() {
                   <label className={labelCls}>P&amp;L ($){!t.pnlManual && <span className="text-text-tertiary"> · auto</span>}</label>
                   <input className={inputCls} value={t.pnl} placeholder="P&L $"
                     onChange={(e) => upd({ pnl: e.target.value, pnlManual: true })} />
-                </div>
-                <div>
-                  <label className={labelCls}>Close reason</label>
-                  <select className={inputCls} value={t.close_reason}
-                    onChange={(e) => upd({ close_reason: e.target.value })}>
-                    {CLOSE_REASONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
-                  </select>
                 </div>
                 <div>
                   <label className={labelCls}>Closed at (optional)</label>
