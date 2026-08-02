@@ -112,6 +112,52 @@ async def _apply_startup_ddl():
                     updated_at TIMESTAMPTZ DEFAULT now()
                 )
             """))
+            # positions.mt5_link_id — every engine filters on it, so a missing
+            # column 500s the whole platform. Migration 0021 owns the backfill;
+            # this is only the shape, in case migrations haven't been run yet.
+            await conn.execute(text(
+                "ALTER TABLE positions ADD COLUMN IF NOT EXISTS mt5_link_id UUID"
+            ))
+            await conn.execute(text("""
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM pg_constraint WHERE conname = 'fk_positions_mt5_link'
+                    ) THEN
+                        ALTER TABLE positions
+                            ADD CONSTRAINT fk_positions_mt5_link
+                            FOREIGN KEY (mt5_link_id) REFERENCES mt5_account_links(id)
+                            ON DELETE RESTRICT;
+                    END IF;
+                END $$;
+            """))
+            await conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_positions_mt5_link "
+                "ON positions(mt5_link_id) WHERE mt5_link_id IS NOT NULL"
+            ))
+            await conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_positions_acct_comment "
+                "ON positions(account_id, comment)"
+            ))
+            # Backfill attribution from the legacy "MT5|<acct>|<ticket>" comment tag.
+            # Migration 0021 does this too, but migrations are a manual profile —
+            # without this, a deploy that skips them leaves every existing mirrored
+            # row with a NULL link, which is exactly what the engines use to decide
+            # a row is theirs to close. Idempotent and bounded by the NULL check.
+            await conn.execute(text("""
+                UPDATE positions p
+                SET mt5_link_id = m.link_id
+                FROM (
+                    SELECT DISTINCT ON (a.id)
+                           a.id AS account_id, a.account_number, l.id AS link_id
+                    FROM trading_accounts a
+                    JOIN mt5_account_links l ON l.platform_account_number = a.account_number
+                    ORDER BY a.id, l.created_at ASC
+                ) m
+                WHERE p.account_id = m.account_id
+                  AND p.mt5_link_id IS NULL
+                  AND p.comment LIKE 'MT5|' || m.account_number || '|%'
+            """))
     except Exception as e:
         logger.warning("startup DDL skipped: %s", e)
 

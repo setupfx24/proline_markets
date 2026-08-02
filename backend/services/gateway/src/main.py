@@ -74,8 +74,29 @@ async def _backfill_close_reasons():
         logger.warning("close_reason backfill skipped: %s", e)
 
 
+async def _ensure_mt5_link_column():
+    """positions.mt5_link_id must exist before the SL/TP engine's first query —
+    the gateway can boot before admin-api applies its startup DDL, and a missing
+    column would 500 every position read. Shape only; migration 0021 owns the
+    FK + backfill. Idempotent."""
+    from sqlalchemy import text
+    try:
+        async with AsyncSessionLocal() as session:
+            await session.execute(text(
+                "ALTER TABLE positions ADD COLUMN IF NOT EXISTS mt5_link_id UUID"
+            ))
+            await session.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_positions_mt5_link "
+                "ON positions(mt5_link_id) WHERE mt5_link_id IS NOT NULL"
+            ))
+            await session.commit()
+    except Exception as e:
+        logger.warning("mt5_link_id column check skipped: %s", e)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    await _ensure_mt5_link_column()
     await _backfill_close_reasons()
     await sltp_engine.start()
     await copy_engine.start()

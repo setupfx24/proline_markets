@@ -356,6 +356,14 @@ class Position(Base):
     external_price = Column(Numeric(18, 8))
     closed_at = Column(DateTime(timezone=True))
     comment = Column(Text)
+    # Which mt5_account_links row produced this position; NULL for native trades.
+    # Every engine skips mirrored rows with `mt5_link_id IS NULL` — the comment
+    # tag can't be trusted for that, since the SL/TP engine overwrites it on close.
+    mt5_link_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("mt5_account_links.id", ondelete="RESTRICT"),
+        nullable=True, index=True,
+    )
     is_admin_modified = Column(Boolean, default=False)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
