@@ -75,6 +75,10 @@ class RiskEngine:
                             select(Position).where(
                                 Position.account_id == account.id,
                                 Position.status == PositionStatus.OPEN,
+                                # MT5-mirrored rows carry MT5's own P&L and are
+                                # closed only by MT5 — they must not feed equity
+                                # here, and stop-out must never touch them.
+                                Position.mt5_link_id.is_(None),
                             )
                         )
                         positions = positions_result.scalars().all()

@@ -611,7 +611,7 @@ async def list_positions(account_id: UUID, user_id: UUID, status: str, db: Async
 
         # Externally-mirrored (MT5 via MetaApi) positions carry the broker's own
         # price + P&L — show those as-is, never the platform's Redis-tick recompute.
-        is_mt5 = bool(pos.comment and str(pos.comment).startswith("MT5"))
+        is_mt5 = pos.mt5_link_id is not None or bool(pos.comment and str(pos.comment).startswith("MT5"))
         if is_mt5:
             current_price = float(pos.external_price) if pos.external_price is not None else float(pos.open_price)
         elif pos.instrument:
@@ -678,7 +678,7 @@ async def modify_position(position_id: UUID, req, user_id: UUID, db: AsyncSessio
     if not acct_row:
         raise HTTPException(status_code=403, detail="Not your position")
 
-    if pos.comment and str(pos.comment).startswith("MT5"):
+    if pos.mt5_link_id is not None or (pos.comment and str(pos.comment).startswith("MT5")):
         raise HTTPException(status_code=403, detail="MT5-mirrored positions are read-only; manage them in MT5")
 
     pos_status = pos.status.value if hasattr(pos.status, 'value') else str(pos.status)
@@ -764,7 +764,7 @@ async def close_position(position_id: UUID, req, user_id: UUID, db: AsyncSession
     if not account:
         raise HTTPException(status_code=403, detail="Not your position")
 
-    if pos.comment and str(pos.comment).startswith("MT5"):
+    if pos.mt5_link_id is not None or (pos.comment and str(pos.comment).startswith("MT5")):
         raise HTTPException(status_code=403, detail="MT5-mirrored positions are read-only; manage them in MT5")
 
     pos_status = pos.status.value if hasattr(pos.status, 'value') else str(pos.status)

@@ -237,6 +237,8 @@ class MatchingEngine:
                     result = await db.execute(
                         select(Position).where(
                             Position.status == PositionStatus.OPEN,
+                            # MT5-mirrored rows are exits owned by MT5 — never close them here.
+                            Position.mt5_link_id.is_(None),
                             (Position.stop_loss.isnot(None)) | (Position.take_profit.isnot(None))
                         )
                     )

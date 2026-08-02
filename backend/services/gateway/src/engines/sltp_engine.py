@@ -88,6 +88,8 @@ class SLTPEngine:
             result = await db.execute(
                 select(Position)
                 .where(Position.status == "open")
+                # MT5-mirrored rows are exits owned by MT5 — never close them here.
+                .where(Position.mt5_link_id.is_(None))
                 .where(
                     (Position.stop_loss.isnot(None)) | (Position.take_profit.isnot(None))
                 )
