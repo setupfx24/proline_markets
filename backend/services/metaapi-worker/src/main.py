@@ -1,30 +1,39 @@
 """MetaApi (MT5) multi-account mirror worker.
 
 Reads the admin-managed `mt5_account_links` table and, for EVERY enabled row,
-streams that MetaApi account's live open positions + account balance and mirrors
-them into the platform trading account whose account_number ==
-link.platform_account_number.
+streams that MetaApi account's live open positions + account balance into the
+platform trading account whose account_number == link.platform_account_number.
 
-Mirrored positions are tagged "MT5|<platform_account_number>|<ticket>" in the
-`comment` column so the gateway renders an MT5 badge, hides Close (mirror mode),
-and shows MT5's own price/P&L. The list is DYNAMIC: rows added/removed/toggled in
-the admin panel are picked up on a periodic refresh — no redeploy needed.
+Two modes, per link:
+  * mode='mirror'  — same side, same P&L. A read-only reflection of MT5.
+  * mode='reverse' — the OPPOSITE side with the P&L negated: MT5 BUY XAUUSD
+                     becomes a platform SELL XAUUSD showing −(MT5's profit), so
+                     the platform holds the exact inverse of the MT5 book.
 
-Phase 1 = read-only mirror (this file). `mode='two_way'` (outbound order bridge)
-is Phase 2 and not yet wired here.
+Mirrored positions carry `mt5_link_id` (which link produced them — the basis for
+every "skip MT5 rows" guard and the admin's per-account filter) and are tagged
+"MT5|<platform_account_number>|<ticket>" in `comment` so the gateway renders an
+MT5 badge, hides Close, and shows MT5's own price/P&L. The list is DYNAMIC: rows
+added/removed/toggled in the admin panel are picked up on a periodic refresh —
+no redeploy needed.
+
+MT5 owns the exit: SL/TP are deliberately never copied onto mirrored rows, and
+the platform's own SL/TP, b-book and stop-out engines skip them.
+
+`mode='two_way'` (outbound order bridge) is still not wired here.
 """
 import asyncio
 import logging
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 
 from packages.common.src.config import get_settings
 from packages.common.src.database import AsyncSessionLocal
 from packages.common.src.models import (
     Position, TradingAccount, Instrument, OrderSide, PositionStatus,
-    MT5AccountLink, SystemSetting,
+    MT5AccountLink, SystemSetting, TradeHistory,
 )
 
 # Global MetaApi config is managed from the admin panel (MT5-Connect) and stored
@@ -52,18 +61,53 @@ def _dec(v, default="0") -> Decimal:
         return Decimal(default)
 
 
+# link.mode values that invert the book.
+REVERSE_MODES = {"reverse"}
+
+# Signed MT5 fields that flip with the position's direction. `commission` is a
+# per-execution fee the counterparty book still pays, so it is NOT flipped.
+INVERTED_MONEY_FIELDS = ("profit", "swap")
+
+# contract_size / digits for symbols where the FX default is plainly wrong.
+# Consulted ONLY when auto-creating an instrument that doesn't exist yet.
+_INSTRUMENT_DEFAULTS = {
+    "XAUUSD": (Decimal("100"), 2),
+    "XAGUSD": (Decimal("5000"), 3),
+    "XPTUSD": (Decimal("100"), 2),
+    "USOIL":  (Decimal("1000"), 3),
+    "UKOIL":  (Decimal("1000"), 3),
+    "NATGAS": (Decimal("10000"), 3),
+    "BTCUSD": (Decimal("1"), 2),
+    "ETHUSD": (Decimal("1"), 2),
+    "US30":   (Decimal("1"), 1),
+    "US500":  (Decimal("1"), 1),
+    "NAS100": (Decimal("1"), 1),
+    "US100":  (Decimal("1"), 1),
+    "UK100":  (Decimal("1"), 1),
+    "GER40":  (Decimal("1"), 1),
+    "JPN225": (Decimal("1"), 1),
+    "AUS200": (Decimal("1"), 1),
+}
+
+
+def _opposite(side: OrderSide) -> OrderSide:
+    return OrderSide.SELL if side == OrderSide.BUY else OrderSide.BUY
+
+
 async def _get_or_create_instrument(db, symbol: str) -> Instrument:
     q = await db.execute(select(Instrument).where(Instrument.symbol == symbol))
     inst = q.scalar_one_or_none()
     if inst:
         return inst
+    contract_size, digits = _INSTRUMENT_DEFAULTS.get(symbol, (Decimal("100000"), 5))
     inst = Instrument(
         symbol=symbol, display_name=symbol,
-        contract_size=Decimal("100000"), digits=5, is_active=True,
+        contract_size=contract_size, digits=digits, is_active=True,
     )
     db.add(inst)
     await db.flush()
-    logger.info("auto-created instrument for MT5 symbol %s", symbol)
+    logger.info("auto-created instrument for MT5 symbol %s (contract_size=%s, digits=%s)",
+                symbol, contract_size, digits)
     return inst
 
 
@@ -98,6 +142,7 @@ async def _load_enabled_links() -> list[dict]:
         )).scalars().all()
         return [
             dict(
+                id=r.id,
                 metaapi_account_id=r.metaapi_account_id,
                 platform_account_number=r.platform_account_number,
                 region=r.region,
@@ -124,12 +169,50 @@ async def _set_link_status(metaapi_account_id: str, status: str, error: str | No
         logger.exception("[%s] failed to write link status", metaapi_account_id)
 
 
-async def reconcile(platform_account_number: str, positions: list, account_info: dict) -> None:
+def _close_mirrored(db, pos, now, reason: str = "mt5") -> None:
+    """Finalise a mirrored row whose MT5 ticket is gone, and record it in history.
+
+    Balance/margin are deliberately NOT adjusted and NO Transaction row is written:
+    this worker overwrites balance/equity/margin_used/free_margin from MT5's own
+    account_information every cycle, so a ledger entry here would describe a
+    balance move the worker never made and is about to overwrite anyway.
+    `pos.profit` already holds the (possibly inverted) number, so history inherits it.
+    """
+    close_price = pos.external_price if pos.external_price is not None else pos.open_price
+    pos.status = PositionStatus.CLOSED
+    pos.close_price = close_price
+    pos.closed_at = now
+    db.add(TradeHistory(
+        position_id=pos.id,
+        account_id=pos.account_id,
+        instrument_id=pos.instrument_id,
+        side=pos.side,
+        lots=pos.lots,
+        open_price=pos.open_price,
+        close_price=close_price,
+        swap=pos.swap or Decimal("0"),
+        commission=pos.commission or Decimal("0"),
+        profit=pos.profit or Decimal("0"),
+        opened_at=pos.created_at or now,
+        closed_at=now,
+        close_reason=reason,
+    ))
+
+
+async def reconcile(link_id, platform_account_number: str, mode: str,
+                    positions: list, account_info: dict) -> None:
     """Mirror one MT5 account's open positions + balance into its platform account.
 
-    Only touches rows tagged for THIS platform account (MT5|<acct>|...), so native
-    positions and other MT5 accounts are never affected. Idempotent.
+    mode='mirror'  → same side, same P&L (a read-only reflection).
+    mode='reverse' → OPPOSITE side, P&L negated: the platform holds the exact
+                     inverse of the MT5 book.
+
+    Scoped by mt5_link_id, so native positions and other MT5 links are never
+    touched. Idempotent — safe to run every POLL_SECONDS.
     """
+    reverse = (mode or "mirror").strip().lower() in REVERSE_MODES
+    sign = Decimal("-1") if reverse else Decimal("1")
+
     async with AsyncSessionLocal() as db:
         acct = (await db.execute(
             select(TradingAccount).where(TradingAccount.account_number == platform_account_number)
@@ -139,63 +222,105 @@ async def reconcile(platform_account_number: str, positions: list, account_info:
             return
 
         prefix = f"MT5|{platform_account_number}|"
+        now = datetime.now(timezone.utc)
         seen_tickets: set[str] = set()
+
         for p in positions:
             ticket = str(p.get("id") or "")
             if not ticket:
                 continue
-            seen_tickets.add(ticket)
-            tag = f"{prefix}{ticket}"
             symbol = _norm_symbol(p.get("symbol", ""))
             if not symbol:
                 continue
+            seen_tickets.add(ticket)
+            tag = f"{prefix}{ticket}"
             inst = await _get_or_create_instrument(db, symbol)
-            side = OrderSide.BUY if "BUY" in str(p.get("type", "")).upper() else OrderSide.SELL
 
-            fields = dict(
-                instrument_id=inst.id,
-                side=side,
-                lots=_dec(p.get("volume")),
-                open_price=_dec(p.get("openPrice")),
-                external_price=_dec(p.get("currentPrice", p.get("openPrice"))),
+            mt5_side = OrderSide.BUY if "BUY" in str(p.get("type", "")).upper() else OrderSide.SELL
+            side = _opposite(mt5_side) if reverse else mt5_side
+
+            money = dict(
                 profit=_dec(p.get("profit", p.get("unrealizedProfit"))),
-                stop_loss=_dec(p["stopLoss"]) if p.get("stopLoss") else None,
-                take_profit=_dec(p["takeProfit"]) if p.get("takeProfit") else None,
                 swap=_dec(p.get("swap")),
                 commission=_dec(p.get("commission")),
             )
+            for k in INVERTED_MONEY_FIELDS:
+                money[k] = sign * money[k]
 
+            fields = dict(
+                mt5_link_id=link_id,
+                instrument_id=inst.id,
+                side=side,
+                lots=_dec(p.get("volume")),
+                # A price is not a signed quantity — the inverse book entered at
+                # the same market level, so open_price is never negated.
+                open_price=_dec(p.get("openPrice")),
+                # MT5's own current price for the symbol, correct either way.
+                external_price=_dec(p.get("currentPrice", p.get("openPrice"))),
+                # NEVER copy MT5's protective levels. The platform's SL/TP engines
+                # evaluate them against OUR tick feed; on a reversed row an MT5 stop
+                # sits on the profit side, so b-book would close the position within
+                # 100ms of it being created — and the worker would then re-insert it.
+                # MT5 owns the exit; the close sweep below is the only exit path.
+                # Kept in the dict (as None) so legacy rows get their levels cleared.
+                stop_loss=None,
+                take_profit=None,
+                **money,
+            )
+
+            # Match on the tag WITHOUT a status filter: requiring status=='open'
+            # means anything that closes a mirrored row while the MT5 ticket is
+            # still live gets a fresh duplicate inserted every 2s. .first() also
+            # keeps a pre-existing duplicate from crashing the whole cycle.
             pos = (await db.execute(
-                select(Position).where(
-                    Position.account_id == acct.id,
-                    Position.comment == tag,
-                    Position.status == "open",
-                )
-            )).scalar_one_or_none()
-            if pos:
-                for k, v in fields.items():
-                    setattr(pos, k, v)
-            else:
+                select(Position)
+                .where(Position.account_id == acct.id, Position.comment == tag)
+                .order_by(Position.created_at.desc())
+                .limit(1)
+            )).scalars().first()
+
+            if pos is None:
                 db.add(Position(
                     account_id=acct.id, status=PositionStatus.OPEN, comment=tag, **fields,
                 ))
+            elif str(getattr(pos.status, "value", pos.status)) == "open":
+                for k, v in fields.items():
+                    setattr(pos, k, v)
+            else:
+                logger.warning(
+                    "[%s] ticket %s is closed on the platform but still open on MT5 "
+                    "— refusing to re-insert", platform_account_number, ticket,
+                )
 
-        # Close mirrored rows (for THIS account) whose MT5 ticket is no longer open.
+        # Close rows whose MT5 ticket is gone. Scoped by mt5_link_id so two links
+        # on one platform account can never close each other's rows, and a
+        # re-pointed link cleans up its old account. The second branch adopts
+        # legacy rows written before this column existed (or by an older worker
+        # mid-deploy) — otherwise they'd stay open forever with stale prices.
         open_rows = (await db.execute(
             select(Position).where(
-                Position.account_id == acct.id,
                 Position.status == "open",
+                or_(
+                    Position.mt5_link_id == link_id,
+                    and_(
+                        Position.account_id == acct.id,
+                        Position.mt5_link_id.is_(None),
+                        Position.comment.startswith(prefix),
+                    ),
+                ),
             )
         )).scalars().all()
         for pos in open_rows:
+            if pos.mt5_link_id is None:
+                pos.mt5_link_id = link_id
             c = str(pos.comment or "")
-            if c.startswith(prefix):
-                tk = c[len(prefix):]
-                if tk not in seen_tickets:
-                    pos.status = PositionStatus.CLOSED
-                    pos.closed_at = datetime.now(timezone.utc)
+            tk = c[len(prefix):] if c.startswith(prefix) else ""
+            if pos.account_id == acct.id and tk and tk in seen_tickets:
+                continue
+            _close_mirrored(db, pos, now, reason="mt5")
 
-        # Mirror MT5 account balances onto the platform account.
+        # Mirror MT5 account balances onto the platform account. Note this keeps
+        # equity following the MT5 book even when the trades shown are inverted.
         if account_info:
             acct.balance = _dec(account_info.get("balance", acct.balance))
             acct.equity = _dec(account_info.get("equity", acct.equity))
@@ -205,8 +330,30 @@ async def reconcile(platform_account_number: str, positions: list, account_info:
         await db.commit()
 
 
-async def run_account(api, metaapi_account_id: str, platform_account_number: str,
-                      stop_event: asyncio.Event) -> None:
+async def finalize_link(link_id, reason: str = "mt5_unlinked") -> None:
+    """Close every still-open row belonging to a link that has been removed or
+    disabled. Without this they'd hang forever: no engine will touch them, and
+    the worker that used to own them is gone."""
+    try:
+        async with AsyncSessionLocal() as db:
+            now = datetime.now(timezone.utc)
+            rows = (await db.execute(
+                select(Position).where(
+                    Position.mt5_link_id == link_id,
+                    Position.status == "open",
+                )
+            )).scalars().all()
+            for pos in rows:
+                _close_mirrored(db, pos, now, reason=reason)
+            if rows:
+                await db.commit()
+                logger.info("finalised %d mirrored position(s) for unlinked account", len(rows))
+    except Exception:
+        logger.exception("failed to finalise positions for unlinked account")
+
+
+async def run_account(api, metaapi_account_id: str, link_id, platform_account_number: str,
+                      mode: str, stop_event: asyncio.Event) -> None:
     """Connect one MetaApi account and mirror it until stop_event is set."""
     try:
         account = await api.metatrader_account_api.get_account(metaapi_account_id)
@@ -225,8 +372,10 @@ async def run_account(api, metaapi_account_id: str, platform_account_number: str
         await connection.connect()
         logger.info("[%s] waiting for synchronization ...", metaapi_account_id)
         await connection.wait_synchronized({"timeoutInSeconds": 600})
-        logger.info("[%s] synchronized — mirroring into platform account %s every %ss",
-                    metaapi_account_id, platform_account_number, POLL_SECONDS)
+        logger.info("[%s] synchronized — %s into platform account %s every %ss",
+                    metaapi_account_id,
+                    "REVERSE punching" if (mode or "").lower() in REVERSE_MODES else "mirroring",
+                    platform_account_number, POLL_SECONDS)
         await _set_link_status(metaapi_account_id, "connected")
 
         while not stop_event.is_set():
@@ -234,7 +383,7 @@ async def run_account(api, metaapi_account_id: str, platform_account_number: str
                 ts = connection.terminal_state
                 positions = list(getattr(ts, "positions", None) or [])
                 account_info = getattr(ts, "account_information", None) or {}
-                await reconcile(platform_account_number, positions, account_info)
+                await reconcile(link_id, platform_account_number, mode, positions, account_info)
                 await _set_link_status(metaapi_account_id, "connected")
             except Exception as e:
                 logger.exception("[%s] reconcile cycle failed", metaapi_account_id)
@@ -249,8 +398,17 @@ async def run_account(api, metaapi_account_id: str, platform_account_number: str
 
 
 def _sig(link: dict) -> tuple:
-    """Identity of a link's connection config — changing any of these restarts it."""
-    return (link["platform_account_number"], link.get("region") or "", link.get("mode") or "mirror")
+    """Identity of a link's connection config — changing any of these restarts it.
+
+    `id` is included so a delete+recreate of the same MetaApi account restarts the
+    task instead of running on with a stale link id that would fail the FK.
+    `mode` is included so flipping mirror↔reverse is what triggers the cutover."""
+    return (
+        str(link["id"]),
+        link["platform_account_number"],
+        link.get("region") or "",
+        link.get("mode") or "mirror",
+    )
 
 
 def _stop_all(workers: dict) -> None:
@@ -297,18 +455,28 @@ async def manager() -> None:
 
         try:
             links = await _load_enabled_links()
+            links_ok = True
         except Exception:
             logger.exception("failed to load mt5_account_links")
-            links = []
+            links, links_ok = [], False
         wanted = {l["metaapi_account_id"]: l for l in links}
 
         # Stop workers that were removed, disabled, or reconfigured.
         for aid in list(workers):
-            if aid not in wanted or workers[aid]["sig"] != _sig(wanted[aid]):
-                logger.info("[%s] stopping worker (removed/changed)", aid)
-                workers[aid]["stop"].set()
-                workers[aid]["task"].cancel()
-                del workers[aid]
+            gone = aid not in wanted
+            changed = (not gone) and workers[aid]["sig"] != _sig(wanted[aid])
+            if not (gone or changed):
+                continue
+            logger.info("[%s] stopping worker (%s)", aid, "removed/disabled" if gone else "changed")
+            workers[aid]["stop"].set()
+            workers[aid]["task"].cancel()
+            link_id = workers[aid].get("link_id")
+            del workers[aid]
+            # Only finalise on a genuine unlink — and never when the links load
+            # failed, or one DB blip would close every mirrored row on the box.
+            # A mode flip is `changed`, not `gone`, so the cutover never lands here.
+            if gone and links_ok and link_id is not None:
+                await finalize_link(link_id, reason="mt5_unlinked")
 
         # Start workers for new/changed links.
         for aid, link in wanted.items():
@@ -318,12 +486,16 @@ async def manager() -> None:
             region = link.get("region") or default_region
             opts = {"region": region} if region else {}
             api = MetaApi(current_token, opts)
+            mode = link.get("mode") or "mirror"
             task = asyncio.create_task(
-                run_account(api, aid, link["platform_account_number"], stop_event)
+                run_account(api, aid, link["id"], link["platform_account_number"],
+                            mode, stop_event)
             )
-            workers[aid] = {"task": task, "stop": stop_event, "sig": _sig(link)}
-            logger.info("[%s] starting worker → platform account %s",
-                        aid, link["platform_account_number"])
+            workers[aid] = {
+                "task": task, "stop": stop_event, "sig": _sig(link), "link_id": link["id"],
+            }
+            logger.info("[%s] starting worker (mode=%s) → platform account %s",
+                        aid, mode, link["platform_account_number"])
 
         await asyncio.sleep(REFRESH_SECONDS)
 
