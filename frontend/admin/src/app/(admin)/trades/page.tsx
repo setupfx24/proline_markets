@@ -426,8 +426,6 @@ export default function TradesPage() {
               className="text-xs py-1.5 px-2 bg-bg-input border border-border-primary rounded-md text-text-primary appearance-none"
             >
               <option value="">All accounts</option>
-              <option value="any">MT5 only</option>
-              <option value="none">Platform only (non-MT5)</option>
               {mt5Accounts.map(a => (
                 <option key={a.id} value={a.id}>
                   MT5 · {a.label}{a.enabled ? '' : ' (disabled)'}
@@ -662,7 +660,7 @@ export default function TradesPage() {
               {!histLoading && history.length === 0 && (
                 <div className="px-4 py-12 text-center text-xs text-text-tertiary space-y-1">
                   <p>{mt5Filter ? 'No closed trades for this filter' : 'No closed trades'}</p>
-                  {mt5Filter && mt5Filter !== 'none' && (
+                  {mt5Filter && (
                     <p className="text-text-tertiary/70">
                       MT5 trades only reach history once the worker has closed them —
                       for live ones use the Open Positions tab.

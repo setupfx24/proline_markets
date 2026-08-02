@@ -47,17 +47,9 @@ def _display_name(usr) -> str | None:
 
 
 def _apply_mt5_filter(query, mt5_link_id: str | None):
-    """Filter a Position-joined query by MT5 attribution.
-
-    None → no filter; 'any' → mirrored only; 'none' → native only;
-    anything else → that link's UUID."""
+    """Filter a Position-joined query to one MT5 link. Empty → no filter."""
     if not mt5_link_id:
         return query
-    v = mt5_link_id.strip().lower()
-    if v == "any":
-        return query.where(Position.mt5_link_id.isnot(None))
-    if v == "none":
-        return query.where(Position.mt5_link_id.is_(None))
     try:
         link_uuid = uuid.UUID(mt5_link_id)
     except ValueError:

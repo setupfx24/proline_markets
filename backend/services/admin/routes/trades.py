@@ -12,7 +12,7 @@ from services import trade_service
 router = APIRouter(prefix="/trades", tags=["Trades"])
 
 
-_MT5_FILTER_DESC = "MT5 link UUID, or 'any' (mirrored only) / 'none' (native only)"
+_MT5_FILTER_DESC = "Show only trades mirrored from this MT5 link (UUID)"
 
 
 @router.get("/positions")
