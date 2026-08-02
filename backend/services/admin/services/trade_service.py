@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from packages.common.src.models import (
     User, TradingAccount, Position, Order, Instrument, TradeHistory,
     PositionStatus, OrderStatus, OrderType, OrderSide, Transaction, CopyTrade,
+    MT5AccountLink,
 )
 from packages.common.src.admin_schemas import (
     PositionOut, OrderOut, TradeHistoryOut, PaginatedResponse,
@@ -46,8 +47,52 @@ def _display_name(usr) -> str | None:
     return name or None
 
 
+def _apply_mt5_filter(query, mt5_link_id: str | None):
+    """Filter a Position-joined query by MT5 attribution.
+
+    None → no filter; 'any' → mirrored only; 'none' → native only;
+    anything else → that link's UUID."""
+    if not mt5_link_id:
+        return query
+    v = mt5_link_id.strip().lower()
+    if v == "any":
+        return query.where(Position.mt5_link_id.isnot(None))
+    if v == "none":
+        return query.where(Position.mt5_link_id.is_(None))
+    try:
+        link_uuid = uuid.UUID(mt5_link_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid mt5_link_id")
+    return query.where(Position.mt5_link_id == link_uuid)
+
+
+async def _load_mt5_links(db: AsyncSession) -> dict[str, MT5AccountLink]:
+    """Every link once per request, keyed by str(id) — there are only a handful,
+    so this stays a single query no matter how many rows the page holds."""
+    rows = (await db.execute(select(MT5AccountLink))).scalars().all()
+    return {str(r.id): r for r in rows}
+
+
+def _mt5_label(link) -> str | None:
+    if not link:
+        return None
+    return (link.label or "").strip() or link.platform_account_number
+
+
+def _reject_if_mirrored(pos) -> None:
+    """MT5-mirrored positions are a read-only reflection of a live MT5 ticket.
+    Closing or editing one here would desync the books and make the worker
+    re-insert a duplicate on its next cycle — the exit belongs to MT5."""
+    if getattr(pos, "mt5_link_id", None) is not None:
+        raise HTTPException(
+            status_code=403,
+            detail="MT5-mirrored position — read-only; manage it in MT5.",
+        )
+
+
 async def list_positions(
     page: int, per_page: int, status_filter: str, db: AsyncSession,
+    mt5_link_id: str | None = None,
 ):
     # Exclude demo-account activity from admin views (demo trades are practice-only).
     query = (
@@ -59,6 +104,7 @@ async def list_positions(
         query = query.where(Position.status == PositionStatus.OPEN.value)
     elif status_filter == "closed":
         query = query.where(Position.status == PositionStatus.CLOSED.value)
+    query = _apply_mt5_filter(query, mt5_link_id)
 
     count_q = select(func.count()).select_from(query.subquery())
     total = (await db.execute(count_q)).scalar() or 0
@@ -66,6 +112,8 @@ async def list_positions(
     query = query.order_by(Position.created_at.desc()).offset((page - 1) * per_page).limit(per_page)
     result = await db.execute(query)
     positions = result.scalars().all()
+
+    mt5_links = await _load_mt5_links(db) if any(p.mt5_link_id for p in positions) else {}
 
     items = []
     for pos in positions:
@@ -98,7 +146,12 @@ async def list_positions(
         current_price = None
         profit = float(pos.profit or 0)
 
-        if status_val == "open" and inst:
+        if pos.mt5_link_id is not None:
+            # Mirrored rows carry MT5's own price and P&L — recomputing from our
+            # ticks here is what made admin and the trader terminal disagree on
+            # the same position. Show exactly what the trader sees.
+            current_price = float(pos.external_price) if pos.external_price is not None else float(pos.open_price or 0)
+        elif status_val == "open" and inst:
             tick = await _get_live_price(inst.symbol)
             if tick:
                 current_price = float(tick["bid"]) if side_val == "buy" else float(tick["ask"])
@@ -133,6 +186,8 @@ async def list_positions(
             book_type=book_type,
             is_demo=is_demo,
             is_lp_forwarded=is_lp_forwarded,
+            mt5_link_id=str(pos.mt5_link_id) if pos.mt5_link_id else None,
+            mt5_label=_mt5_label(mt5_links.get(str(pos.mt5_link_id))) if pos.mt5_link_id else None,
         ))
 
     return PaginatedResponse(items=items, total=total, page=page, per_page=per_page)
@@ -201,21 +256,29 @@ async def list_orders(
     return PaginatedResponse(items=items, total=total, page=page, per_page=per_page)
 
 
-async def list_trade_history(page: int, per_page: int, db: AsyncSession):
+async def list_trade_history(page: int, per_page: int, db: AsyncSession,
+                             mt5_link_id: str | None = None):
+    # TradeHistory has no link column, so MT5 attribution is reached through the
+    # originating position. OUTER join, not inner: a history row whose position
+    # was purged still belongs in the unfiltered list and in 'none'.
     query = (
-        select(TradeHistory)
+        select(TradeHistory, Position.mt5_link_id)
         .join(TradingAccount, TradeHistory.account_id == TradingAccount.id)
+        .outerjoin(Position, TradeHistory.position_id == Position.id)
         .where(TradingAccount.is_demo == False)
     )
+    query = _apply_mt5_filter(query, mt5_link_id)
+
     count_q = select(func.count()).select_from(query.subquery())
     total = (await db.execute(count_q)).scalar() or 0
 
     query = query.order_by(TradeHistory.closed_at.desc()).offset((page - 1) * per_page).limit(per_page)
-    result = await db.execute(query)
-    trades = result.scalars().all()
+    rows = (await db.execute(query)).all()
+
+    mt5_links = await _load_mt5_links(db) if any(lid for _, lid in rows) else {}
 
     items = []
-    for t in trades:
+    for t, link_id in rows:
         inst_q = await db.execute(select(Instrument).where(Instrument.id == t.instrument_id))
         inst = inst_q.scalar_one_or_none()
 
@@ -249,6 +312,8 @@ async def list_trade_history(page: int, per_page: int, db: AsyncSession):
             user_email=user_email,
             user_name=user_name,
             account_number=account_number,
+            mt5_link_id=str(link_id) if link_id else None,
+            mt5_label=_mt5_label(mt5_links.get(str(link_id))) if link_id else None,
         ))
 
     return PaginatedResponse(items=items, total=total, page=page, per_page=per_page)
@@ -264,6 +329,7 @@ async def modify_position(
         raise HTTPException(status_code=404, detail="Position not found")
     if (pos.status.value if hasattr(pos.status, 'value') else pos.status) != PositionStatus.OPEN.value:
         raise HTTPException(status_code=400, detail="Position is not open")
+    _reject_if_mirrored(pos)
 
     # A-book guard: positions on a non-demo account whose owner is book_type='A'
     # are forwarded to the LP — admin cannot edit them locally because the
@@ -360,6 +426,7 @@ async def close_position(
         raise HTTPException(status_code=404, detail="Position not found")
     if (pos.status.value if hasattr(pos.status, 'value') else pos.status) != PositionStatus.OPEN.value:
         raise HTTPException(status_code=400, detail="Position is not open")
+    _reject_if_mirrored(pos)
 
     side_val = pos.side.value if hasattr(pos.side, "value") else str(pos.side)
 
@@ -451,6 +518,30 @@ async def list_instruments(search: str | None, db: AsyncSession) -> dict:
                 "segment": i.segment.name if i.segment else None,
             }
             for i in instruments
+        ]
+    }
+
+
+async def list_mt5_accounts(db: AsyncSession) -> dict:
+    """Slim MT5 link list for the Trades-page filter.
+
+    Deliberately not /mt5-links: that route needs `config.view`, which trade and
+    risk managers don't have, and it exposes the MetaApi account id and connection
+    errors — neither belongs on the trades screen. Disabled links stay in the list
+    because they still own historical trades.
+    """
+    rows = (await db.execute(
+        select(MT5AccountLink).order_by(MT5AccountLink.label, MT5AccountLink.created_at)
+    )).scalars().all()
+    return {
+        "items": [
+            {
+                "id": str(r.id),
+                "label": (r.label or "").strip() or r.platform_account_number,
+                "platform_account_number": r.platform_account_number,
+                "enabled": bool(r.enabled),
+            }
+            for r in rows
         ]
     }
 

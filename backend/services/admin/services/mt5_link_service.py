@@ -6,10 +6,10 @@ from datetime import datetime
 
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from packages.common.src.models import MT5AccountLink, TradingAccount, SystemSetting
+from packages.common.src.models import MT5AccountLink, Position, TradingAccount, SystemSetting
 from dependencies import write_audit_log
 
 # Global MetaApi connection config lives under this system_settings key. The
@@ -21,7 +21,7 @@ class MT5LinkIn(BaseModel):
     metaapi_account_id: str = Field(min_length=1, max_length=64)
     platform_account_number: str = Field(min_length=1, max_length=20)
     region: str | None = None
-    mode: str = "mirror"          # mirror | two_way
+    mode: str = "mirror"          # mirror | reverse | two_way
     enabled: bool = True
     label: str | None = ""
 
@@ -108,9 +108,29 @@ async def _require_platform_account(db: AsyncSession, account_number: str) -> No
 
 def _norm_mode(mode: str) -> str:
     m = (mode or "mirror").strip().lower()
-    if m not in ("mirror", "two_way"):
-        raise HTTPException(status_code=400, detail="mode must be 'mirror' or 'two_way'")
+    if m not in ("mirror", "reverse", "two_way"):
+        raise HTTPException(
+            status_code=400, detail="mode must be 'mirror', 'reverse' or 'two_way'",
+        )
     return m
+
+
+async def _require_account_free(db: AsyncSession, account_number: str,
+                                exclude_id: uuid.UUID | None = None) -> None:
+    """One platform account per link. Two links sharing an account fight over it:
+    each one's close sweep finalises the other's rows every couple of seconds."""
+    q = select(MT5AccountLink).where(
+        MT5AccountLink.platform_account_number == account_number
+    )
+    if exclude_id is not None:
+        q = q.where(MT5AccountLink.id != exclude_id)
+    other = (await db.execute(q)).scalars().first()
+    if other:
+        raise HTTPException(
+            status_code=400,
+            detail=(f"Platform account {account_number} is already linked to MetaApi "
+                    f"account {other.metaapi_account_id}"),
+        )
 
 
 async def list_links(db: AsyncSession) -> dict:
@@ -124,6 +144,7 @@ async def create_link(body: MT5LinkIn, admin_id: uuid.UUID, ip_address: str | No
                       db: AsyncSession) -> dict:
     mode = _norm_mode(body.mode)
     await _require_platform_account(db, body.platform_account_number.strip())
+    await _require_account_free(db, body.platform_account_number.strip())
 
     dup = (await db.execute(
         select(MT5AccountLink).where(
@@ -164,6 +185,7 @@ async def update_link(link_id: uuid.UUID, body: MT5LinkIn, admin_id: uuid.UUID,
 
     mode = _norm_mode(body.mode)
     await _require_platform_account(db, body.platform_account_number.strip())
+    await _require_account_free(db, body.platform_account_number.strip(), exclude_id=link_id)
 
     new_metaapi_id = body.metaapi_account_id.strip()
     if new_metaapi_id != link.metaapi_account_id:
@@ -204,6 +226,18 @@ async def delete_link(link_id: uuid.UUID, admin_id: uuid.UUID, ip_address: str |
     )).scalar_one_or_none()
     if not link:
         raise HTTPException(status_code=404, detail="MT5 link not found")
+
+    # positions.mt5_link_id is ON DELETE RESTRICT so historical attribution can
+    # never be silently erased — refuse with a 400 instead of letting the FK 500.
+    n = (await db.execute(
+        select(func.count()).select_from(Position).where(Position.mt5_link_id == link.id)
+    )).scalar() or 0
+    if n:
+        raise HTTPException(
+            status_code=400,
+            detail=(f"This link has {n} mirrored position(s). Disable it instead — "
+                    f"deleting would erase their trade attribution."),
+        )
 
     await db.delete(link)
     await write_audit_log(

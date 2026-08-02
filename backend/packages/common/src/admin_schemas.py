@@ -174,6 +174,11 @@ class PositionOut(BaseModel):
     book_type: Optional[str] = None       # 'A' (forwarded to LP) or 'B'
     is_demo: bool = False
     is_lp_forwarded: bool = False         # True when non-demo + book_type == 'A'
+    # Set when the row was mirrored from a connected MT5 account. `mt5_label` is
+    # resolved server-side (label, else platform account no) so the UI can badge
+    # the row without a second lookup; None when the link has since been deleted.
+    mt5_link_id: Optional[str] = None
+    mt5_label: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -221,6 +226,9 @@ class TradeHistoryOut(BaseModel):
     user_email: Optional[str] = None
     user_name: Optional[str] = None
     account_number: Optional[str] = None
+    # Same MT5 attribution as PositionOut, reached via the originating position.
+    mt5_link_id: Optional[str] = None
+    mt5_label: Optional[str] = None
 
     class Config:
         from_attributes = True
