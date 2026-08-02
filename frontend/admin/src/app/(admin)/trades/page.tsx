@@ -2,21 +2,17 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
-import { adminApi, getAdminApiBase } from '@/lib/api';
+import { adminApi } from '@/lib/api';
 import toast from 'react-hot-toast';
-import Link from 'next/link';
 import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   Edit3,
-  FileDown,
   Loader2,
   MoreHorizontal,
-  Plus,
   Search,
   Trash2,
-  Upload,
   X,
 } from 'lucide-react';
 
@@ -95,7 +91,7 @@ interface Mt5Account {
 }
 
 type TabId = 'open' | 'pending' | 'history';
-type ModalType = 'modify' | 'close' | 'create' | null;
+type ModalType = 'modify' | 'close' | null;
 
 const TABS: { id: TabId; label: string }[] = [
   { id: 'open', label: 'Open Positions' },
@@ -235,59 +231,6 @@ export default function TradesPage() {
   const [actionReason, setActionReason] = useState('');
   const [modalSubmitting, setModalSubmitting] = useState(false);
 
-  // Create trade modal state
-  const [createUserSearch, setCreateUserSearch] = useState('');
-  const [createUsers, setCreateUsers] = useState<{ id: string; name: string; email: string; accounts?: { id: string; name: string }[] }[]>([]);
-  const [createSelectedUser, setCreateSelectedUser] = useState<{ id: string; name: string; email: string; accounts?: { id: string; name: string }[] } | null>(null);
-  const [createAccountId, setCreateAccountId] = useState('');
-  const [createSymbol, setCreateSymbol] = useState('');
-  const [createInstrumentId, setCreateInstrumentId] = useState('');
-  const [instrumentSearch, setInstrumentSearch] = useState('');
-  const [instruments, setInstruments] = useState<{ id: string; symbol: string; display_name: string; segment: string }[]>([]);
-  const [showInstrumentDropdown, setShowInstrumentDropdown] = useState(false);
-  const [createSide, setCreateSide] = useState<'buy' | 'sell'>('buy');
-  const [createType, setCreateType] = useState('market');
-  const [createLots, setCreateLots] = useState('');
-  const [createPrice, setCreatePrice] = useState('');
-  const [createSl, setCreateSl] = useState('');
-  const [createTp, setCreateTp] = useState('');
-  const [createReason, setCreateReason] = useState('');
-  const [userSearchLoading, setUserSearchLoading] = useState(false);
-
-  // Bulk upload state
-  const uploadInputRef = useRef<HTMLInputElement>(null);
-  const [uploading, setUploading] = useState(false);
-  const [uploadResult, setUploadResult] = useState<{ created: number; dummy_users_created?: number; failed: number; total: number; errors: { row: number; error: string }[] } | null>(null);
-
-  const handleUploadFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (uploadInputRef.current) uploadInputRef.current.value = ''; // allow re-selecting same file
-    if (!file) return;
-    if (!file.name.toLowerCase().endsWith('.xlsx')) {
-      toast.error('Only Excel (.xlsx) files are supported. Download the Template and fill it in.');
-      return;
-    }
-    setUploading(true);
-    try {
-      const fd = new FormData();
-      fd.append('file', file);
-      const res = await adminApi.postForm<{ created: number; dummy_users_created?: number; failed: number; total: number; errors: { row: number; error: string }[] }>('/trades/upload', fd);
-      setUploadResult(res);
-      if (res.created > 0) {
-        const dummyNote = res.dummy_users_created ? ` (${res.dummy_users_created} new user${res.dummy_users_created === 1 ? '' : 's'})` : '';
-        toast.success(`${res.created} trade${res.created === 1 ? '' : 's'} created${dummyNote}${res.failed ? `, ${res.failed} failed` : ''}`);
-        setActiveTab('open');
-        void fetchPositions();
-      } else {
-        toast.error(res.failed ? `All ${res.failed} rows failed — see details` : 'No trades created');
-      }
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Upload failed');
-    } finally {
-      setUploading(false);
-    }
-  };
-
   /** Full fetch with loading spinner — only on initial load or manual refresh. */
   const fetchPositions = useCallback(async (silent = false) => {
     if (!silent) setPosLoading(true);
@@ -388,40 +331,6 @@ export default function TradesPage() {
     setOpenActionsId(null);
   };
 
-  const openCreateModal = () => {
-    setCreateUserSearch('');
-    setCreateUsers([]);
-    setCreateSelectedUser(null);
-    setCreateAccountId('');
-    setCreateSymbol('');
-    setCreateInstrumentId('');
-    setInstrumentSearch('');
-    setShowInstrumentDropdown(false);
-    setCreateSide('buy');
-    setCreateType('market');
-    setCreateLots('');
-    setCreatePrice('');
-    setCreateSl('');
-    setCreateTp('');
-    setCreateReason('');
-    setModalType('create');
-    fetchInstruments();
-  };
-
-  const fetchInstruments = async () => {
-    try {
-      const data = await adminApi.get<{ items: typeof instruments }>('/trades/instruments');
-      setInstruments(data.items || []);
-    } catch { /* silent */ }
-  };
-
-  const selectInstrument = (inst: typeof instruments[0]) => {
-    setCreateSymbol(inst.symbol);
-    setCreateInstrumentId(inst.id);
-    setInstrumentSearch('');
-    setShowInstrumentDropdown(false);
-  };
-
   const closeModal = () => { setModalType(null); setSelectedPosition(null); };
 
   const submitModify = async () => {
@@ -462,67 +371,7 @@ export default function TradesPage() {
     }
   };
 
-  const searchUsers = async (q: string) => {
-    setCreateUserSearch(q);
-    if (q.length < 2) { setCreateUsers([]); return; }
-    setUserSearchLoading(true);
-    try {
-      const data = await adminApi.get<{ users: typeof createUsers }>('/users', { search: q, per_page: '10' });
-      setCreateUsers(data.users || []);
-    } catch { /* silent */ } finally {
-      setUserSearchLoading(false);
-    }
-  };
-
-  const selectUserForTrade = async (u: typeof createUsers[0]) => {
-    setCreateUsers([]);
-    setCreateUserSearch('');
-    try {
-      const detail = await adminApi.get<any>(`/users/${u.id}`);
-      const rawAccounts: any[] = detail.accounts || [];
-      const mapped = rawAccounts.map((a: any) => ({ id: a.id, name: `${a.account_number}${a.is_demo ? ' (Demo)' : ''} — $${Number(a.balance || 0).toLocaleString()}` }));
-      setCreateSelectedUser({ ...u, accounts: mapped });
-      const live = rawAccounts.find((a: any) => !a.is_demo);
-      setCreateAccountId(live ? live.id : rawAccounts[0]?.id || '');
-    } catch {
-      setCreateSelectedUser(u);
-    }
-  };
-
-  const submitCreateTrade = async () => {
-    if (!createSelectedUser) { toast.error('Select a user'); return; }
-    if (!createAccountId) { toast.error('Select an account'); return; }
-    if (!createSymbol) { toast.error('Enter a symbol'); return; }
-    if (!createLots || parseFloat(createLots) <= 0) { toast.error('Enter valid lots'); return; }
-    if (!createReason) { toast.error('Reason is required'); return; }
-    if (createType !== 'market' && !createPrice) { toast.error('Price required for non-market orders'); return; }
-
-    setModalSubmitting(true);
-    try {
-      const body: Record<string, unknown> = {
-        account_id: createAccountId,
-        symbol: createSymbol.replace('/', '').toUpperCase(),
-        side: createSide,
-        lots: parseFloat(createLots),
-        comment: createReason,
-      };
-      if (createInstrumentId) body.instrument_id = createInstrumentId;
-      if (createPrice) body.price = parseFloat(createPrice);
-      if (createSl) body.stop_loss = parseFloat(createSl);
-      if (createTp) body.take_profit = parseFloat(createTp);
-
-      await adminApi.post('/trades/create', body);
-      toast.success('Trade created successfully');
-      closeModal();
-      fetchPositions();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to create trade');
-    } finally {
-      setModalSubmitting(false);
-    }
-  };
-
-  const Pagination = ({ page, pages: totalPages, total, onPageChange }: { page: number; pages: number; total: number; onPageChange: (p: number) => void }) => {
+  const Pagination =({ page, pages: totalPages, total, onPageChange }: { page: number; pages: number; total: number; onPageChange: (p: number) => void }) => {
     if (totalPages <= 1) return null;
     return (
       <div className="flex items-center justify-between px-4 py-3 border-t border-border-primary">
@@ -559,55 +408,6 @@ export default function TradesPage() {
           <div>
             <h1 className="text-lg font-semibold text-text-primary">Trades</h1>
             <p className="text-xxs text-text-tertiary mt-0.5">Positions, pending orders, and history</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <input
-              ref={uploadInputRef}
-              type="file"
-              accept=".xlsx"
-              className="hidden"
-              onChange={handleUploadFile}
-            />
-            <button
-              type="button"
-              onClick={() => {
-                const a = document.createElement('a');
-                a.href = `${getAdminApiBase()}/trades/upload/template`;
-                a.download = 'trade_upload_template.xlsx';
-                document.body.appendChild(a);
-                a.click();
-                a.remove();
-              }}
-              className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md border bg-bg-secondary text-xs font-medium text-text-secondary border-border-primary transition-fast hover:bg-bg-hover hover:text-text-primary"
-              title="Download the Excel template"
-            >
-              <FileDown size={14} /> Template
-            </button>
-            <button
-              type="button"
-              onClick={() => uploadInputRef.current?.click()}
-              disabled={uploading}
-              className={cn(
-                'inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md border border-buy/30',
-                'bg-buy/10 text-xs font-medium text-buy transition-fast hover:bg-buy/20 disabled:opacity-50 disabled:cursor-not-allowed',
-              )}
-              title="Upload an Excel/CSV file to create trades in bulk"
-            >
-              {uploading ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
-              {uploading ? 'Uploading…' : 'Upload Trade'}
-            </button>
-            <Link href="/trades/create" className={cn(
-              'inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md border',
-              'bg-bg-secondary text-xs font-medium text-text-secondary border-border-primary transition-fast hover:bg-bg-hover hover:text-text-primary',
-            )}>
-              Full Form
-            </Link>
-            <button type="button" onClick={openCreateModal} className={cn(
-              'inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md border border-buy/30',
-              'bg-buy/15 text-xs font-medium text-buy transition-fast hover:bg-buy/25',
-            )}>
-              <Plus size={14} /> Create Trade
-            </button>
           </div>
         </div>
 
@@ -978,206 +778,6 @@ export default function TradesPage() {
         </div>
       </Modal>
 
-      {/* Create Trade Modal */}
-      <Modal open={modalType === 'create'} onClose={closeModal} title="Create Trade" wide>
-        <div className="space-y-3">
-          <div className="p-2.5 rounded-md bg-warning/10 border border-warning/20">
-            <p className="text-xxs text-warning font-medium">This trade will appear as the user&apos;s own trade</p>
-          </div>
-
-          {/* User Search */}
-          <div>
-            <label className="block text-xxs text-text-tertiary mb-1">User</label>
-            {createSelectedUser ? (
-              <div className="flex items-center justify-between p-2 bg-bg-tertiary/50 border border-border-primary rounded-md">
-                <div>
-                  <p className="text-xs text-text-primary">{createSelectedUser.name}</p>
-                  <p className="text-xxs text-text-secondary">{createSelectedUser.email}</p>
-                </div>
-                <button onClick={() => { setCreateSelectedUser(null); setCreateAccountId(''); }} className="p-1 rounded hover:bg-bg-hover text-text-tertiary"><X size={12} /></button>
-              </div>
-            ) : (
-              <div className="relative">
-                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-tertiary" />
-                <input type="text" value={createUserSearch} onChange={e => searchUsers(e.target.value)} placeholder="Search by email or name..." className="w-full pl-9 pr-3 py-2 text-xs bg-bg-input border border-border-primary rounded-md placeholder:text-text-tertiary focus:border-buy transition-fast" />
-                {createUsers.length > 0 && (
-                  <div className="absolute left-0 right-0 top-full mt-1 z-10 max-h-40 overflow-y-auto border border-border-primary rounded-md bg-bg-secondary shadow-dropdown">
-                    {createUsers.map(u => (
-                      <button key={u.id} onClick={() => selectUserForTrade(u)} className="w-full text-left px-3 py-2 text-xs hover:bg-bg-hover transition-fast border-b border-border-primary/50 last:border-0">
-                        <p className="text-text-primary">{u.name}</p>
-                        <p className="text-xxs text-text-tertiary">{u.email}</p>
-                      </button>
-                    ))}
-                  </div>
-                )}
-                {userSearchLoading && <Loader2 size={14} className="absolute right-3 top-1/2 -translate-y-1/2 animate-spin text-text-tertiary" />}
-              </div>
-            )}
-          </div>
-
-          {/* Account */}
-          {createSelectedUser && (
-            <div>
-              <label className="block text-xxs text-text-tertiary mb-1">Account</label>
-              {createSelectedUser.accounts && createSelectedUser.accounts.length > 0 ? (
-                <div className="relative">
-                  <select value={createAccountId} onChange={e => setCreateAccountId(e.target.value)} className="w-full text-xs py-2 pl-3 pr-8 appearance-none bg-bg-input border border-border-primary rounded-md text-text-primary">
-                    {createSelectedUser.accounts.map(a => <option key={a.id} value={a.id}>{a.name || a.id}</option>)}
-                  </select>
-                  <ChevronDown size={12} className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-text-tertiary" />
-                </div>
-              ) : (
-                <input type="text" value={createAccountId} onChange={e => setCreateAccountId(e.target.value)} placeholder="Enter account ID" className="w-full px-3 py-2 text-xs bg-bg-input border border-border-primary rounded-md placeholder:text-text-tertiary focus:border-buy transition-fast" />
-              )}
-            </div>
-          )}
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xxs text-text-tertiary mb-1">Symbol</label>
-              <div className="relative">
-                {createSymbol ? (
-                  <div className="flex items-center justify-between px-3 py-2 bg-bg-input border border-border-primary rounded-md">
-                    <span className="text-xs text-text-primary font-semibold">{createSymbol}</span>
-                    <button type="button" onClick={() => { setCreateSymbol(''); setCreateInstrumentId(''); }} className="text-text-tertiary hover:text-text-primary"><X size={12} /></button>
-                  </div>
-                ) : (
-                  <>
-                    <input
-                      type="text"
-                      value={instrumentSearch}
-                      onChange={e => { setInstrumentSearch(e.target.value); setShowInstrumentDropdown(true); }}
-                      onFocus={() => setShowInstrumentDropdown(true)}
-                      placeholder="Search instruments..."
-                      className="w-full px-3 py-2 text-xs bg-bg-input border border-border-primary rounded-md uppercase placeholder:text-text-tertiary focus:border-buy transition-fast"
-                    />
-                    {showInstrumentDropdown && (
-                      <div className="absolute left-0 right-0 top-full mt-1 z-20 max-h-48 overflow-y-auto border border-border-primary rounded-md bg-bg-secondary shadow-dropdown">
-                        {instruments
-                          .filter(i => !instrumentSearch || i.symbol.toLowerCase().includes(instrumentSearch.toLowerCase()) || (i.display_name || '').toLowerCase().includes(instrumentSearch.toLowerCase()))
-                          .map(i => (
-                          <button key={i.id} type="button" onClick={() => selectInstrument(i)} className="w-full text-left px-3 py-2 text-xs hover:bg-bg-hover transition-fast border-b border-border-primary/50 last:border-0 flex items-center justify-between">
-                            <span className="text-text-primary font-semibold">{i.symbol}</span>
-                            <span className="text-xxs text-text-tertiary">{i.display_name} · {i.segment}</span>
-                          </button>
-                        ))}
-                        {instruments.filter(i => !instrumentSearch || i.symbol.toLowerCase().includes(instrumentSearch.toLowerCase())).length === 0 && (
-                          <p className="px-3 py-2 text-xxs text-text-tertiary">No instruments found</p>
-                        )}
-                      </div>
-                    )}
-                  </>
-                )}
-              </div>
-            </div>
-            <div>
-              <label className="block text-xxs text-text-tertiary mb-1">Lots</label>
-              <input type="number" step="0.01" min="0.01" value={createLots} onChange={e => setCreateLots(e.target.value)} placeholder="0.01" className="w-full px-3 py-2 text-xs bg-bg-input border border-border-primary rounded-md font-mono tabular-nums placeholder:text-text-tertiary focus:border-buy transition-fast" />
-            </div>
-          </div>
-
-          {/* Side Toggle */}
-          <div>
-            <label className="block text-xxs text-text-tertiary mb-1">Side</label>
-            <div className="flex gap-2">
-              <button onClick={() => setCreateSide('buy')} className={cn('flex-1 py-2 rounded-md text-xs font-medium border transition-fast', createSide === 'buy' ? 'bg-buy/15 text-buy border-buy/30' : 'bg-bg-input text-text-secondary border-border-primary hover:border-border-secondary')}>Buy</button>
-              <button onClick={() => setCreateSide('sell')} className={cn('flex-1 py-2 rounded-md text-xs font-medium border transition-fast', createSide === 'sell' ? 'bg-sell/15 text-sell border-sell/30' : 'bg-bg-input text-text-secondary border-border-primary hover:border-border-secondary')}>Sell</button>
-            </div>
-          </div>
-
-          {/* Type */}
-          <div>
-            <label className="block text-xxs text-text-tertiary mb-1">Order Type</label>
-            <div className="flex gap-2">
-              {['market', 'limit', 'stop'].map(t => (
-                <button key={t} onClick={() => setCreateType(t)} className={cn('flex-1 py-2 rounded-md text-xs font-medium border transition-fast capitalize', createType === t ? 'bg-buy/15 text-buy border-buy/30' : 'bg-bg-input text-text-secondary border-border-primary hover:border-border-secondary')}>{t}</button>
-              ))}
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-xxs text-text-tertiary mb-1">
-              Price {createType === 'market' && <span className="text-text-tertiary">(optional — auto from market)</span>}
-            </label>
-            <input type="number" step="any" value={createPrice} onChange={e => setCreatePrice(e.target.value)} placeholder={createType === 'market' ? 'Auto (live price)' : '0.00'} className="w-full px-3 py-2 text-xs bg-bg-input border border-border-primary rounded-md font-mono tabular-nums placeholder:text-text-tertiary focus:border-buy transition-fast" />
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xxs text-text-tertiary mb-1">Stop Loss</label>
-              <input type="number" step="any" value={createSl} onChange={e => setCreateSl(e.target.value)} placeholder="Optional" className="w-full px-3 py-2 text-xs bg-bg-input border border-border-primary rounded-md font-mono tabular-nums placeholder:text-text-tertiary focus:border-buy transition-fast" />
-            </div>
-            <div>
-              <label className="block text-xxs text-text-tertiary mb-1">Take Profit</label>
-              <input type="number" step="any" value={createTp} onChange={e => setCreateTp(e.target.value)} placeholder="Optional" className="w-full px-3 py-2 text-xs bg-bg-input border border-border-primary rounded-md font-mono tabular-nums placeholder:text-text-tertiary focus:border-buy transition-fast" />
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-xxs text-text-tertiary mb-1">Reason <span className="text-danger">*</span></label>
-            <textarea value={createReason} onChange={e => setCreateReason(e.target.value)} rows={2} placeholder="Required — why this trade is being created" className="w-full px-3 py-2 text-xs bg-bg-input border border-border-primary rounded-md placeholder:text-text-tertiary focus:border-buy transition-fast resize-none" />
-          </div>
-
-          <div className="flex justify-end gap-2 pt-2">
-            <button onClick={closeModal} className="px-3 py-1.5 rounded-md text-xs font-medium text-text-secondary border border-border-primary hover:bg-bg-hover transition-fast">Cancel</button>
-            <button onClick={submitCreateTrade} disabled={modalSubmitting} className="px-4 py-1.5 rounded-md text-xs font-medium bg-buy text-white hover:bg-buy-light disabled:opacity-50 transition-fast">
-              {modalSubmitting ? <Loader2 size={14} className="animate-spin" /> : 'Create Trade'}
-            </button>
-          </div>
-        </div>
-      </Modal>
-
-      {/* Bulk upload result */}
-      <Modal open={!!uploadResult} onClose={() => setUploadResult(null)} title="Trade upload result" wide>
-        {uploadResult && (
-          <div className="space-y-3">
-            <div className="flex flex-wrap gap-3">
-              <div className="flex-1 min-w-[90px] rounded-lg border border-buy/30 bg-buy/10 px-3 py-2">
-                <p className="text-xxs text-text-tertiary">Created</p>
-                <p className="text-lg font-bold text-buy">{uploadResult.created}</p>
-              </div>
-              {(uploadResult.dummy_users_created ?? 0) > 0 && (
-                <div className="flex-1 min-w-[90px] rounded-lg border border-warning/30 bg-warning/10 px-3 py-2">
-                  <p className="text-xxs text-text-tertiary">New users</p>
-                  <p className="text-lg font-bold text-warning">{uploadResult.dummy_users_created}</p>
-                </div>
-              )}
-              <div className="flex-1 min-w-[90px] rounded-lg border border-sell/30 bg-sell/10 px-3 py-2">
-                <p className="text-xxs text-text-tertiary">Failed</p>
-                <p className="text-lg font-bold text-sell">{uploadResult.failed}</p>
-              </div>
-              <div className="flex-1 min-w-[100px] rounded-lg border border-border-primary bg-bg-secondary px-3 py-2">
-                <p className="text-xxs text-text-tertiary">Total rows</p>
-                <p className="text-lg font-bold text-text-primary">{uploadResult.total}</p>
-              </div>
-            </div>
-            {uploadResult.errors.length > 0 && (
-              <div className="rounded-lg border border-border-primary overflow-hidden">
-                <div className="px-3 py-2 bg-bg-secondary border-b border-border-primary text-xxs font-semibold text-text-secondary">
-                  Rows skipped
-                </div>
-                <div className="max-h-64 overflow-y-auto divide-y divide-border-primary/60">
-                  {uploadResult.errors.map((er, i) => (
-                    <div key={i} className="flex items-start gap-2 px-3 py-2 text-xs">
-                      <span className="shrink-0 font-mono text-text-tertiary">Row {er.row}</span>
-                      <span className="text-sell">{er.error}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-            <div className="flex justify-end">
-              <button
-                type="button"
-                onClick={() => setUploadResult(null)}
-                className="px-4 py-1.5 rounded-md border border-border-primary bg-bg-secondary text-xs font-medium text-text-secondary hover:bg-bg-hover hover:text-text-primary transition-fast"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        )}
-      </Modal>
     </>
   );
 }

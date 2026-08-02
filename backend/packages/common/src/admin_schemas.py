@@ -250,18 +250,6 @@ class ClosePositionRequest(BaseModel):
     reason: Optional[str] = None
 
 
-class CreateTradeRequest(BaseModel):
-    account_id: str
-    instrument_id: Optional[str] = None
-    symbol: Optional[str] = None
-    side: str
-    lots: float
-    price: Optional[float] = None
-    stop_loss: Optional[float] = None
-    take_profit: Optional[float] = None
-    comment: Optional[str] = None
-
-
 class DepositOut(BaseModel):
     id: str
     user_id: str

@@ -19,7 +19,7 @@ PERMISSION_CATALOG = {
     "KYC":         ["kyc.view", "kyc.manage"],
     "Deposits":    ["deposits.view", "deposits.approve", "deposits.reject"],
     "Withdrawals": ["withdrawals.view", "withdrawals.approve", "withdrawals.reject"],
-    "Trading":     ["trades.view", "trades.modify", "trades.close", "trades.create", "positions.view", "orders.view"],
+    "Trading":     ["trades.view", "trades.modify", "trades.close", "positions.view", "orders.view"],
     "Social":      ["social.view", "social.manage"],
     "Banks":       ["banks.view", "banks.create", "banks.update"],
     "IB":          ["ib.view", "ib.manage"],

@@ -19,7 +19,7 @@ settings = get_settings()
 EMPLOYEE_ROLE_PERMISSIONS = {
     "super_admin": {"*"},
     "trade_manager": {
-        "trades.view", "trades.modify", "trades.close", "trades.create",
+        "trades.view", "trades.modify", "trades.close",
         "positions.view", "orders.view", "users.view",
         "social.view", "social.manage",
     },
