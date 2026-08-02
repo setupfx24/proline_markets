@@ -72,7 +72,12 @@ const NAV_ITEMS: NavItem[] = [
 export default function AdminSidebar() {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
-  const [expandedGroups, setExpandedGroups] = useState<string[]>(['Config', 'Business']);
+  // Groups start collapsed — only the one holding the current page opens, so
+  // landing on /config/spreads still shows you where you are.
+  const [expandedGroups, setExpandedGroups] = useState<string[]>(() =>
+    NAV_ITEMS.filter((i) => i.children?.some((c) => pathname?.startsWith(c.href)))
+      .map((i) => i.label),
+  );
   const [permissions, setPermissions] = useState<string[]>(['*']);
   const [employeeRole, setEmployeeRole] = useState<string>('super_admin');
 
