@@ -342,8 +342,12 @@ export default function MT5ConnectPage() {
                       <td className="p-2 font-mono tabular-nums">{r.platform_account_number}</td>
                       <td className="p-2 text-text-secondary">{r.region || '—'}</td>
                       <td className="p-2">
-                        <span className="text-xxs px-1.5 py-0.5 rounded-sm bg-bg-tertiary text-text-secondary">
-                          {r.mode === 'two_way' ? 'two-way' : 'mirror'}
+                        <span className={`text-xxs px-1.5 py-0.5 rounded-sm ${
+                          r.mode === 'reverse'
+                            ? 'bg-warning/15 text-warning'
+                            : 'bg-bg-tertiary text-text-secondary'
+                        }`}>
+                          {r.mode === 'two_way' ? 'two-way' : r.mode === 'reverse' ? 'reverse' : 'mirror'}
                         </span>
                       </td>
                       <td className="p-2"><StatusPill status={r.status} enabled={r.enabled} /></td>
@@ -422,9 +426,15 @@ export default function MT5ConnectPage() {
                     onChange={(e) => u('mode', e.target.value)}
                     className="w-full text-xs py-1.5 px-2 bg-bg-input border border-border-primary rounded-md"
                   >
-                    <option value="mirror">Mirror (read-only)</option>
+                    <option value="mirror">Mirror (same side)</option>
+                    <option value="reverse">Reverse (opposite side)</option>
                     <option value="two_way">Two-way (Phase 2)</option>
                   </select>
+                  <p className="mt-1 text-xxs text-text-tertiary">
+                    {form.mode === 'reverse'
+                      ? 'MT5 BUY is punched here as SELL, with the P&L negated — this account holds the inverse of the MT5 book.'
+                      : 'Trades appear exactly as they are on MT5.'}
+                  </p>
                 </div>
               </div>
               <div>
@@ -462,7 +472,11 @@ export default function MT5ConnectPage() {
         <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={() => setDeleteId(null)}>
           <div className="bg-bg-secondary border border-border-primary rounded-md max-w-sm w-full p-5 space-y-3" onClick={(e) => e.stopPropagation()}>
             <p className="text-sm text-text-primary font-semibold">Disconnect MT5 account?</p>
-            <p className="text-xs text-text-secondary">The worker stops mirroring it. Already-mirrored positions stay as-is until closed on MT5.</p>
+            <p className="text-xs text-text-secondary">
+              The worker stops syncing it and its still-open positions are closed off.
+              If this account already has mirrored trades, deleting is refused — disable it
+              instead, so their attribution is kept.
+            </p>
             <div className="flex justify-end gap-2 pt-2">
               <button type="button" onClick={() => setDeleteId(null)} className="px-3 py-1.5 text-xs border border-border-primary rounded-md">
                 Cancel

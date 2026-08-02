@@ -43,6 +43,8 @@ interface Position {
   book_type?: string;
   is_demo?: boolean;
   is_lp_forwarded?: boolean;
+  mt5_link_id?: string | null;
+  mt5_label?: string | null;
 }
 
 interface PendingOrder {
@@ -80,6 +82,16 @@ interface ClosedTrade {
   profit: number;
   close_reason: string;
   closed_at: string;
+  mt5_link_id?: string | null;
+  mt5_label?: string | null;
+}
+
+/** A connected MT5 account, as served by GET /trades/mt5-accounts. */
+interface Mt5Account {
+  id: string;
+  label: string;
+  platform_account_number: string;
+  enabled: boolean;
 }
 
 type TabId = 'open' | 'pending' | 'history';
@@ -91,6 +103,11 @@ const TABS: { id: TabId; label: string }[] = [
   { id: 'history', label: 'Trade History' },
 ];
 
+// Single source of truth for page size — the fetchers and the pager used to
+// disagree (the page asked for `limit`, which the API ignores in favour of
+// `per_page`, so it rendered 50 rows while paging by 20).
+const PER_PAGE = 20;
+
 function formatMoney(n: number | undefined | null) {
   if (n == null) return '0.00';
   return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -99,6 +116,21 @@ function formatMoney(n: number | undefined | null) {
 function formatDate(d: string | undefined | null) {
   if (!d) return '—';
   try { return new Date(d).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }); } catch { return d; }
+}
+
+/** Marks a row that was mirrored in from a connected MT5 account. */
+function Mt5Badge({ linkId, label }: { linkId?: string | null; label?: string | null }) {
+  if (!linkId) return null;
+  return (
+    <span
+      className="inline-flex w-fit px-1.5 py-0.5 rounded text-xxs font-semibold bg-warning/15 text-warning whitespace-nowrap"
+      title={label
+        ? `Mirrored from MT5 account ${label}`
+        : 'Mirrored from an MT5 account that has since been removed'}
+    >
+      MT5 · {label || '?'}
+    </span>
+  );
 }
 
 function Modal({ open, onClose, title, children, wide }: { open: boolean; onClose: () => void; title: string; children: React.ReactNode; wide?: boolean }) {
@@ -137,6 +169,9 @@ export default function TradesPage() {
   const [activeTab, setActiveTab] = useState<TabId>('open');
   const [searchFilter, setSearchFilter] = useState('');
   const [symbolFilter, setSymbolFilter] = useState('');
+  // Server-side, unlike the two above — see the hint next to the inputs.
+  const [mt5Filter, setMt5Filter] = useState('');
+  const [mt5Accounts, setMt5Accounts] = useState<Mt5Account[]>([]);
 
   const [positions, setPositions] = useState<Position[]>([]);
   const [posPage, setPosPage] = useState(1);
@@ -257,17 +292,18 @@ export default function TradesPage() {
   const fetchPositions = useCallback(async (silent = false) => {
     if (!silent) setPosLoading(true);
     try {
-      const params: Record<string, string> = { page: String(posPage), limit: '20' };
+      const params: Record<string, string> = { page: String(posPage), per_page: String(PER_PAGE) };
+      if (mt5Filter) params.mt5_link_id = mt5Filter;
       const data = await adminApi.get<any>('/trades/positions', params);
       setPositions(data.items || data.positions || []);
       setPosTotal(data.total || 0);
-      setPosPages(data.pages || Math.ceil((data.total || 0) / 20) || 1);
+      setPosPages(Math.max(1, Math.ceil((data.total || 0) / (data.per_page || PER_PAGE))));
     } catch (e) {
       if (!silent) toast.error(e instanceof Error ? e.message : 'Failed to load positions');
     } finally {
       if (!silent) setPosLoading(false);
     }
-  }, [posPage]);
+  }, [posPage, mt5Filter]);
 
   const fetchOrders = useCallback(async (silent = false) => {
     if (!silent) setOrdersLoading(true);
@@ -285,17 +321,25 @@ export default function TradesPage() {
   const fetchHistory = useCallback(async (silent = false) => {
     if (!silent) setHistLoading(true);
     try {
-      const params: Record<string, string> = { page: String(histPage), limit: '20' };
+      const params: Record<string, string> = { page: String(histPage), per_page: String(PER_PAGE) };
+      if (mt5Filter) params.mt5_link_id = mt5Filter;
       const data = await adminApi.get<any>('/trades/history', params);
       setHistory(data.items || data.trades || []);
       setHistTotal(data.total || 0);
-      setHistPages(data.pages || Math.ceil((data.total || 0) / 20) || 1);
+      setHistPages(Math.max(1, Math.ceil((data.total || 0) / (data.per_page || PER_PAGE))));
     } catch (e) {
       if (!silent) toast.error(e instanceof Error ? e.message : 'Failed to load history');
     } finally {
       if (!silent) setHistLoading(false);
     }
-  }, [histPage]);
+  }, [histPage, mt5Filter]);
+
+  /** Filter dropdown source. A failure just hides the control — never a toast. */
+  useEffect(() => {
+    adminApi.get<{ items: Mt5Account[] }>('/trades/mt5-accounts')
+      .then((d) => setMt5Accounts(d.items || []))
+      .catch(() => setMt5Accounts([]));
+  }, []);
 
   /** Initial load — shows spinner. */
   useEffect(() => {
@@ -574,6 +618,26 @@ export default function TradesPage() {
             <input type="search" value={searchFilter} onChange={e => setSearchFilter(e.target.value)} placeholder="Filter by user..." className="w-full pl-9 pr-3 py-1.5 text-xs bg-bg-input border border-border-primary rounded-md placeholder:text-text-tertiary focus:border-buy transition-fast" />
           </div>
           <input type="text" value={symbolFilter} onChange={e => setSymbolFilter(e.target.value)} placeholder="Symbol..." className="w-28 px-3 py-1.5 text-xs bg-bg-input border border-border-primary rounded-md placeholder:text-text-tertiary focus:border-buy transition-fast uppercase" />
+          {activeTab !== 'pending' && mt5Accounts.length > 0 && (
+            <select
+              value={mt5Filter}
+              onChange={(e) => { setMt5Filter(e.target.value); setPosPage(1); setHistPage(1); }}
+              title="Filter by the MT5 account a trade was mirrored from"
+              className="text-xs py-1.5 px-2 bg-bg-input border border-border-primary rounded-md text-text-primary appearance-none"
+            >
+              <option value="">All accounts</option>
+              <option value="any">MT5 only</option>
+              <option value="none">Platform only (non-MT5)</option>
+              {mt5Accounts.map(a => (
+                <option key={a.id} value={a.id}>
+                  MT5 · {a.label}{a.enabled ? '' : ' (disabled)'}
+                </option>
+              ))}
+            </select>
+          )}
+          {(searchFilter || symbolFilter) && (
+            <span className="self-center text-xxs text-text-tertiary">filtering this page only</span>
+          )}
         </div>
 
         {/* Tabs & Tables */}
@@ -627,7 +691,12 @@ export default function TradesPage() {
                       return (
                       <tr key={p.id} className={cn('border-b border-border-primary/50 transition-fast hover:bg-bg-hover', livePnl > 0 && 'bg-success/[0.03]', livePnl < 0 && 'bg-danger/[0.03]')}>
                         <td className="px-3 py-2 text-xs text-text-primary truncate max-w-[160px]" title={p.user_name || p.user_email || ''}>{p.user_name || p.user_email || p.account_number || '—'}</td>
-                        <td className="px-3 py-2 text-xs text-text-primary font-semibold">{p.instrument_symbol}</td>
+                        <td className="px-3 py-2 text-xs text-text-primary font-semibold">
+                          <div className="flex flex-col gap-0.5">
+                            <span>{p.instrument_symbol}</span>
+                            <Mt5Badge linkId={p.mt5_link_id} label={p.mt5_label} />
+                          </div>
+                        </td>
                         <td className="px-3 py-2"><span className={cn('text-xs font-bold', isBuy ? 'text-buy' : 'text-sell')}>{p.side?.toUpperCase()}</span></td>
                         <td className="px-3 py-2 text-xs text-text-primary font-mono tabular-nums">{p.lots}</td>
                         <td className="px-3 py-2 text-xs text-text-secondary font-mono tabular-nums">{p.open_price}</td>
@@ -667,7 +736,9 @@ export default function TradesPage() {
               </div>
               {posLoading && <TableSkeleton cols={13} />}
               {!posLoading && positions.length === 0 && (
-                <div className="px-4 py-12 text-center text-xs text-text-tertiary">No open positions</div>
+                <div className="px-4 py-12 text-center text-xs text-text-tertiary">
+                  {mt5Filter ? 'No open positions for this filter' : 'No open positions'}
+                </div>
               )}
               <Pagination page={posPage} pages={posPages} total={posTotal} onPageChange={setPosPage} />
             </div>
@@ -765,7 +836,12 @@ export default function TradesPage() {
                       <tr key={t.id} className="border-b border-border-primary/50 transition-fast hover:bg-bg-hover">
                         <td className="px-4 py-2.5 text-xxs text-text-tertiary font-mono tabular-nums">{formatDate(t.closed_at)}</td>
                         <td className="px-4 py-2.5 text-xs text-text-primary">{t.user_name || t.user_email || t.account_number || '—'}</td>
-                        <td className="px-4 py-2.5 text-xs text-text-primary font-medium">{t.instrument_symbol}</td>
+                        <td className="px-4 py-2.5 text-xs text-text-primary font-medium">
+                          <div className="flex flex-col gap-0.5">
+                            <span>{t.instrument_symbol}</span>
+                            <Mt5Badge linkId={t.mt5_link_id} label={t.mt5_label} />
+                          </div>
+                        </td>
                         <td className="px-4 py-2.5"><span className={cn('text-xs font-medium', t.side?.toLowerCase() === 'buy' ? 'text-buy' : 'text-sell')}>{t.side?.toUpperCase()}</span></td>
                         <td className="px-4 py-2.5 text-xs text-text-primary text-right font-mono tabular-nums">{t.lots}</td>
                         <td className="px-4 py-2.5 text-xs text-text-secondary text-right font-mono tabular-nums">{t.open_price}</td>
@@ -784,7 +860,15 @@ export default function TradesPage() {
               </div>
               {histLoading && <TableSkeleton cols={9} />}
               {!histLoading && history.length === 0 && (
-                <div className="px-4 py-12 text-center text-xs text-text-tertiary">No closed trades</div>
+                <div className="px-4 py-12 text-center text-xs text-text-tertiary space-y-1">
+                  <p>{mt5Filter ? 'No closed trades for this filter' : 'No closed trades'}</p>
+                  {mt5Filter && mt5Filter !== 'none' && (
+                    <p className="text-text-tertiary/70">
+                      MT5 trades only reach history once the worker has closed them —
+                      for live ones use the Open Positions tab.
+                    </p>
+                  )}
+                </div>
               )}
               <Pagination page={histPage} pages={histPages} total={histTotal} onPageChange={setHistPage} />
             </div>
