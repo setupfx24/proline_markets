@@ -230,29 +230,18 @@ export default function MT5ConnectPage() {
               </span>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <div className="md:col-span-2">
-                <label className="block text-xxs text-text-tertiary mb-1">
-                  MetaApi access token (JWT){config.token_set ? ' — leave blank to keep saved token' : ''}
-                </label>
-                <input
-                  type="password"
-                  value={cfgToken}
-                  onChange={(e) => setCfgToken(e.target.value)}
-                  className="w-full text-xs py-1.5 px-2 bg-bg-input border border-border-primary rounded-md font-mono"
-                  placeholder={config.token_set ? '•••••••••• (saved)' : 'Paste MetaApi token'}
-                  autoComplete="off"
-                />
-              </div>
-              <div>
-                <label className="block text-xxs text-text-tertiary mb-1">Default region (optional)</label>
-                <input
-                  value={cfgRegion}
-                  onChange={(e) => setCfgRegion(e.target.value)}
-                  className="w-full text-xs py-1.5 px-2 bg-bg-input border border-border-primary rounded-md"
-                  placeholder="e.g. new-york"
-                />
-              </div>
+            <div>
+              <label className="block text-xxs text-text-tertiary mb-1">
+                MetaApi access token (JWT){config.token_set ? ' — leave blank to keep saved token' : ''}
+              </label>
+              <input
+                type="password"
+                value={cfgToken}
+                onChange={(e) => setCfgToken(e.target.value)}
+                className="w-full text-xs py-1.5 px-2 bg-bg-input border border-border-primary rounded-md font-mono"
+                placeholder={config.token_set ? '•••••••••• (saved)' : 'Paste MetaApi token'}
+                autoComplete="off"
+              />
             </div>
 
             <div className="flex items-center justify-between flex-wrap gap-2">
@@ -320,7 +309,6 @@ export default function MT5ConnectPage() {
                   <tr>
                     <th className="p-2 font-medium">MetaApi account</th>
                     <th className="p-2 font-medium">Platform acct</th>
-                    <th className="p-2 font-medium">Region</th>
                     <th className="p-2 font-medium">Mode</th>
                     <th className="p-2 font-medium">Status</th>
                     <th className="p-2 font-medium">Last sync</th>
@@ -340,7 +328,6 @@ export default function MT5ConnectPage() {
                         )}
                       </td>
                       <td className="p-2 font-mono tabular-nums">{r.platform_account_number}</td>
-                      <td className="p-2 text-text-secondary">{r.region || '—'}</td>
                       <td className="p-2">
                         <span className={`text-xxs px-1.5 py-0.5 rounded-sm ${
                           r.mode === 'reverse'
@@ -416,7 +403,7 @@ export default function MT5ConnectPage() {
                     value={form.region}
                     onChange={(e) => u('region', e.target.value)}
                     className="w-full text-xs py-1.5 px-2 bg-bg-input border border-border-primary rounded-md"
-                    placeholder="default from connection"
+                    placeholder="leave blank for auto"
                   />
                 </div>
                 <div>
