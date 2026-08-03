@@ -10,7 +10,9 @@ interface MT5Link {
   metaapi_account_id: string;
   platform_account_number: string;
   region: string;
-  mode: string;
+  mode: string;              // inbound  MT5 → platform
+  outbound_mode: string;     // outbound platform → MT5
+  max_lots: number | null;
   enabled: boolean;
   status: string;
   last_error: string;
@@ -29,8 +31,17 @@ const EMPTY = {
   platform_account_number: '',
   region: '',
   mode: 'mirror',
+  outbound_mode: 'off',
+  max_lots: '',
   enabled: true,
   label: '',
+};
+
+const INBOUND_LABEL: Record<string, string> = {
+  mirror: 'in: mirror', reverse: 'in: reverse', off: 'in: off',
+};
+const OUTBOUND_LABEL: Record<string, string> = {
+  off: 'out: off', same: 'out: same', reverse: 'out: reverse',
 };
 
 function StatusPill({ status, enabled }: { status: string; enabled: boolean }) {
@@ -133,6 +144,8 @@ export default function MT5ConnectPage() {
       platform_account_number: r.platform_account_number,
       region: r.region ?? '',
       mode: r.mode || 'mirror',
+      outbound_mode: r.outbound_mode || 'off',
+      max_lots: r.max_lots != null ? String(r.max_lots) : '',
       enabled: r.enabled,
       label: r.label ?? '',
     });
@@ -155,6 +168,8 @@ export default function MT5ConnectPage() {
         platform_account_number: form.platform_account_number.trim(),
         region: form.region.trim() || null,
         mode: form.mode,
+        outbound_mode: form.outbound_mode,
+        max_lots: form.max_lots.trim() ? parseFloat(form.max_lots) : null,
         enabled: form.enabled,
         label: form.label.trim(),
       };
@@ -329,13 +344,23 @@ export default function MT5ConnectPage() {
                       </td>
                       <td className="p-2 font-mono tabular-nums">{r.platform_account_number}</td>
                       <td className="p-2">
-                        <span className={`text-xxs px-1.5 py-0.5 rounded-sm ${
-                          r.mode === 'reverse'
-                            ? 'bg-warning/15 text-warning'
-                            : 'bg-bg-tertiary text-text-secondary'
-                        }`}>
-                          {r.mode === 'two_way' ? 'two-way' : r.mode === 'reverse' ? 'reverse' : 'mirror'}
-                        </span>
+                        <div className="flex flex-col gap-0.5 items-start">
+                          <span className={`text-xxs px-1.5 py-0.5 rounded-sm ${
+                            r.mode === 'reverse' ? 'bg-warning/15 text-warning'
+                              : r.mode === 'off' ? 'bg-bg-tertiary text-text-tertiary'
+                              : 'bg-bg-tertiary text-text-secondary'
+                          }`}>
+                            {INBOUND_LABEL[r.mode] || 'in: mirror'}
+                          </span>
+                          <span className={`text-xxs px-1.5 py-0.5 rounded-sm ${
+                            r.outbound_mode && r.outbound_mode !== 'off'
+                              ? 'bg-sell/15 text-sell'
+                              : 'bg-bg-tertiary text-text-tertiary'
+                          }`}>
+                            {OUTBOUND_LABEL[r.outbound_mode] || 'out: off'}
+                            {r.max_lots != null ? ` ≤${r.max_lots}` : ''}
+                          </span>
+                        </div>
                       </td>
                       <td className="p-2"><StatusPill status={r.status} enabled={r.enabled} /></td>
                       <td className="p-2 text-text-tertiary tabular-nums">
@@ -407,7 +432,9 @@ export default function MT5ConnectPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-xxs text-text-tertiary mb-1">Mode</label>
+                  <label className="block text-xxs text-text-tertiary mb-1">
+                    Inbound — MT5 → platform
+                  </label>
                   <select
                     value={form.mode}
                     onChange={(e) => u('mode', e.target.value)}
@@ -415,15 +442,58 @@ export default function MT5ConnectPage() {
                   >
                     <option value="mirror">Mirror (same side)</option>
                     <option value="reverse">Reverse (opposite side)</option>
-                    <option value="two_way">Two-way (Phase 2)</option>
+                    <option value="off">Off</option>
                   </select>
                   <p className="mt-1 text-xxs text-text-tertiary">
                     {form.mode === 'reverse'
-                      ? 'MT5 BUY is punched here as SELL, with the P&L negated — this account holds the inverse of the MT5 book.'
-                      : 'Trades appear exactly as they are on MT5.'}
+                      ? 'MT5 BUY arrives here as SELL with the P&L negated — this account holds the inverse of the MT5 book.'
+                      : form.mode === 'off'
+                        ? "MT5's positions are not copied here at all."
+                        : 'MT5 positions appear here exactly as they are.'}
                   </p>
                 </div>
               </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-xxs text-text-tertiary mb-1">
+                    Outbound — platform → MT5
+                  </label>
+                  <select
+                    value={form.outbound_mode}
+                    onChange={(e) => u('outbound_mode', e.target.value)}
+                    className="w-full text-xs py-1.5 px-2 bg-bg-input border border-border-primary rounded-md"
+                  >
+                    <option value="off">Off</option>
+                    <option value="same">Same side</option>
+                    <option value="reverse">Reverse (hedge)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xxs text-text-tertiary mb-1">Max lots per order</label>
+                  <input
+                    value={form.max_lots}
+                    onChange={(e) => u('max_lots', e.target.value)}
+                    className="w-full text-xs py-1.5 px-2 bg-bg-input border border-border-primary rounded-md font-mono"
+                    placeholder="no cap"
+                    disabled={form.outbound_mode === 'off'}
+                  />
+                </div>
+              </div>
+              {form.outbound_mode !== 'off' && (
+                <div className="rounded-md border border-sell/30 bg-sell/10 px-2.5 py-2">
+                  <p className="text-xxs text-sell font-medium">
+                    Sends real orders to this MT5 account
+                  </p>
+                  <p className="text-xxs text-text-secondary mt-0.5">
+                    A trade on platform account {form.platform_account_number || '—'} is placed on MT5
+                    {form.outbound_mode === 'reverse' ? ' on the opposite side' : ' on the same side'},
+                    and closed there when it closes here. Needs the <b>master</b> password on the
+                    MetaApi account — an investor password cannot place orders. Positions already open
+                    when you switch this on are left alone; only new ones are sent.
+                  </p>
+                </div>
+              )}
               <div>
                 <label className="block text-xxs text-text-tertiary mb-1">Label (optional)</label>
                 <input

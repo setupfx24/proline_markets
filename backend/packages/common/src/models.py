@@ -364,6 +364,11 @@ class Position(Base):
         ForeignKey("mt5_account_links.id", ondelete="RESTRICT"),
         nullable=True, index=True,
     )
+    # Outbound bridge (platform → MT5): the ticket we opened on MT5 for this
+    # position, and how that went. NULL on rows that were never pushed out.
+    mt5_out_ticket = Column(String(40))
+    mt5_out_state = Column(String(16))    # sent | failed | closed
+    mt5_out_error = Column(Text)
     is_admin_modified = Column(Boolean, default=False)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -858,11 +863,17 @@ class SystemSetting(Base):
 class MT5AccountLink(Base):
     """Admin-managed mapping: one MetaApi (MT5) account → one platform TradingAccount.
 
-    The metaapi-worker reads every enabled row and mirrors that MT5 account's
-    live positions + balance into the platform account whose account_number ==
-    platform_account_number. `mode` = 'mirror' (read-only, Phase 1) or 'two_way'
-    (also forward platform orders to MT5, Phase 2). Dynamic: rows can be added/
-    removed/toggled at runtime and the worker picks them up on its next refresh.
+    The metaapi-worker reads every enabled row and bridges that MT5 account and
+    the platform account whose account_number == platform_account_number, in
+    either or both directions:
+
+      mode          INBOUND  (MT5 → platform): mirror | reverse | off
+      outbound_mode OUTBOUND (platform → MT5): off | same | reverse
+
+    Both can run at once — outbound orders are tagged with OUTBOUND_MAGIC so the
+    inbound side recognises its own trades and never mirrors them back.
+    Dynamic: rows can be added/removed/toggled at runtime and the worker picks
+    them up on its next refresh.
     """
     __tablename__ = "mt5_account_links"
 
@@ -870,7 +881,9 @@ class MT5AccountLink(Base):
     metaapi_account_id = Column(String(64), unique=True, nullable=False)
     platform_account_number = Column(String(20), nullable=False)
     region = Column(String(40))                    # optional per-account MetaApi region
-    mode = Column(String(10), default="mirror")    # mirror | two_way
+    mode = Column(String(10), default="mirror")            # inbound: mirror | reverse | off
+    outbound_mode = Column(String(10), default="off")      # outbound: off | same | reverse
+    max_lots = Column(Numeric(10, 4))              # per-order outbound cap; NULL = uncapped
     enabled = Column(Boolean, default=True)
     status = Column(String(20), default="pending")  # pending | connected | error
     last_error = Column(Text)

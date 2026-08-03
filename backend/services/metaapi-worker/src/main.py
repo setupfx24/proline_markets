@@ -64,6 +64,12 @@ def _dec(v, default="0") -> Decimal:
 # link.mode values that invert the book.
 REVERSE_MODES = {"reverse"}
 
+# Stamped on every order this worker sends to MT5. The inbound side skips any
+# MT5 position carrying it — without that, an outbound trade comes straight back
+# through reconcile() and gets punched into the platform a second time.
+OUTBOUND_MAGIC = 770001
+OUTBOUND_CLIENT_PREFIX = "PLX-"
+
 # Signed MT5 fields that flip with the position's direction. `commission` is a
 # per-execution fee the counterparty book still pays, so it is NOT flipped.
 INVERTED_MONEY_FIELDS = ("profit", "swap")
@@ -92,6 +98,35 @@ _INSTRUMENT_DEFAULTS = {
 
 def _opposite(side: OrderSide) -> OrderSide:
     return OrderSide.SELL if side == OrderSide.BUY else OrderSide.BUY
+
+
+def _is_ours(p: dict) -> bool:
+    """True when this MT5 position is one WE opened via the outbound bridge."""
+    try:
+        if int(p.get("magic") or 0) == OUTBOUND_MAGIC:
+            return True
+    except (TypeError, ValueError):
+        pass
+    return str(p.get("clientId") or "").startswith(OUTBOUND_CLIENT_PREFIX)
+
+
+def _broker_symbols(terminal_state) -> dict[str, str]:
+    """{normalised symbol → the broker's own name}, e.g. XAUUSD → XAUUSD.m.
+
+    Inbound strips the suffix; outbound has to put it back or the order is
+    rejected with "symbol not found". Built from the terminal's own spec list."""
+    out: dict[str, str] = {}
+    try:
+        specs = list(getattr(terminal_state, "specifications", None) or [])
+    except Exception:
+        return out
+    for spec in specs:
+        raw = (spec.get("symbol") if isinstance(spec, dict) else getattr(spec, "symbol", "")) or ""
+        norm = _norm_symbol(raw)
+        # Prefer the exact match if the broker offers both XAUUSD and XAUUSD.m.
+        if norm and (norm not in out or raw == norm):
+            out[norm] = raw
+    return out
 
 
 async def _get_or_create_instrument(db, symbol: str) -> Instrument:
@@ -147,6 +182,8 @@ async def _load_enabled_links() -> list[dict]:
                 platform_account_number=r.platform_account_number,
                 region=r.region,
                 mode=r.mode,
+                outbound_mode=r.outbound_mode,
+                max_lots=r.max_lots,
             )
             for r in rows
         ]
@@ -228,6 +265,10 @@ async def reconcile(link_id, platform_account_number: str, mode: str,
         for p in positions:
             ticket = str(p.get("id") or "")
             if not ticket:
+                continue
+            # Our own outbound order, already represented by the platform
+            # position that produced it — mirroring it back would duplicate it.
+            if _is_ours(p):
                 continue
             symbol = _norm_symbol(p.get("symbol", ""))
             if not symbol:
@@ -330,6 +371,139 @@ async def reconcile(link_id, platform_account_number: str, mode: str,
         await db.commit()
 
 
+async def push_outbound(link_id, platform_account_number: str, outbound_mode: str,
+                        max_lots, connection, baseline: bool = False) -> None:
+    """Send platform positions on the linked account to MT5 as real orders.
+
+    outbound_mode='same'    → platform BUY  becomes an MT5 BUY
+    outbound_mode='reverse' → platform BUY  becomes an MT5 SELL (hedge)
+
+    Only native rows are eligible: anything carrying mt5_link_id came FROM MT5,
+    so pushing it back would be a round trip. Every order is stamped with
+    OUTBOUND_MAGIC so the inbound side skips it.
+
+    `baseline=True` (first cycle after the task starts) marks the positions that
+    are already open as 'skipped' instead of sending them. Turning outbound on
+    must not fire off every position the account is already holding — the task
+    restarts whenever the mode changes, so each enable gets a fresh baseline.
+    """
+    mode = (outbound_mode or "off").strip().lower()
+    if mode not in ("same", "reverse"):
+        return
+    reverse = mode == "reverse"
+
+    async with AsyncSessionLocal() as db:
+        acct = (await db.execute(
+            select(TradingAccount).where(TradingAccount.account_number == platform_account_number)
+        )).scalar_one_or_none()
+        if not acct:
+            return
+
+        # ── Positions to send: native, open, never pushed. 'failed' is sticky
+        # (an order the broker rejected must not be retried every 2s) and
+        # 'skipped' marks the pre-existing baseline.
+        pending = (await db.execute(
+            select(Position).where(
+                Position.account_id == acct.id,
+                Position.status == "open",
+                Position.mt5_link_id.is_(None),
+                Position.mt5_out_ticket.is_(None),
+                Position.mt5_out_state.is_(None),
+            )
+        )).scalars().all()
+
+        if baseline:
+            for pos in pending:
+                pos.mt5_out_state = "skipped"
+            if pending:
+                logger.info("[%s] outbound baseline — %d already-open position(s) left alone",
+                            platform_account_number, len(pending))
+            await db.commit()
+            return
+
+        symbols = _broker_symbols(getattr(connection, "terminal_state", None))
+
+        for pos in pending:
+            sym = _norm_symbol(getattr(pos.instrument, "symbol", "") or "")
+            if not sym:
+                pos.mt5_out_state = "failed"
+                pos.mt5_out_error = "position has no instrument symbol"
+                continue
+
+            volume = float(pos.lots or 0)
+            if volume <= 0:
+                pos.mt5_out_state = "failed"
+                pos.mt5_out_error = "lots must be > 0"
+                continue
+            if max_lots is not None and volume > float(max_lots):
+                pos.mt5_out_state = "failed"
+                pos.mt5_out_error = f"lots {volume} exceeds this link's cap of {max_lots}"
+                logger.warning("[%s] outbound blocked: %s", platform_account_number, pos.mt5_out_error)
+                continue
+
+            plat_side = str(getattr(pos.side, "value", pos.side)).lower()
+            send_buy = (plat_side == "sell") if reverse else (plat_side == "buy")
+            broker_sym = symbols.get(sym, sym)
+            opts = {
+                "magic": OUTBOUND_MAGIC,
+                "clientId": f"{OUTBOUND_CLIENT_PREFIX}{str(pos.id)[:8]}",
+                "comment": f"PL {str(pos.id)[:8]}",
+            }
+
+            try:
+                fn = connection.create_market_buy_order if send_buy else connection.create_market_sell_order
+                res = await fn(broker_sym, volume, None, None, opts)
+                ticket = (res or {}).get("positionId") or (res or {}).get("orderId")
+                if not ticket:
+                    raise RuntimeError(f"broker returned no ticket: {res}")
+                pos.mt5_out_ticket = str(ticket)
+                pos.mt5_out_state = "sent"
+                pos.mt5_out_error = None
+                logger.info("[%s] outbound %s %s %s lots → MT5 ticket %s",
+                            platform_account_number, "BUY" if send_buy else "SELL",
+                            broker_sym, volume, ticket)
+            except Exception as e:
+                pos.mt5_out_state = "failed"
+                pos.mt5_out_error = str(e)[:500]
+                logger.exception("[%s] outbound order failed for %s",
+                                 platform_account_number, broker_sym)
+
+        # ── Close on MT5 what has closed here. Scoped to THIS account: without
+        # it, one link's connection would try to close another link's tickets,
+        # get "position not found", and mark them closed while they run on.
+        closing = (await db.execute(
+            select(Position).where(
+                Position.account_id == acct.id,
+                Position.mt5_out_ticket.isnot(None),
+                Position.mt5_out_state == "sent",
+                Position.status == "closed",
+            )
+        )).scalars().all()
+
+        for pos in closing:
+            try:
+                await connection.close_position(pos.mt5_out_ticket, {"magic": OUTBOUND_MAGIC})
+                pos.mt5_out_state = "closed"
+                pos.mt5_out_error = None
+                logger.info("[%s] outbound closed MT5 ticket %s",
+                            platform_account_number, pos.mt5_out_ticket)
+            except Exception as e:
+                msg = str(e)[:500]
+                # Already gone on MT5 (closed by hand, SL/TP, stop-out) — done.
+                if "not found" in msg.lower() or "POSITION_NOT_FOUND" in msg:
+                    pos.mt5_out_state = "closed"
+                    pos.mt5_out_error = None
+                else:
+                    # Keep state 'sent' so it retries; log only when the reason
+                    # changes, or a stuck close would fill the log every 2s.
+                    if pos.mt5_out_error != msg:
+                        logger.warning("[%s] could not close MT5 ticket %s: %s",
+                                       platform_account_number, pos.mt5_out_ticket, msg)
+                    pos.mt5_out_error = msg
+
+        await db.commit()
+
+
 async def finalize_link(link_id, reason: str = "mt5_unlinked") -> None:
     """Close every still-open row belonging to a link that has been removed or
     disabled. Without this they'd hang forever: no engine will touch them, and
@@ -353,8 +527,9 @@ async def finalize_link(link_id, reason: str = "mt5_unlinked") -> None:
 
 
 async def run_account(api, metaapi_account_id: str, link_id, platform_account_number: str,
-                      mode: str, stop_event: asyncio.Event) -> None:
-    """Connect one MetaApi account and mirror it until stop_event is set."""
+                      mode: str, outbound_mode: str, max_lots,
+                      stop_event: asyncio.Event) -> None:
+    """Connect one MetaApi account and bridge it until stop_event is set."""
     try:
         account = await api.metatrader_account_api.get_account(metaapi_account_id)
 
@@ -372,21 +547,28 @@ async def run_account(api, metaapi_account_id: str, link_id, platform_account_nu
         await connection.connect()
         logger.info("[%s] waiting for synchronization ...", metaapi_account_id)
         await connection.wait_synchronized({"timeoutInSeconds": 600})
-        logger.info("[%s] synchronized — %s into platform account %s every %ss",
-                    metaapi_account_id,
-                    "REVERSE punching" if (mode or "").lower() in REVERSE_MODES else "mirroring",
-                    platform_account_number, POLL_SECONDS)
+        inbound = (mode or "mirror").strip().lower()
+        outbound = (outbound_mode or "off").strip().lower()
+        logger.info("[%s] synchronized — inbound=%s outbound=%s on platform account %s every %ss",
+                    metaapi_account_id, inbound, outbound, platform_account_number, POLL_SECONDS)
         await _set_link_status(metaapi_account_id, "connected")
 
+        first_cycle = True
         while not stop_event.is_set():
             try:
                 ts = connection.terminal_state
                 positions = list(getattr(ts, "positions", None) or [])
                 account_info = getattr(ts, "account_information", None) or {}
-                await reconcile(link_id, platform_account_number, mode, positions, account_info)
+                if inbound != "off":
+                    await reconcile(link_id, platform_account_number, mode, positions, account_info)
+                # Outbound runs after inbound so a position that just arrived
+                # from MT5 already carries mt5_link_id and can't be sent back.
+                await push_outbound(link_id, platform_account_number, outbound, max_lots,
+                                    connection, baseline=first_cycle)
+                first_cycle = False
                 await _set_link_status(metaapi_account_id, "connected")
             except Exception as e:
-                logger.exception("[%s] reconcile cycle failed", metaapi_account_id)
+                logger.exception("[%s] bridge cycle failed", metaapi_account_id)
                 await _set_link_status(metaapi_account_id, "error", str(e))
             await asyncio.sleep(POLL_SECONDS)
     except asyncio.CancelledError:
@@ -408,6 +590,8 @@ def _sig(link: dict) -> tuple:
         link["platform_account_number"],
         link.get("region") or "",
         link.get("mode") or "mirror",
+        link.get("outbound_mode") or "off",
+        str(link.get("max_lots") or ""),
     )
 
 
@@ -487,15 +671,16 @@ async def manager() -> None:
             opts = {"region": region} if region else {}
             api = MetaApi(current_token, opts)
             mode = link.get("mode") or "mirror"
+            outbound = link.get("outbound_mode") or "off"
             task = asyncio.create_task(
                 run_account(api, aid, link["id"], link["platform_account_number"],
-                            mode, stop_event)
+                            mode, outbound, link.get("max_lots"), stop_event)
             )
             workers[aid] = {
                 "task": task, "stop": stop_event, "sig": _sig(link), "link_id": link["id"],
             }
-            logger.info("[%s] starting worker (mode=%s) → platform account %s",
-                        aid, mode, link["platform_account_number"])
+            logger.info("[%s] starting worker (inbound=%s, outbound=%s) → platform account %s",
+                        aid, mode, outbound, link["platform_account_number"])
 
         await asyncio.sleep(REFRESH_SECONDS)
 

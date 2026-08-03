@@ -139,6 +139,20 @@ async def _apply_startup_ddl():
                 "CREATE INDEX IF NOT EXISTS idx_positions_acct_comment "
                 "ON positions(account_id, comment)"
             ))
+            # Outbound bridge columns (migration 0022 owns the data changes).
+            for ddl in (
+                "ALTER TABLE mt5_account_links ADD COLUMN IF NOT EXISTS outbound_mode VARCHAR(10) DEFAULT 'off'",
+                "ALTER TABLE mt5_account_links ADD COLUMN IF NOT EXISTS max_lots NUMERIC(10,4)",
+                "ALTER TABLE positions ADD COLUMN IF NOT EXISTS mt5_out_ticket VARCHAR(40)",
+                "ALTER TABLE positions ADD COLUMN IF NOT EXISTS mt5_out_state VARCHAR(16)",
+                "ALTER TABLE positions ADD COLUMN IF NOT EXISTS mt5_out_error TEXT",
+                "CREATE INDEX IF NOT EXISTS idx_positions_mt5_out "
+                "ON positions(mt5_out_ticket) WHERE mt5_out_ticket IS NOT NULL",
+                # 'two_way' silently behaved as mirror and disabled reverse.
+                "UPDATE mt5_account_links SET mode='mirror' WHERE mode='two_way'",
+                "UPDATE mt5_account_links SET outbound_mode='off' WHERE outbound_mode IS NULL",
+            ):
+                await conn.execute(text(ddl))
             # Backfill attribution from the legacy "MT5|<acct>|<ticket>" comment tag.
             # Migration 0021 does this too, but migrations are a manual profile —
             # without this, a deploy that skips them leaves every existing mirrored

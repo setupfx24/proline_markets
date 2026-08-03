@@ -3,6 +3,7 @@ plus the global MetaApi connection config (token + enable), stored in
 system_settings so the whole feature is managed from the admin panel."""
 import uuid
 from datetime import datetime
+from decimal import Decimal, InvalidOperation
 
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
@@ -21,7 +22,9 @@ class MT5LinkIn(BaseModel):
     metaapi_account_id: str = Field(min_length=1, max_length=64)
     platform_account_number: str = Field(min_length=1, max_length=20)
     region: str | None = None
-    mode: str = "mirror"          # mirror | reverse | two_way
+    mode: str = "mirror"              # inbound  MT5 → platform: mirror | reverse | off
+    outbound_mode: str = "off"        # outbound platform → MT5: off | same | reverse
+    max_lots: float | None = None     # per-order outbound cap; None = uncapped
     enabled: bool = True
     label: str | None = ""
 
@@ -86,6 +89,8 @@ def _serialize(r: MT5AccountLink) -> dict:
         "platform_account_number": r.platform_account_number,
         "region": r.region or "",
         "mode": r.mode or "mirror",
+        "outbound_mode": r.outbound_mode or "off",
+        "max_lots": float(r.max_lots) if r.max_lots is not None else None,
         "enabled": bool(r.enabled),
         "status": r.status or "pending",
         "last_error": r.last_error or "",
@@ -107,12 +112,39 @@ async def _require_platform_account(db: AsyncSession, account_number: str) -> No
 
 
 def _norm_mode(mode: str) -> str:
+    """Inbound direction: what MT5's positions become on the platform."""
     m = (mode or "mirror").strip().lower()
-    if m not in ("mirror", "reverse", "two_way"):
+    # 'two_way' used to live here and did nothing except silently disable
+    # reverse. Map it rather than 400 on links still carrying it.
+    if m == "two_way":
+        m = "mirror"
+    if m not in ("mirror", "reverse", "off"):
         raise HTTPException(
-            status_code=400, detail="mode must be 'mirror', 'reverse' or 'two_way'",
+            status_code=400, detail="mode must be 'mirror', 'reverse' or 'off'",
         )
     return m
+
+
+def _norm_outbound(mode: str) -> str:
+    """Outbound direction: what a platform trade becomes on MT5."""
+    m = (mode or "off").strip().lower()
+    if m not in ("off", "same", "reverse"):
+        raise HTTPException(
+            status_code=400, detail="outbound_mode must be 'off', 'same' or 'reverse'",
+        )
+    return m
+
+
+def _norm_max_lots(v) -> Decimal | None:
+    if v is None or str(v).strip() == "":
+        return None
+    try:
+        d = Decimal(str(v))
+    except (InvalidOperation, ValueError):
+        raise HTTPException(status_code=400, detail="max_lots must be a number")
+    if d <= 0:
+        raise HTTPException(status_code=400, detail="max_lots must be greater than 0")
+    return d
 
 
 async def _require_account_free(db: AsyncSession, account_number: str,
@@ -143,6 +175,8 @@ async def list_links(db: AsyncSession) -> dict:
 async def create_link(body: MT5LinkIn, admin_id: uuid.UUID, ip_address: str | None,
                       db: AsyncSession) -> dict:
     mode = _norm_mode(body.mode)
+    outbound = _norm_outbound(body.outbound_mode)
+    max_lots = _norm_max_lots(body.max_lots)
     await _require_platform_account(db, body.platform_account_number.strip())
     await _require_account_free(db, body.platform_account_number.strip())
 
@@ -159,6 +193,8 @@ async def create_link(body: MT5LinkIn, admin_id: uuid.UUID, ip_address: str | No
         platform_account_number=body.platform_account_number.strip(),
         region=(body.region or "").strip() or None,
         mode=mode,
+        outbound_mode=outbound,
+        max_lots=max_lots,
         enabled=body.enabled,
         label=(body.label or "").strip(),
         status="pending",
@@ -184,6 +220,8 @@ async def update_link(link_id: uuid.UUID, body: MT5LinkIn, admin_id: uuid.UUID,
         raise HTTPException(status_code=404, detail="MT5 link not found")
 
     mode = _norm_mode(body.mode)
+    outbound = _norm_outbound(body.outbound_mode)
+    max_lots = _norm_max_lots(body.max_lots)
     await _require_platform_account(db, body.platform_account_number.strip())
     await _require_account_free(db, body.platform_account_number.strip(), exclude_id=link_id)
 
@@ -202,6 +240,8 @@ async def update_link(link_id: uuid.UUID, body: MT5LinkIn, admin_id: uuid.UUID,
     link.platform_account_number = body.platform_account_number.strip()
     link.region = (body.region or "").strip() or None
     link.mode = mode
+    link.outbound_mode = outbound
+    link.max_lots = max_lots
     link.enabled = body.enabled
     link.label = (body.label or "").strip()
     # Config changed → worker will re-connect; reset transient status.
@@ -212,7 +252,9 @@ async def update_link(link_id: uuid.UUID, body: MT5LinkIn, admin_id: uuid.UUID,
         db, admin_id, "update_mt5_link", "mt5_account_link", link_id,
         new_values={"metaapi_account_id": link.metaapi_account_id,
                     "platform_account_number": link.platform_account_number,
-                    "enabled": link.enabled, "mode": link.mode},
+                    "enabled": link.enabled, "mode": link.mode,
+                    "outbound_mode": link.outbound_mode,
+                    "max_lots": float(link.max_lots) if link.max_lots is not None else None},
         ip_address=ip_address,
     )
     await db.commit()

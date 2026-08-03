@@ -89,6 +89,12 @@ async def _ensure_mt5_link_column():
                 "CREATE INDEX IF NOT EXISTS idx_positions_mt5_link "
                 "ON positions(mt5_link_id) WHERE mt5_link_id IS NOT NULL"
             ))
+            for col, typ in (("mt5_out_ticket", "VARCHAR(40)"),
+                             ("mt5_out_state", "VARCHAR(16)"),
+                             ("mt5_out_error", "TEXT")):
+                await session.execute(text(
+                    f"ALTER TABLE positions ADD COLUMN IF NOT EXISTS {col} {typ}"
+                ))
             await session.commit()
     except Exception as e:
         logger.warning("mt5_link_id column check skipped: %s", e)
