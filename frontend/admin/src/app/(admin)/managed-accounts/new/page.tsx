@@ -149,6 +149,18 @@ function ManagedAccountForm() {
     return p ?? q.price ?? null;
   };
 
+  /** Why the P&L box is not filling itself — an empty field with no reason
+      looks broken, and the usual cause is a blank quantity. */
+  const pnlHint = (row: ManualTradeRow): string => {
+    if (row.pnlManual) return 'typed';
+    const missing: string[] = [];
+    if (!quoteOf(row.symbol)) missing.push('symbol');
+    if (!Number.isFinite(parseFloat(row.lots))) missing.push('qty');
+    if (!Number.isFinite(parseFloat(row.open_price))) missing.push('open');
+    if (!Number.isFinite(parseFloat(row.close_price))) missing.push('close');
+    return missing.length ? `needs ${missing.join(', ')}` : 'auto';
+  };
+
   /** (close − open) × direction × lots × contract size. */
   const calcPnl = (row: ManualTradeRow): string => {
     const q = quoteOf(row.symbol);
@@ -542,7 +554,9 @@ function ManagedAccountForm() {
             <button type="button"
               onClick={() => setManualTrades([...manualTrades, {
                 date: new Date().toISOString().slice(0, 10), symbol: '', side: 'buy',
-                lots: '', open_price: '', close_price: '', pnl: '',
+                // A real 1, not just a placeholder — P&L cannot compute without
+                // a quantity, and an empty box showing a grey "1.00" reads as filled.
+                lots: '1', open_price: '', close_price: '', pnl: '',
                 close_reason: 'manual', close_time: '',
               }])}
               className="inline-flex items-center gap-1 text-xxs text-buy hover:underline">
@@ -644,7 +658,12 @@ function ManagedAccountForm() {
                     onChange={(e) => upd({ close_price: e.target.value })} />
                 </div>
                 <div>
-                  <label className={labelCls}>P&amp;L ($){!t.pnlManual && <span className="text-text-tertiary"> · auto</span>}</label>
+                  <label className={labelCls}>
+                    P&amp;L ($){' '}
+                    <span className={pnlHint(t).startsWith('needs') ? 'text-warning' : 'text-text-tertiary'}>
+                      · {pnlHint(t)}
+                    </span>
+                  </label>
                   <input className={inputCls} value={t.pnl} placeholder="P&L $"
                     onChange={(e) => upd({ pnl: e.target.value, pnlManual: true })} />
                 </div>
