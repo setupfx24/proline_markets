@@ -68,7 +68,50 @@ REVERSE_MODES = {"reverse"}
 # MT5 position carrying it — without that, an outbound trade comes straight back
 # through reconcile() and gets punched into the platform a second time.
 OUTBOUND_MAGIC = 770001
-OUTBOUND_CLIENT_PREFIX = "PLX-"
+# MetaApi validates clientId/comment: letters, digits and underscores only, and
+# len(clientId) + len(comment) <= 26. A hyphen in here is rejected outright with
+# a bare "Validation failed", which is what the first live orders hit.
+OUTBOUND_CLIENT_PREFIX = "PLX"
+
+# Broker symbol aliases for OUTBOUND orders. Inbound normalises the broker's own
+# name (XAUUSD.m → XAUUSD); going the other way we have to find whatever this
+# broker actually calls the instrument, and plenty of them use GOLD/SILVER.
+_OUTBOUND_ALIASES = {
+    "XAUUSD": ("XAUUSD", "GOLD", "GOLDUSD", "XAUUSDM"),
+    "XAGUSD": ("XAGUSD", "SILVER", "SILVERUSD"),
+    "XPTUSD": ("XPTUSD", "PLATINUM"),
+    "USOIL":  ("USOIL", "WTI", "XTIUSD", "CRUDE", "CRUDEOIL", "OIL"),
+    "UKOIL":  ("UKOIL", "BRENT", "XBRUSD"),
+    "NATGAS": ("NATGAS", "XNGUSD", "NGAS"),
+    "US30":   ("US30", "DJ30", "DOW", "US30USD"),
+    "US500":  ("US500", "SPX500", "SP500"),
+    "NAS100": ("NAS100", "US100", "USTEC", "NASDAQ100"),
+    "US100":  ("US100", "NAS100", "USTEC"),
+    "UK100":  ("UK100", "FTSE100", "FTSE"),
+    "GER40":  ("GER40", "DE40", "DAX40", "GER30", "DAX"),
+    "JPN225": ("JPN225", "JP225", "NIKKEI"),
+    "AUS200": ("AUS200", "AU200", "ASX200"),
+}
+
+
+def _resolve_broker_symbol(symbol: str, broker_symbols: dict[str, str]) -> str:
+    """Platform symbol → the name this broker will accept on an order."""
+    for candidate in _OUTBOUND_ALIASES.get(symbol, (symbol,)):
+        hit = broker_symbols.get(candidate)
+        if hit:
+            return hit
+    return broker_symbols.get(symbol, symbol)
+
+
+def _err_text(e: Exception) -> str:
+    """MetaApi raises ValidationError with the useful part hidden in .details —
+    the message alone is just 'Validation failed, check error.details'."""
+    parts = [str(e)]
+    for attr in ("details", "detail"):
+        d = getattr(e, attr, None)
+        if d:
+            parts.append(f"{attr}={d}")
+    return " | ".join(parts)
 
 # Signed MT5 fields that flip with the position's direction. `commission` is a
 # per-execution fee the counterparty book still pays, so it is NOT flipped.
@@ -443,12 +486,11 @@ async def push_outbound(link_id, platform_account_number: str, outbound_mode: st
 
             plat_side = str(getattr(pos.side, "value", pos.side)).lower()
             send_buy = (plat_side == "sell") if reverse else (plat_side == "buy")
-            broker_sym = symbols.get(sym, sym)
-            opts = {
-                "magic": OUTBOUND_MAGIC,
-                "clientId": f"{OUTBOUND_CLIENT_PREFIX}{str(pos.id)[:8]}",
-                "comment": f"PL {str(pos.id)[:8]}",
-            }
+            broker_sym = _resolve_broker_symbol(sym, symbols)
+            # Alphanumeric only — MetaApi rejects anything else, and the two
+            # strings together must stay under 26 characters.
+            tag = f"{OUTBOUND_CLIENT_PREFIX}{str(pos.id).replace('-', '')[:8]}"
+            opts = {"magic": OUTBOUND_MAGIC, "clientId": tag, "comment": tag}
 
             try:
                 fn = connection.create_market_buy_order if send_buy else connection.create_market_sell_order
@@ -464,9 +506,9 @@ async def push_outbound(link_id, platform_account_number: str, outbound_mode: st
                             broker_sym, volume, ticket)
             except Exception as e:
                 pos.mt5_out_state = "failed"
-                pos.mt5_out_error = str(e)[:500]
-                logger.exception("[%s] outbound order failed for %s",
-                                 platform_account_number, broker_sym)
+                pos.mt5_out_error = _err_text(e)[:500]
+                logger.error("[%s] outbound order failed for %s (sent as %s): %s",
+                             platform_account_number, sym, broker_sym, _err_text(e))
 
         # ── Close on MT5 what has closed here. Scoped to THIS account: without
         # it, one link's connection would try to close another link's tickets,
@@ -488,7 +530,7 @@ async def push_outbound(link_id, platform_account_number: str, outbound_mode: st
                 logger.info("[%s] outbound closed MT5 ticket %s",
                             platform_account_number, pos.mt5_out_ticket)
             except Exception as e:
-                msg = str(e)[:500]
+                msg = _err_text(e)[:500]
                 # Already gone on MT5 (closed by hand, SL/TP, stop-out) — done.
                 if "not found" in msg.lower() or "POSITION_NOT_FOUND" in msg:
                     pos.mt5_out_state = "closed"
