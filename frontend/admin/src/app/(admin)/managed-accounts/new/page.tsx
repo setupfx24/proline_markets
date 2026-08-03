@@ -29,6 +29,8 @@ interface Quote {
   segment: string;
   digits: number;
   contract_size: number;
+  base_currency: string | null;
+  quote_currency: string | null;
   bid: number | null;
   ask: number | null;
   price: number | null;
@@ -161,7 +163,12 @@ function ManagedAccountForm() {
     return missing.length ? `needs ${missing.join(', ')}` : 'auto';
   };
 
-  /** (close − open) × direction × lots × contract size. */
+  /** (close − open) × direction × lots × contract size, then quote currency →
+      USD. Mirrors the gateway's calc_pnl + quote_to_account_pnl exactly, so a
+      generated trade shows the client the same number the terminal computes:
+      a USD-quoted symbol (XAUUSD, EURUSD) needs no conversion, but a USD-base
+      one (USDJPY, USDCHF) earns its profit in the quote currency and has to be
+      divided by the rate. Crosses fall back to raw, like the backend does. */
   const calcPnl = (row: ManualTradeRow): string => {
     const q = quoteOf(row.symbol);
     const open = parseFloat(row.open_price);
@@ -169,7 +176,11 @@ function ManagedAccountForm() {
     const lots = parseFloat(row.lots);
     if (!q || !Number.isFinite(open) || !Number.isFinite(close) || !Number.isFinite(lots)) return row.pnl;
     const dir = row.side === 'sell' ? -1 : 1;
-    return ((close - open) * dir * lots * q.contract_size).toFixed(2);
+    const raw = (close - open) * dir * lots * q.contract_size;
+    const base = (q.base_currency || row.symbol.slice(0, 3)).toUpperCase();
+    const quote = (q.quote_currency || row.symbol.slice(3, 6)).toUpperCase();
+    const usd = quote !== 'USD' && base === 'USD' && close ? raw / close : raw;
+    return usd.toFixed(2);
   };
 
   const loadExisting = useCallback(async () => {

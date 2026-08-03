@@ -446,6 +446,11 @@ async def live_instruments(db: AsyncSession) -> dict:
             "segment": seg,
             "digits": inst.digits or 2,
             "contract_size": float(inst.contract_size or 100000),
+            # The form's P&L preview converts quote-currency profit to USD the
+            # same way the terminal does, so a generated trade shows the number
+            # the client will actually see.
+            "base_currency": (inst.base_currency or "").upper() or None,
+            "quote_currency": (inst.quote_currency or "").upper() or None,
             "bid": bid,
             "ask": ask,
             "price": round((bid + ask) / 2, 8) if bid is not None and ask is not None else None,
