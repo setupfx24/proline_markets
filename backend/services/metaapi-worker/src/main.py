@@ -68,9 +68,11 @@ REVERSE_MODES = {"reverse"}
 # MT5 position carrying it — without that, an outbound trade comes straight back
 # through reconcile() and gets punched into the platform a second time.
 OUTBOUND_MAGIC = 770001
-# MetaApi validates clientId/comment: letters, digits and underscores only, and
-# len(clientId) + len(comment) <= 26. A hyphen in here is rejected outright with
-# a bare "Validation failed", which is what the first live orders hit.
+# Orders carry ONLY the magic number. clientId went through two rounds of
+# "Validation failed — Value must match required pattern" from MetaApi (first
+# with a hyphen, then plain alphanumeric), and it buys nothing: the ticket comes
+# back in the trade response and is stored on the position, and MT5 carries the
+# magic on the position itself, which is what _is_ours() reads.
 OUTBOUND_CLIENT_PREFIX = "PLX"
 
 # Broker symbol aliases for OUTBOUND orders. Inbound normalises the broker's own
@@ -487,10 +489,7 @@ async def push_outbound(link_id, platform_account_number: str, outbound_mode: st
             plat_side = str(getattr(pos.side, "value", pos.side)).lower()
             send_buy = (plat_side == "sell") if reverse else (plat_side == "buy")
             broker_sym = _resolve_broker_symbol(sym, symbols)
-            # Alphanumeric only — MetaApi rejects anything else, and the two
-            # strings together must stay under 26 characters.
-            tag = f"{OUTBOUND_CLIENT_PREFIX}{str(pos.id).replace('-', '')[:8]}"
-            opts = {"magic": OUTBOUND_MAGIC, "clientId": tag, "comment": tag}
+            opts = {"magic": OUTBOUND_MAGIC}
 
             try:
                 fn = connection.create_market_buy_order if send_buy else connection.create_market_sell_order
