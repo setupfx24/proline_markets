@@ -519,6 +519,13 @@ export default function MT5ConnectPage() {
                     <option value="same">Same side</option>
                     <option value="reverse">Reverse (hedge)</option>
                   </select>
+                  <p className="mt-1 text-xxs text-text-tertiary">
+                    {form.outbound_mode === 'off'
+                      ? 'Trades taken here are not sent to MT5.'
+                      : `A trade here is placed on MT5 ${
+                          form.outbound_mode === 'reverse' ? 'on the opposite side' : 'on the same side'
+                        } and closed there when it closes here. Real orders — needs the master password on the MetaApi account. Positions already open when you switch this on are left alone.`}
+                  </p>
                 </div>
                 <div>
                   <label className="block text-xxs text-text-tertiary mb-1">Max lots per order</label>
@@ -531,20 +538,6 @@ export default function MT5ConnectPage() {
                   />
                 </div>
               </div>
-              {form.outbound_mode !== 'off' && (
-                <div className="rounded-md border border-sell/30 bg-sell/10 px-2.5 py-2">
-                  <p className="text-xxs text-sell font-medium">
-                    Sends real orders to this MT5 account
-                  </p>
-                  <p className="text-xxs text-text-secondary mt-0.5">
-                    A trade on platform account {form.platform_account_number || '—'} is placed on MT5
-                    {form.outbound_mode === 'reverse' ? ' on the opposite side' : ' on the same side'},
-                    and closed there when it closes here. Needs the <b>master</b> password on the
-                    MetaApi account — an investor password cannot place orders. Positions already open
-                    when you switch this on are left alone; only new ones are sent.
-                  </p>
-                </div>
-              )}
               <div>
                 <label className="block text-xxs text-text-tertiary mb-1">Label (optional)</label>
                 <input
