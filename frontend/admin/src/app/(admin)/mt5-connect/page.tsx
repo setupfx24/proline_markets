@@ -505,7 +505,7 @@ export default function MT5ConnectPage() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 gap-2">
                 <div>
                   <label className="block text-xxs text-text-tertiary mb-1">
                     Outbound — platform → MT5
@@ -526,16 +526,6 @@ export default function MT5ConnectPage() {
                           form.outbound_mode === 'reverse' ? 'on the opposite side' : 'on the same side'
                         } and closed there when it closes here. Real orders — needs the master password on the MetaApi account. Positions already open when you switch this on are left alone.`}
                   </p>
-                </div>
-                <div>
-                  <label className="block text-xxs text-text-tertiary mb-1">Max lots per order</label>
-                  <input
-                    value={form.max_lots}
-                    onChange={(e) => u('max_lots', e.target.value)}
-                    className="w-full text-xs py-1.5 px-2 bg-bg-input border border-border-primary rounded-md font-mono"
-                    placeholder="no cap"
-                    disabled={form.outbound_mode === 'off'}
-                  />
                 </div>
               </div>
               <div>
