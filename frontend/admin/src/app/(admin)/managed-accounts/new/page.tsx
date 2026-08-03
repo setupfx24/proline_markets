@@ -156,31 +156,23 @@ function ManagedAccountForm() {
   const pnlHint = (row: ManualTradeRow): string => {
     if (row.pnlManual) return 'typed';
     const missing: string[] = [];
-    if (!quoteOf(row.symbol)) missing.push('symbol');
     if (!Number.isFinite(parseFloat(row.lots))) missing.push('qty');
     if (!Number.isFinite(parseFloat(row.open_price))) missing.push('open');
     if (!Number.isFinite(parseFloat(row.close_price))) missing.push('close');
     return missing.length ? `needs ${missing.join(', ')}` : 'auto';
   };
 
-  /** (close − open) × direction × lots × contract size, then quote currency →
-      USD. Mirrors the gateway's calc_pnl + quote_to_account_pnl exactly, so a
-      generated trade shows the client the same number the terminal computes:
-      a USD-quoted symbol (XAUUSD, EURUSD) needs no conversion, but a USD-base
-      one (USDJPY, USDCHF) earns its profit in the quote currency and has to be
-      divided by the rate. Crosses fall back to raw, like the backend does. */
+  /** (close − open) × direction × qty — the plain price move, by the owner's
+      decision. Contract size is deliberately NOT applied: the terminal shows a
+      closed trade's stored profit verbatim, so whatever is previewed here is
+      exactly what the client sees. Type over the box for any other number. */
   const calcPnl = (row: ManualTradeRow): string => {
-    const q = quoteOf(row.symbol);
     const open = parseFloat(row.open_price);
     const close = parseFloat(row.close_price);
     const lots = parseFloat(row.lots);
-    if (!q || !Number.isFinite(open) || !Number.isFinite(close) || !Number.isFinite(lots)) return row.pnl;
+    if (!Number.isFinite(open) || !Number.isFinite(close) || !Number.isFinite(lots)) return row.pnl;
     const dir = row.side === 'sell' ? -1 : 1;
-    const raw = (close - open) * dir * lots * q.contract_size;
-    const base = (q.base_currency || row.symbol.slice(0, 3)).toUpperCase();
-    const quote = (q.quote_currency || row.symbol.slice(3, 6)).toUpperCase();
-    const usd = quote !== 'USD' && base === 'USD' && close ? raw / close : raw;
-    return usd.toFixed(2);
+    return ((close - open) * dir * lots).toFixed(2);
   };
 
   const loadExisting = useCallback(async () => {
