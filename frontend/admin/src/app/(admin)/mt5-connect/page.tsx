@@ -17,6 +17,7 @@ interface MT5Link {
   status: string;
   last_error: string;
   last_sync_at: string | null;
+  updated_at: string | null;
   label: string;
 }
 
@@ -44,11 +45,51 @@ const OUTBOUND_LABEL: Record<string, string> = {
   off: 'out: off', same: 'out: same', reverse: 'out: reverse',
 };
 
-function StatusPill({ status, enabled }: { status: string; enabled: boolean }) {
-  if (!enabled) return <span className="text-xxs px-1.5 py-0.5 rounded-sm bg-bg-tertiary text-text-tertiary">disabled</span>;
+/** Stages the worker writes while a link is coming up, in order. */
+const CONNECTING_STAGES: Record<string, { label: string; hint: string }> = {
+  pending:    { label: 'Queued',     hint: 'waiting for the worker to pick this up' },
+  deploying:  { label: 'Deploying',  hint: 'MetaApi is starting the account' },
+  connecting: { label: 'Connecting', hint: 'logging in to the broker' },
+  syncing:    { label: 'Syncing',    hint: 'downloading positions and history — this can take a few minutes' },
+};
+const STAGE_ORDER = ['pending', 'deploying', 'connecting', 'syncing'];
+
+function elapsed(since: string | null): string {
+  if (!since) return '';
+  const secs = Math.max(0, Math.floor((Date.now() - new Date(since).getTime()) / 1000));
+  if (secs < 60) return `${secs}s`;
+  const m = Math.floor(secs / 60);
+  return m < 60 ? `${m}m ${secs % 60}s` : `${Math.floor(m / 60)}h ${m % 60}m`;
+}
+
+function StatusPill({ status, enabled, since }: { status: string; enabled: boolean; since?: string | null }) {
+  if (!enabled) {
+    return <span className="text-xxs px-1.5 py-0.5 rounded-sm bg-bg-tertiary text-text-tertiary">disabled</span>;
+  }
+  const stage = CONNECTING_STAGES[status];
+  if (stage) {
+    const step = STAGE_ORDER.indexOf(status) + 1;
+    return (
+      <div className="flex flex-col gap-1" title={stage.hint}>
+        <span className="inline-flex w-fit items-center gap-1.5 text-xxs px-1.5 py-0.5 rounded-sm bg-warning/15 text-warning">
+          <Loader2 size={11} className="animate-spin" />
+          {stage.label}
+          <span className="opacity-70">{step}/4</span>
+        </span>
+        <div className="flex items-center gap-1.5">
+          <div className="h-0.5 w-16 rounded-full bg-bg-tertiary overflow-hidden">
+            <div
+              className="h-full bg-warning transition-all duration-500"
+              style={{ width: `${(step / 4) * 100}%` }}
+            />
+          </div>
+          {since && <span className="text-xxs text-text-tertiary tabular-nums">{elapsed(since)}</span>}
+        </div>
+      </div>
+    );
+  }
   const map: Record<string, string> = {
     connected: 'bg-buy/15 text-buy',
-    pending: 'bg-warning/15 text-warning',
     error: 'bg-danger/15 text-danger',
   };
   return (
@@ -95,11 +136,21 @@ export default function MT5ConnectPage() {
     void fetchData();
   }, [fetchData]);
 
-  // Status/last-sync updates come from the worker — poll while the page is open.
+  // Status/last-sync updates come from the worker — poll while the page is open,
+  // and much faster while something is still coming up so the stage moves live.
+  const connecting = items.some((r) => r.enabled && CONNECTING_STAGES[r.status]);
   useEffect(() => {
-    const t = setInterval(() => void fetchData(), 10000);
+    const t = setInterval(() => void fetchData(), connecting ? 2500 : 10000);
     return () => clearInterval(t);
-  }, [fetchData]);
+  }, [fetchData, connecting]);
+
+  // Ticks the "connecting for 1m 20s" counter between polls.
+  const [, tick] = useState(0);
+  useEffect(() => {
+    if (!connecting) return;
+    const t = setInterval(() => tick((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, [connecting]);
 
   const saveConfig = async () => {
     setCfgSaving(true);
@@ -203,6 +254,7 @@ export default function MT5ConnectPage() {
   const u = (k: string, v: string | boolean) => setForm((f) => ({ ...f, [k]: v }));
 
   const connectedCount = items.filter((r) => r.enabled && r.status === 'connected').length;
+  const connectingCount = items.filter((r) => r.enabled && CONNECTING_STAGES[r.status]).length;
 
   return (
     <div className="p-6 space-y-4">
@@ -294,6 +346,12 @@ export default function MT5ConnectPage() {
               <span className="ml-2 text-xxs font-normal text-text-tertiary">
                 {connectedCount}/{items.length} live
               </span>
+              {connectingCount > 0 && (
+                <span className="ml-2 inline-flex items-center gap-1 text-xxs font-normal text-warning">
+                  <Loader2 size={10} className="animate-spin" />
+                  {connectingCount} connecting
+                </span>
+              )}
             </h2>
             <div className="flex items-center gap-2 shrink-0">
               <button
@@ -362,7 +420,9 @@ export default function MT5ConnectPage() {
                           </span>
                         </div>
                       </td>
-                      <td className="p-2"><StatusPill status={r.status} enabled={r.enabled} /></td>
+                      <td className="p-2">
+                        <StatusPill status={r.status} enabled={r.enabled} since={r.updated_at} />
+                      </td>
                       <td className="p-2 text-text-tertiary tabular-nums">
                         {r.last_sync_at ? new Date(r.last_sync_at).toLocaleTimeString() : '—'}
                       </td>
@@ -421,16 +481,7 @@ export default function MT5ConnectPage() {
                   placeholder="e.g. PT12345678"
                 />
               </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="block text-xxs text-text-tertiary mb-1">Region (optional)</label>
-                  <input
-                    value={form.region}
-                    onChange={(e) => u('region', e.target.value)}
-                    className="w-full text-xs py-1.5 px-2 bg-bg-input border border-border-primary rounded-md"
-                    placeholder="leave blank for auto"
-                  />
-                </div>
+              <div className="grid grid-cols-1 gap-2">
                 <div>
                   <label className="block text-xxs text-text-tertiary mb-1">
                     Inbound — MT5 → platform

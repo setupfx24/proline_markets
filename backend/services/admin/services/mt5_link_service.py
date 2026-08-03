@@ -97,6 +97,8 @@ def _serialize(r: MT5AccountLink) -> dict:
         "last_sync_at": r.last_sync_at.isoformat() if r.last_sync_at else None,
         "label": r.label or "",
         "created_at": r.created_at.isoformat() if r.created_at else None,
+        # When the status last moved — the UI counts up from this while connecting.
+        "updated_at": r.updated_at.isoformat() if r.updated_at else None,
     }
 
 

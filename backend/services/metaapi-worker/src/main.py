@@ -531,6 +531,10 @@ async def run_account(api, metaapi_account_id: str, link_id, platform_account_nu
                       stop_event: asyncio.Event) -> None:
     """Connect one MetaApi account and bridge it until stop_event is set."""
     try:
+        # Each stage is written to the link row so the admin panel can show what
+        # the connection is actually doing — syncing alone can take minutes, and
+        # a bare "pending" for that long looks like it has hung.
+        await _set_link_status(metaapi_account_id, "deploying")
         account = await api.metatrader_account_api.get_account(metaapi_account_id)
 
         if getattr(account, "state", None) not in ("DEPLOYED",):
@@ -541,11 +545,13 @@ async def run_account(api, metaapi_account_id: str, link_id, platform_account_nu
                 logger.exception("[%s] account.deploy() failed (continuing)", metaapi_account_id)
 
         logger.info("[%s] waiting for connection ...", metaapi_account_id)
+        await _set_link_status(metaapi_account_id, "connecting")
         await account.wait_connected()
 
         connection = account.get_streaming_connection()
         await connection.connect()
         logger.info("[%s] waiting for synchronization ...", metaapi_account_id)
+        await _set_link_status(metaapi_account_id, "syncing")
         await connection.wait_synchronized({"timeoutInSeconds": 600})
         inbound = (mode or "mirror").strip().lower()
         outbound = (outbound_mode or "off").strip().lower()
