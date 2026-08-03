@@ -328,25 +328,32 @@ async def trade_history(
     )
     trades = result.scalars().all()
 
+    # Trade source used to cost two extra queries per row — 2 x per_page round
+    # trips, which is what made a large page unusable. Resolve both in one shot.
+    position_ids = [t.position_id for t in trades if t.position_id]
+    copied_positions: set = set()
+    position_comments: dict = {}
+    if position_ids:
+        ct_rows = await db.execute(
+            select(CopyTrade.investor_position_id)
+            .where(CopyTrade.investor_position_id.in_(position_ids))
+        )
+        copied_positions = {row[0] for row in ct_rows.all()}
+        pc_rows = await db.execute(
+            select(Position.id, Position.comment).where(Position.id.in_(position_ids))
+        )
+        position_comments = {row[0]: row[1] for row in pc_rows.all()}
+
     items = []
     for t in trades:
         side_val = t.side.value if hasattr(t.side, 'value') else str(t.side)
-        copy_trade_q = await db.execute(
-            select(CopyTrade).where(CopyTrade.investor_position_id == t.position_id)
-        )
-        copy_trade = copy_trade_q.scalar_one_or_none()
-        if copy_trade:
+        if t.position_id and t.position_id in copied_positions:
             trade_type = "copy_trade"
         else:
             # Algo bot tags every position with "Algo [<key label>]" comment
             # (api/algo_connector.py). Closed trades pull the source by
             # following position_id back to positions.comment.
-            pos_comment = None
-            if t.position_id:
-                pc_q = await db.execute(
-                    select(Position.comment).where(Position.id == t.position_id)
-                )
-                pos_comment = pc_q.scalar_one_or_none()
+            pos_comment = position_comments.get(t.position_id)
             if pos_comment and str(pos_comment).startswith("Algo ["):
                 trade_type = "algo_trade"
             else:

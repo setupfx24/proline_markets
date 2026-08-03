@@ -43,7 +43,10 @@ async def trade_history(
     date_from: datetime = Query(None),
     date_to: datetime = Query(None),
     page: int = Query(1, ge=1),
-    per_page: int = Query(50, ge=1, le=200),
+    # The account balance-trend chart replays a whole year of closed trades to
+    # walk the balance backwards, so it legitimately asks for far more than a
+    # screenful; 200 made it 422 and the chart came back empty.
+    per_page: int = Query(50, ge=1, le=1000),
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
