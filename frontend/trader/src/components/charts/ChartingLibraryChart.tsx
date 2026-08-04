@@ -1037,14 +1037,14 @@ export default function ChartingLibraryChart() {
           chart canvas but under the SL/TP overlay (DOM order). Theme-aware. */}
       <div className="pointer-events-none absolute inset-0 flex items-center justify-center overflow-hidden">
         <img
-          src="/images/proline_png5.png"
+          src="/images/logowhite.png"
           alt=""
           aria-hidden
           draggable={false}
           className="w-40 h-40 md:w-56 md:h-56 object-contain opacity-[0.06] select-none hidden dark:block"
         />
         <img
-          src="/images/proline_png.png"
+          src="/images/logo1.png"
           alt=""
           aria-hidden
           draggable={false}
