@@ -22,7 +22,10 @@ import PositionsPanel from '@/components/trading/PositionsPanel';
 import { ActiveAccountBadge } from '@/components/trading/ActiveAccountBadge';
 import TerminalLeftRail, { type TerminalSpaceId } from '@/components/trading/TerminalLeftRail';
 
-const AdvancedChart = dynamic(() => import('@/components/charts/AdvancedChart'), { ssr: false });
+// The full Charting Library chart, fed by OUR bars so the candles agree with the
+// running P&L, and drawing an entry line + draggable SL/TP per open position.
+// Swap back to '@/components/charts/AdvancedChart' for the plain widget.
+const AdvancedChart = dynamic(() => import('@/components/charts/ChartingLibraryChart'), { ssr: false });
 const TradingViewNewsTimeline = dynamic(() => import('@/components/charts/TradingViewNewsTimeline'), {
   ssr: false,
 });

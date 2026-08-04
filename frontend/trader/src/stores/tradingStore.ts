@@ -2,6 +2,57 @@
 import { persist } from 'zustand/middleware';
 import api from '@/lib/api/client';
 
+/** Per-instrument contract size, used ONLY when the instrument feed didn't
+ *  carry one. A flat 100000 (forex standard lot) is wrong for metals and
+ *  crypto — XAUUSD 0.01 lots would show a 1000x P&L against the backend, so
+ *  the running number never matched the close. Metals = 100 oz/lot, crypto = 1. */
+export function defaultContractSize(symbol: string): number {
+  const s = (symbol || '').trim().toUpperCase();
+  if (s.startsWith('XAU') || s.startsWith('XAG') || s.startsWith('XPT') || s.startsWith('XPD')) return 100;
+  if (s.startsWith('BTC') || s.startsWith('ETH') || s.startsWith('XRP') || s.startsWith('LTC')
+      || s.startsWith('SOL') || s.includes('USDT')) return 1;
+  return 100000;
+}
+
+/**
+ * Live floating P&L for one position, valued at the tick MID — the same basis
+ * the backend closes on. One source of truth so a positions refresh recomputes
+ * the live number instead of slamming it back to the server's `profit` (often
+ * stale or 0). Returns null when there is no usable tick, so the caller keeps
+ * whatever it already had rather than flashing a zero.
+ */
+export function livePnlFor(
+  pos: { side: string; open_price: number; lots: number; effective_lots?: number },
+  tick: { bid: number; ask: number } | undefined | null,
+  instruments: Array<{
+    symbol: string;
+    contract_size?: number | null;
+    base_currency?: string | null;
+    quote_currency?: string | null;
+  }>,
+  symbol: string,
+): { cp: number; pnl: number } | null {
+  if (!tick) return null;
+  const sym = (symbol || '').trim().toUpperCase();
+  const cp = (tick.bid > 0 && tick.ask > 0)
+    ? (tick.bid + tick.ask) / 2
+    : (pos.side === 'buy' ? tick.bid : tick.ask);
+  if (!(cp > 0)) return null;
+  const inst =
+    instruments.find((i) => i.symbol === sym) ||
+    instruments.find((i) => String(i.symbol).toUpperCase() === sym);
+  const cs = inst?.contract_size || defaultContractSize(sym);
+  const pnlLots = pos.effective_lots ?? pos.lots;
+  let pnl = pos.side === 'buy'
+    ? (cp - pos.open_price) * pnlLots * cs
+    : (pos.open_price - cp) * pnlLots * cs;
+  // Quote-currency profit → USD, matching the gateway's quote_to_account_pnl.
+  const base = (inst?.base_currency || (sym.length >= 6 ? sym.slice(0, 3) : '')).toUpperCase();
+  const quote = (inst?.quote_currency || (sym.length >= 6 ? sym.slice(3, 6) : '')).toUpperCase();
+  if (quote && quote !== 'USD' && base === 'USD' && cp) pnl = pnl / cp;
+  return { cp, pnl };
+}
+
 export interface TickData {
   symbol: string;
   bid: number;
