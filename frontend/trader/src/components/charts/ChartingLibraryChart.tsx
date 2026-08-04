@@ -825,39 +825,14 @@ export default function ChartingLibraryChart() {
       });
     };
 
-    const mkBtn = (txt: string, bg: string, title: string, onClick: () => void): HTMLButtonElement => {
-      const b = document.createElement('button');
-      b.type = 'button';
-      b.textContent = txt;
-      b.title = title;
-      b.style.cssText =
-        `display:flex;align-items:center;justify-content:center;height:18px;min-width:18px;`
-        + `padding:0 ${txt.length > 1 ? '5' : '0'}px;border:0;border-radius:3px;cursor:pointer;`
-        + `font-size:10px;font-weight:700;line-height:1;color:#fff;pointer-events:auto;`
-        + `background:${bg};box-shadow:0 1px 3px rgba(0,0,0,.55);`;
-      b.onmouseenter = () => { b.style.filter = 'brightness(1.15)'; };
-      b.onmouseleave = () => { b.style.filter = 'none'; };
-      b.onclick = (e) => { e.stopPropagation(); onClick(); };
-      return b;
-    };
-
-    // Draggable SL/TP button: press & drag up/down → a dashed preview line follows
-    // the cursor showing the target price → release → confirm → PUT. A plain click
-    // (no drag) falls back to the type-a-price prompt.
-    const mkDragBtn = (txt: string, bg: string, title: string, p: any, kind: 'sl' | 'tp'): HTMLButtonElement => {
+    // Makes any element an SL/TP drag handle: press & drag up/down → a dashed
+    // preview line follows the cursor showing the target price → release →
+    // confirm → PUT. A plain click (no drag) falls back to type-a-price.
+    const attachDrag = (b: HTMLElement, p: any, kind: 'sl' | 'tp'): HTMLElement => {
       const color = kind === 'sl' ? '#f59e0b' : '#14b8a6';
       const zoneBg = kind === 'sl' ? 'rgba(239,68,68,0.13)' : 'rgba(20,184,166,0.13)';
-      const b = document.createElement('button');
-      b.type = 'button';
-      b.textContent = txt;
-      b.title = `${title} — drag up/down to set, or click to type`;
-      b.style.cssText =
-        `display:flex;align-items:center;justify-content:center;height:18px;min-width:18px;`
-        + `padding:0 5px;border:0;border-radius:3px;cursor:ns-resize;`
-        + `font-size:10px;font-weight:700;line-height:1;color:#fff;pointer-events:auto;`
-        + `background:${bg};box-shadow:0 1px 3px rgba(0,0,0,.55);`;
-      b.onmouseenter = () => { b.style.filter = 'brightness(1.15)'; };
-      b.onmouseleave = () => { b.style.filter = 'none'; };
+      b.style.cursor = 'ns-resize';
+      b.title = `${kind === 'sl' ? 'Stop loss' : 'Take profit'} — drag up/down to set, or click to type`;
       b.onpointerdown = (e) => {
         e.preventDefault(); e.stopPropagation();
         // Capture the pointer to the button: the drag follows the cursor and won't
@@ -934,28 +909,80 @@ export default function ChartingLibraryChart() {
       return b;
     };
 
-    // One button GROUP per open position: [SL] [TP] [✕], pinned to the entry line.
+    // ── Segmented pill per line: [badge] [price] [P&L] [lots] [✕] ──────────────
+    // Entry pill = side badge (B/S) + entry price + LIVE P&L + lots + close.
+    // SL/TP pill = badge + level price + the P&L that level would realise + lots;
+    // badge and price are drag handles. When a bracket isn't set the pill shrinks
+    // to just its badge and parks on the right as a drag-to-create handle.
+    const darkPill = theme !== 'light';
+    const PILL_LEFT_PX = 54;                     // clear of the left drawing toolbar
+    const segBg = darkPill ? '#1b1f27' : '#ffffff';
+    const segFg = darkPill ? '#e5e7eb' : '#111827';
+    const segDim = darkPill ? '#9ca3af' : '#6b7280';
+    const divider = darkPill ? '1px solid rgba(255,255,255,.08)' : '1px solid rgba(0,0,0,.10)';
+    const PILL_GREEN = '#16a34a';
+    const PILL_RED = '#dc2626';
+    const money = (v: number) => `${v >= 0 ? '+' : '-'}$${Math.abs(v).toFixed(2)}`;
+
+    type Pill = {
+      el: HTMLDivElement; badge: HTMLDivElement; price: HTMLDivElement;
+      pnl: HTMLDivElement; lots: HTMLDivElement; x: HTMLButtonElement;
+    };
+    const mkSegPill = (): Pill => {
+      const el = document.createElement('div');
+      el.style.cssText =
+        `position:absolute;left:${PILL_LEFT_PX}px;transform:translateY(-50%);display:none;`
+        + `align-items:stretch;height:20px;border-radius:4px;overflow:hidden;pointer-events:auto;`
+        + `z-index:6;font:700 10px system-ui;box-shadow:0 1px 4px rgba(0,0,0,.5);`
+        + `border:1px solid transparent;box-sizing:border-box;`;
+      const mkSeg = (extra: string): HTMLDivElement => {
+        const d = document.createElement('div');
+        d.style.cssText = `display:flex;align-items:center;padding:0 6px;white-space:nowrap;${extra}`;
+        return d;
+      };
+      const badge = mkSeg(`background:${segBg};font-weight:800;`);
+      const price = mkSeg(`background:${segBg};color:${segFg};border-left:${divider};`);
+      const pnl = mkSeg(`background:${segBg};border-left:${divider};`);
+      const lots = mkSeg(`background:${segBg};color:${segDim};border-left:${divider};`);
+      const x = document.createElement('button');
+      x.type = 'button';
+      x.textContent = '✕';
+      x.style.cssText =
+        `display:flex;align-items:center;justify-content:center;padding:0 7px;border:0;`
+        + `border-left:${divider};background:${segBg};color:${segDim};cursor:pointer;font:700 10px system-ui;`;
+      x.onmouseenter = () => { x.style.color = '#ef4444'; };
+      x.onmouseleave = () => { x.style.color = segDim; };
+      for (const seg of [badge, price, pnl, lots]) el.appendChild(seg);
+      el.appendChild(x);
+      overlay.appendChild(el);
+      return { el, badge, price, pnl, lots, x };
+    };
+
     const myPos = useTradingStore.getState().positions.filter(
       (p) => (p.symbol || '').toUpperCase() === sym,
     );
-    const btns: { p: any; entry: number; el: HTMLDivElement; slZone: HTMLDivElement; tpZone: HTMLDivElement }[] = [];
+    const btns: {
+      p: any; entry: number;
+      entryPill: Pill; slPill: Pill; tpPill: Pill;
+      slZone: HTMLDivElement; tpZone: HTMLDivElement;
+    }[] = [];
     for (const p of myPos) {
       const side = String(p.side).toUpperCase();
       const sideColor = side === 'BUY' ? CHART_BUY_COLOR : CHART_SELL_COLOR;
-      const root = document.createElement('div');
-      root.style.cssText =
-        `position:absolute;right:${CLOSE_BTN_RIGHT_PX}px;transform:translateY(-50%);`
-        + `display:flex;align-items:center;gap:3px;pointer-events:none;visibility:hidden;z-index:6;`;
-      root.appendChild(mkDragBtn('SL', 'rgba(245,158,11,0.97)', `Stop loss ${side} ${p.lots} ${sym}`, p, 'sl'));
-      root.appendChild(mkDragBtn('TP', 'rgba(20,184,166,0.97)', `Take profit ${side} ${p.lots} ${sym}`, p, 'tp'));
-      root.appendChild(mkBtn('✕', sideColor, `Close ${side} ${p.lots} ${sym} at market`, () => {
+      const entryPill = mkSegPill();
+      entryPill.badge.textContent = side === 'BUY' ? 'B' : 'S';
+      entryPill.badge.style.color = sideColor;
+      entryPill.el.style.borderColor = sideColor;
+      entryPill.x.title = `Close ${side} ${p.lots} ${sym} at market`;
+      entryPill.x.onclick = (e) => {
+        e.stopPropagation();
         openDialog({
           title: 'Close position',
           body: `Close ${side} ${Number(p.lots)} ${sym} at market?`,
           confirmLabel: 'Close position',
           danger: true,
           onConfirm: () => {
-            root.style.visibility = 'hidden';
+            entryPill.el.style.display = 'none';
             try { useTradingStore.getState().removePosition(p.id); } catch { /* noop */ }
             (async () => {
               try {
@@ -975,16 +1002,34 @@ export default function ChartingLibraryChart() {
             })();
           },
         });
-      }));
+      };
+
+      // SL / TP pills — badge and price are the drag handles. No ✕ on these:
+      // clearing a bracket is done through the type-a-price dialog.
+      const slPill = mkSegPill();
+      slPill.badge.textContent = 'SL';
+      slPill.badge.style.color = PILL_RED;
+      slPill.el.style.borderColor = PILL_RED;
+      attachDrag(slPill.badge, p, 'sl');
+      attachDrag(slPill.price, p, 'sl');
+      slPill.x.remove();
+
+      const tpPill = mkSegPill();
+      tpPill.badge.textContent = 'TP';
+      tpPill.badge.style.color = PILL_GREEN;
+      tpPill.el.style.borderColor = PILL_GREEN;
+      attachDrag(tpPill.badge, p, 'tp');
+      attachDrag(tpPill.price, p, 'tp');
+      tpPill.x.remove();
+
       // Persistent shaded zones (entry → SL red, entry → TP green), positioned in
-      // the sync loop from the LIVE bracket prices. Below the buttons/lines (z 4).
+      // the sync loop from the LIVE bracket prices. Below the pills/lines (z 4).
       const slZone = document.createElement('div');
       slZone.style.cssText = `position:absolute;left:0;right:0;top:0;height:0;background:rgba(239,68,68,0.10);pointer-events:none;visibility:hidden;z-index:4;`;
       const tpZone = document.createElement('div');
       tpZone.style.cssText = `position:absolute;left:0;right:0;top:0;height:0;background:rgba(20,184,166,0.10);pointer-events:none;visibility:hidden;z-index:4;`;
       overlay.appendChild(slZone); overlay.appendChild(tpZone);
-      overlay.appendChild(root);
-      btns.push({ p, entry: Number(p.open_price) || 0, el: root, slZone, tpZone });
+      btns.push({ p, entry: Number(p.open_price) || 0, entryPill, slPill, tpPill, slZone, tpZone });
     }
     if (btns.length === 0) {
       try { crossSub?.unsubscribe?.(null, onCross); } catch { /* noop */ }
@@ -998,12 +1043,28 @@ export default function ChartingLibraryChart() {
       // through zoom/pan; the crosshair-locked offset stays constant across a zoom.
       const g = geom();
       if (!g || calibOffset == null) {
-        for (const b of btns) { b.el.style.visibility = 'hidden'; b.slZone.style.visibility = 'hidden'; b.tpZone.style.visibility = 'hidden'; }
+        for (const b of btns) {
+          for (const pill of [b.entryPill, b.slPill, b.tpPill]) pill.el.style.display = 'none';
+          b.slZone.style.visibility = 'hidden'; b.tpZone.style.visibility = 'hidden';
+        }
         return;
       }
       const off = calibOffset;
       const h = containerRef.current?.clientHeight || g.h;
       const live = useTradingStore.getState().positions;
+      const instruments = useTradingStore.getState().instruments;
+      const tick = useTradingStore.getState().prices[sym];
+      const setText = (seg: HTMLDivElement, text: string) => {
+        if (seg.textContent !== text) seg.textContent = text;
+      };
+      /** Park a pill on its price line; false when it would sit off-pane. */
+      const put = (pill: Pill, price: number): boolean => {
+        const y = paneY(price, g) + off;
+        if (!(y > 8) || y > h - 8) { pill.el.style.display = 'none'; return false; }
+        pill.el.style.top = `${y}px`;
+        pill.el.style.display = 'flex';
+        return true;
+      };
       const drawZone = (el: HTMLDivElement, entryY: number, price: unknown) => {
         const pr = Number(price);
         if (!(pr > 0)) { el.style.visibility = 'hidden'; return; }
@@ -1013,12 +1074,49 @@ export default function ChartingLibraryChart() {
         el.style.top = `${top}px`; el.style.height = `${ht}px`; el.style.visibility = 'visible';
       };
       for (const b of btns) {
-        const y = paneY(b.entry, g) + off;
-        if (!(y > 8) || y > h - 8) { b.el.style.visibility = 'hidden'; }
-        else { b.el.style.top = `${y}px`; b.el.style.visibility = 'visible'; }
-        const lp = live.find((x) => x.id === b.p.id);
-        drawZone(b.slZone, y, lp?.stop_loss);
-        drawZone(b.tpZone, y, lp?.take_profit);
+        const lp = live.find((x) => x.id === b.p.id) || b.p;
+        const lotsTxt = String(lp.lots ?? '');
+        const entry = Number(lp.open_price ?? b.entry) || b.entry;
+
+        // Entry pill — P&L at the live market price.
+        if (put(b.entryPill, entry)) {
+          const r = livePnlFor(lp, tick, instruments, sym);
+          const pnl = r ? r.pnl : Number(lp.profit ?? 0);
+          setText(b.entryPill.price, entry.toFixed(digits));
+          setText(b.entryPill.pnl, money(pnl));
+          b.entryPill.pnl.style.color = pnl >= 0 ? PILL_GREEN : PILL_RED;
+          setText(b.entryPill.lots, lotsTxt);
+        }
+
+        // SL / TP — full pill on their own line when set; otherwise the badge
+        // alone parks on the right as a drag-to-create handle.
+        const bracket = (pill: Pill, kind: 'sl' | 'tp', raw: unknown) => {
+          const val = Number(raw);
+          const isSet = val > 0;
+          if (!put(pill, isSet ? val : entry)) return;
+          for (const seg of [pill.price, pill.pnl, pill.lots]) {
+            seg.style.display = isSet ? 'flex' : 'none';
+          }
+          if (isSet) {
+            pill.el.style.left = `${PILL_LEFT_PX}px`;
+            pill.el.style.right = 'auto';
+            const r = livePnlFor(lp, { bid: val, ask: val }, instruments, sym);
+            const at = r ? r.pnl : 0;
+            setText(pill.price, val.toFixed(digits));
+            setText(pill.pnl, money(at));
+            pill.pnl.style.color = at >= 0 ? PILL_GREEN : PILL_RED;
+            setText(pill.lots, lotsTxt);
+          } else {
+            pill.el.style.left = 'auto';
+            pill.el.style.right = `${CLOSE_BTN_RIGHT_PX + (kind === 'tp' ? 34 : 72)}px`;
+          }
+        };
+        bracket(b.slPill, 'sl', lp.stop_loss);
+        bracket(b.tpPill, 'tp', lp.take_profit);
+
+        const entryY = paneY(entry, g) + off;
+        drawZone(b.slZone, entryY, lp.stop_loss);
+        drawZone(b.tpZone, entryY, lp.take_profit);
       }
     };
     raf = requestAnimationFrame(sync);
@@ -1026,7 +1124,10 @@ export default function ChartingLibraryChart() {
     return () => {
       cancelAnimationFrame(raf);
       try { crossSub?.unsubscribe?.(null, onCross); } catch { /* noop */ }
-      for (const b of btns) { for (const el of [b.el, b.slZone, b.tpZone]) { try { overlay.removeChild(el); } catch { /* noop */ } } }
+      for (const b of btns) {
+        const nodes = [b.entryPill.el, b.slPill.el, b.tpPill.el, b.slZone, b.tpZone];
+        for (const el of nodes) { try { overlay.removeChild(el); } catch { /* noop */ } }
+      }
     };
   }, [ready, selectedSymbol, positionsKey]);
 
