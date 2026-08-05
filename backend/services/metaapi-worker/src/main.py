@@ -47,6 +47,21 @@ settings = get_settings()
 POLL_SECONDS = 2.0       # how often each account's terminal state is mirrored
 REFRESH_SECONDS = 30.0   # how often the enabled-links list is re-read from DB
 
+# Every call that goes out over the MetaApi websocket is bounded. The SDK's own
+# resubscribe task can die on its own internal bug (a KeyError while handling a
+# TooManyRequestsException) and leave the connection a zombie: still "open", but
+# no RPC ever resolves. Without a ceiling, one order call then blocks the bridge
+# cycle forever and the link goes silently dead in BOTH directions. (2026-08-05)
+ORDER_TIMEOUT = 30.0
+
+# If a link's task hasn't finished a bridge cycle in this long it is presumed
+# wedged and gets rebuilt. Generous next to POLL_SECONDS so a slow sync or a
+# momentary DB stall never triggers it.
+STALL_SECONDS = 120.0
+
+# Ceiling on the restart backoff for a link that keeps failing.
+RETRY_MAX_SECONDS = 300.0
+
 
 def _norm_symbol(raw: str) -> str:
     """Normalize a broker symbol to the platform symbol (strip suffix like .m)."""
@@ -493,7 +508,8 @@ async def push_outbound(link_id, platform_account_number: str, outbound_mode: st
 
             try:
                 fn = connection.create_market_buy_order if send_buy else connection.create_market_sell_order
-                res = await fn(broker_sym, volume, None, None, opts)
+                res = await asyncio.wait_for(
+                    fn(broker_sym, volume, None, None, opts), timeout=ORDER_TIMEOUT)
                 ticket = (res or {}).get("positionId") or (res or {}).get("orderId")
                 if not ticket:
                     raise RuntimeError(f"broker returned no ticket: {res}")
@@ -503,6 +519,17 @@ async def push_outbound(link_id, platform_account_number: str, outbound_mode: st
                 logger.info("[%s] outbound %s %s %s lots → MT5 ticket %s",
                             platform_account_number, "BUY" if send_buy else "SELL",
                             broker_sym, volume, ticket)
+            except asyncio.TimeoutError:
+                # The send may or may not have reached the broker. 'failed' is
+                # sticky, so this is never retried — a duplicate live order is a
+                # worse outcome than a missed hedge the operator can see.
+                pos.mt5_out_state = "failed"
+                pos.mt5_out_error = (
+                    f"no response from MT5 within {ORDER_TIMEOUT:.0f}s — "
+                    f"check the terminal for an unmatched {broker_sym} order"
+                )
+                logger.error("[%s] outbound order timed out for %s (sent as %s)",
+                             platform_account_number, sym, broker_sym)
             except Exception as e:
                 pos.mt5_out_state = "failed"
                 pos.mt5_out_error = _err_text(e)[:500]
@@ -523,7 +550,9 @@ async def push_outbound(link_id, platform_account_number: str, outbound_mode: st
 
         for pos in closing:
             try:
-                await connection.close_position(pos.mt5_out_ticket, {"magic": OUTBOUND_MAGIC})
+                await asyncio.wait_for(
+                    connection.close_position(pos.mt5_out_ticket, {"magic": OUTBOUND_MAGIC}),
+                    timeout=ORDER_TIMEOUT)
                 pos.mt5_out_state = "closed"
                 pos.mt5_out_error = None
                 logger.info("[%s] outbound closed MT5 ticket %s",
@@ -569,8 +598,19 @@ async def finalize_link(link_id, reason: str = "mt5_unlinked") -> None:
 
 async def run_account(api, metaapi_account_id: str, link_id, platform_account_number: str,
                       mode: str, outbound_mode: str, max_lots,
-                      stop_event: asyncio.Event) -> None:
-    """Connect one MetaApi account and bridge it until stop_event is set."""
+                      stop_event: asyncio.Event, heartbeat: dict | None = None) -> None:
+    """Connect one MetaApi account and bridge it until stop_event is set.
+
+    `heartbeat['t']` is stamped after every completed cycle. The supervisor reads
+    it to tell a live bridge apart from one that is wedged mid-await — the SDK
+    can leave a connection that never resolves another RPC, and a task blocked
+    there looks identical to a healthy one from the outside.
+    """
+    def beat() -> None:
+        if heartbeat is not None:
+            heartbeat["t"] = asyncio.get_running_loop().time()
+
+    beat()
     try:
         # Each stage is written to the link row so the admin panel can show what
         # the connection is actually doing — syncing alone can take minutes, and
@@ -599,6 +639,7 @@ async def run_account(api, metaapi_account_id: str, link_id, platform_account_nu
         logger.info("[%s] synchronized — inbound=%s outbound=%s on platform account %s every %ss",
                     metaapi_account_id, inbound, outbound, platform_account_number, POLL_SECONDS)
         await _set_link_status(metaapi_account_id, "connected")
+        beat()
 
         first_cycle = True
         while not stop_event.is_set():
@@ -617,6 +658,9 @@ async def run_account(api, metaapi_account_id: str, link_id, platform_account_nu
             except Exception as e:
                 logger.exception("[%s] bridge cycle failed", metaapi_account_id)
                 await _set_link_status(metaapi_account_id, "error", str(e))
+            # Stamped whether the cycle succeeded or raised: a cycle that keeps
+            # erroring is a problem for the log, not for the stall watchdog.
+            beat()
             await asyncio.sleep(POLL_SECONDS)
     except asyncio.CancelledError:
         logger.info("[%s] worker stopped", metaapi_account_id)
@@ -655,10 +699,13 @@ async def manager() -> None:
       - disabled / no token  → stop everything (idle)
       - token changed        → restart all connections with the new token
       - links added/removed/changed → start/stop just those
+      - a task that died or stopped completing cycles → rebuilt
     All of this is admin-panel driven; no redeploy needed."""
     from metaapi_cloud_sdk import MetaApi
 
-    workers: dict[str, dict] = {}  # metaapi_account_id -> {task, stop, sig}
+    workers: dict[str, dict] = {}  # metaapi_account_id -> {task, stop, sig, hb, link_id, started}
+    retry: dict[str, dict] = {}    # metaapi_account_id -> {fails, next_at}
+    managed: dict[str, object] = {}  # metaapi_account_id -> link_id, for unlink cleanup
     current_token: str | None = None
     idle_logged = False
 
@@ -692,26 +739,101 @@ async def manager() -> None:
             links, links_ok = [], False
         wanted = {l["metaapi_account_id"]: l for l in links}
 
-        # Stop workers that were removed, disabled, or reconfigured.
+        # ── Health check: drop tasks that died or wedged so the block below
+        # rebuilds them. Previously a worker entry lived forever once created —
+        # `if aid in workers: continue` never asked whether it was still doing
+        # anything — so a single failure killed that link's bridge in BOTH
+        # directions until someone happened to edit its config. That is exactly
+        # what happened on 2026-08-03: the SDK's resubscribe task raised
+        # KeyError('type') handling a TooManyRequestsException, the connection
+        # became a zombie, the next outbound order call never returned, and the
+        # link stayed dead for ~40h. (2026-08-05)
+        now = asyncio.get_running_loop().time()
         for aid in list(workers):
-            gone = aid not in wanted
-            changed = (not gone) and workers[aid]["sig"] != _sig(wanted[aid])
-            if not (gone or changed):
+            w = workers[aid]
+            # A dead task whose link is also gone belongs to the removal block
+            # below — that one still owes it a finalize_link.
+            if aid not in wanted:
                 continue
-            logger.info("[%s] stopping worker (%s)", aid, "removed/disabled" if gone else "changed")
+            healthy = (not w["task"].done()
+                       and now - w["hb"].get("t", now) <= STALL_SECONDS)
+            if healthy:
+                # Only a sustained healthy run clears the backoff. Clearing it
+                # the instant a task starts would defeat it — a link that wedges
+                # right after connecting would retry flat out forever.
+                if now - w["started"] > STALL_SECONDS and retry.pop(aid, None):
+                    logger.info("[%s] bridge healthy again", aid)
+                continue
+            if w["task"].done():
+                exc = None
+                try:
+                    exc = w["task"].exception()
+                except (asyncio.CancelledError, asyncio.InvalidStateError):
+                    pass
+                logger.warning("[%s] worker task ended (%s) — restarting",
+                               aid, exc or "no exception")
+            elif now - w["hb"].get("t", now) > STALL_SECONDS:
+                logger.warning("[%s] no bridge cycle in %.0fs — connection wedged, restarting",
+                               aid, now - w["hb"].get("t", now))
+                w["stop"].set()
+                w["task"].cancel()
+            else:
+                continue
+            # Back off on repeated failures. A genuinely broken account (deleted
+            # on MetaApi, wrong region, bad token) would otherwise be rebuilt
+            # every REFRESH_SECONDS forever — and hammering MetaApi is what
+            # earns the TooManyRequestsException that started all this.
+            r = retry.setdefault(aid, {"fails": 0, "next_at": 0.0})
+            r["fails"] += 1
+            delay = min(REFRESH_SECONDS * (2 ** (r["fails"] - 1)), RETRY_MAX_SECONDS)
+            r["next_at"] = now + delay
+            # 'pending' — the status the admin panel already renders as
+            # "Queued 1/4" with a spinner, and it is literally true: the start
+            # block re-creates this worker once the backoff elapses.
+            await _set_link_status(aid, "pending")
+            del workers[aid]
+            if delay > REFRESH_SECONDS:
+                logger.warning("[%s] failure #%d — next attempt in %.0fs",
+                               aid, r["fails"], delay)
+
+        # Remember every link we manage, so an unlink is finalised even when no
+        # worker entry survives — a link sitting in restart backoff has none,
+        # and its mirrored rows would otherwise stay open forever.
+        for aid, link in wanted.items():
+            managed[aid] = link["id"]
+
+        # Links that disappeared (deleted or disabled). Never act on a failed
+        # links load, or one DB blip would close every mirrored row on the box.
+        if links_ok:
+            for aid in [a for a in managed if a not in wanted]:
+                logger.info("[%s] stopping worker (removed/disabled)", aid)
+                w = workers.pop(aid, None)
+                if w is not None:
+                    w["stop"].set()
+                    w["task"].cancel()
+                link_id = managed.pop(aid)
+                retry.pop(aid, None)
+                if link_id is not None:
+                    await finalize_link(link_id, reason="mt5_unlinked")
+
+        # Stop workers whose config changed — they restart below with the new
+        # settings. A mode flip is `changed`, not gone, so it never finalises.
+        for aid in list(workers):
+            if aid not in wanted or workers[aid]["sig"] == _sig(wanted[aid]):
+                continue
+            logger.info("[%s] stopping worker (changed)", aid)
             workers[aid]["stop"].set()
             workers[aid]["task"].cancel()
-            link_id = workers[aid].get("link_id")
             del workers[aid]
-            # Only finalise on a genuine unlink — and never when the links load
-            # failed, or one DB blip would close every mirrored row on the box.
-            # A mode flip is `changed`, not `gone`, so the cutover never lands here.
-            if gone and links_ok and link_id is not None:
-                await finalize_link(link_id, reason="mt5_unlinked")
+            # A deliberate reconfigure is a fresh start, not a failure.
+            retry.pop(aid, None)
 
         # Start workers for new/changed links.
         for aid, link in wanted.items():
             if aid in workers:
+                continue
+            r = retry.get(aid)
+            if r and asyncio.get_running_loop().time() < r["next_at"]:
                 continue
             stop_event = asyncio.Event()
             region = link.get("region") or default_region
@@ -719,12 +841,14 @@ async def manager() -> None:
             api = MetaApi(current_token, opts)
             mode = link.get("mode") or "mirror"
             outbound = link.get("outbound_mode") or "off"
+            hb = {"t": asyncio.get_running_loop().time()}
             task = asyncio.create_task(
                 run_account(api, aid, link["id"], link["platform_account_number"],
-                            mode, outbound, link.get("max_lots"), stop_event)
+                            mode, outbound, link.get("max_lots"), stop_event, hb)
             )
             workers[aid] = {
-                "task": task, "stop": stop_event, "sig": _sig(link), "link_id": link["id"],
+                "task": task, "stop": stop_event, "sig": _sig(link),
+                "link_id": link["id"], "hb": hb, "started": hb["t"],
             }
             logger.info("[%s] starting worker (inbound=%s, outbound=%s) → platform account %s",
                         aid, mode, outbound, link["platform_account_number"])
