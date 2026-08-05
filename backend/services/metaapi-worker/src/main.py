@@ -62,6 +62,11 @@ STALL_SECONDS = 120.0
 # Ceiling on the restart backoff for a link that keeps failing.
 RETRY_MAX_SECONDS = 300.0
 
+# How long a connection may sit unsynchronized before the whole account is
+# rebuilt. Brief drops are normal and the SDK recovers on its own; past this it
+# has had its chance and the socket is not coming back.
+UNHEALTHY_SECONDS = 45.0
+
 
 def _norm_symbol(raw: str) -> str:
     """Normalize a broker symbol to the platform symbol (strip suffix like .m)."""
@@ -598,13 +603,21 @@ async def finalize_link(link_id, reason: str = "mt5_unlinked") -> None:
 
 async def run_account(api, metaapi_account_id: str, link_id, platform_account_number: str,
                       mode: str, outbound_mode: str, max_lots,
-                      stop_event: asyncio.Event, heartbeat: dict | None = None) -> None:
+                      stop_event: asyncio.Event, heartbeat: dict | None = None,
+                      baseline_open: bool = True) -> None:
     """Connect one MetaApi account and bridge it until stop_event is set.
 
     `heartbeat['t']` is stamped after every completed cycle. The supervisor reads
     it to tell a live bridge apart from one that is wedged mid-await — the SDK
     can leave a connection that never resolves another RPC, and a task blocked
     there looks identical to a healthy one from the outside.
+
+    `baseline_open` decides what happens to platform positions that are already
+    open when the task starts. True (a new link or a config change) leaves them
+    alone — switching outbound on must not fire off the whole existing book.
+    False (an automatic rebuild after a crash or a lost connection) sends them,
+    because they may well be the trades that were opened while the bridge was
+    down and never punched.
     """
     def beat() -> None:
         if heartbeat is not None:
@@ -641,10 +654,63 @@ async def run_account(api, metaapi_account_id: str, link_id, platform_account_nu
         await _set_link_status(metaapi_account_id, "connected")
         beat()
 
-        first_cycle = True
+        first_cycle = baseline_open
+        unhealthy_since: float | None = None
         while not stop_event.is_set():
             try:
                 ts = connection.terminal_state
+
+                # ── Is this connection actually alive? ───────────────────────
+                # The loop spinning is NOT proof of health. The socket can drop
+                # ("PONG response has not been received, aborting") while the SDK
+                # keeps the connection object around, and then terminal_state
+                # reports an empty book and every RPC hangs until it times out.
+                #
+                # Acting on that state is worse than doing nothing:
+                #   - reconcile() would see positions == [] and close EVERY
+                #     mirrored row, inventing closes MT5 never made;
+                #   - push_outbound() would fire orders into a dead socket and
+                #     burn ORDER_TIMEOUT per position, marking each 'failed'.
+                # Both happened on 2026-08-05: the socket died at 02:39, and the
+                # 02:40 platform trade timed out instead of reaching MT5.
+                healthy = bool(
+                    getattr(connection, "synchronized", False)
+                    and getattr(ts, "connected", False)
+                    and getattr(ts, "connected_to_broker", False)
+                )
+                loop_now = asyncio.get_running_loop().time()
+                if not healthy:
+                    if unhealthy_since is None:
+                        unhealthy_since = loop_now
+                        logger.warning(
+                            "[%s] connection not synchronized (connected=%s broker=%s) "
+                            "— pausing the bridge, no positions will be touched",
+                            metaapi_account_id, getattr(ts, "connected", None),
+                            getattr(ts, "connected_to_broker", None))
+                        await _set_link_status(metaapi_account_id, "syncing")
+                    down_for = loop_now - unhealthy_since
+                    if down_for > UNHEALTHY_SECONDS:
+                        # The SDK's own recovery has had its chance. Leave the
+                        # loop so the task ends and the supervisor rebuilds the
+                        # account from scratch. A `raise` here would be caught
+                        # by this cycle's own except and just keep spinning.
+                        logger.error("[%s] connection unsynchronized for %.0fs — rebuilding",
+                                     metaapi_account_id, down_for)
+                        await _set_link_status(
+                            metaapi_account_id, "error",
+                            f"lost sync with MT5 for {down_for:.0f}s — reconnecting")
+                        break
+                    # Deliberately no beat(): if raising somehow doesn't end the
+                    # task, the stall watchdog still rebuilds it.
+                    await asyncio.sleep(POLL_SECONDS)
+                    continue
+
+                if unhealthy_since is not None:
+                    logger.info("[%s] connection resynchronized after %.0fs",
+                                metaapi_account_id, loop_now - unhealthy_since)
+                    unhealthy_since = None
+                    await _set_link_status(metaapi_account_id, "connected")
+
                 positions = list(getattr(ts, "positions", None) or [])
                 account_info = getattr(ts, "account_information", None) or {}
                 if inbound != "off":
@@ -706,6 +772,7 @@ async def manager() -> None:
     workers: dict[str, dict] = {}  # metaapi_account_id -> {task, stop, sig, hb, link_id, started}
     retry: dict[str, dict] = {}    # metaapi_account_id -> {fails, next_at}
     managed: dict[str, object] = {}  # metaapi_account_id -> link_id, for unlink cleanup
+    recovering: set[str] = set()   # rebuilt after a failure — skip the outbound baseline
     current_token: str | None = None
     idle_logged = False
 
@@ -792,6 +859,10 @@ async def manager() -> None:
             # block re-creates this worker once the backoff elapses.
             await _set_link_status(aid, "pending")
             del workers[aid]
+            # This is a recovery, not an operator turning outbound on: any
+            # platform position opened while we were down still has to be
+            # punched, so the restart must NOT baseline it away.
+            recovering.add(aid)
             if delay > REFRESH_SECONDS:
                 logger.warning("[%s] failure #%d — next attempt in %.0fs",
                                aid, r["fails"], delay)
@@ -825,8 +896,10 @@ async def manager() -> None:
             workers[aid]["stop"].set()
             workers[aid]["task"].cancel()
             del workers[aid]
-            # A deliberate reconfigure is a fresh start, not a failure.
+            # A deliberate reconfigure is a fresh start, not a failure — and it
+            # gets a fresh outbound baseline.
             retry.pop(aid, None)
+            recovering.discard(aid)
 
         # Start workers for new/changed links.
         for aid, link in wanted.items():
@@ -842,9 +915,12 @@ async def manager() -> None:
             mode = link.get("mode") or "mirror"
             outbound = link.get("outbound_mode") or "off"
             hb = {"t": asyncio.get_running_loop().time()}
+            baseline_open = aid not in recovering
+            recovering.discard(aid)
             task = asyncio.create_task(
                 run_account(api, aid, link["id"], link["platform_account_number"],
-                            mode, outbound, link.get("max_lots"), stop_event, hb)
+                            mode, outbound, link.get("max_lots"), stop_event, hb,
+                            baseline_open)
             )
             workers[aid] = {
                 "task": task, "stop": stop_event, "sig": _sig(link),
