@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from packages.common.src.database import AsyncSessionLocal
 from packages.common.src.models import (
     Position, PositionStatus, TradingAccount, Instrument,
-    OrderSide, SwapConfig, Notification, Transaction, User,
+    OrderSide, SwapConfig, Notification, Transaction, TradeHistory, User,
 )
 from packages.common.src.redis_client import redis_client, PriceChannel
 from packages.common.src.kafka_client import produce_event, KafkaTopics
@@ -184,6 +184,49 @@ class RiskEngine:
             account.margin_used = max(Decimal("0"), account.margin_used - margin_release)
             account.equity = account.balance + account.credit
             account.free_margin = account.equity - account.margin_used
+
+            # A stop-out is a real closed trade: it has to land in Trade History
+            # and in the ledger like any other. Without these the position simply
+            # vanished from the client's account while the balance moved — the
+            # same defect the b-book SL/TP monitor had. (2026-08-05)
+            closed_at = pos.closed_at
+            db.add(TradeHistory(
+                position_id=pos.id,
+                account_id=pos.account_id,
+                instrument_id=pos.instrument_id,
+                side=pos.side,
+                lots=pos.lots,
+                open_price=pos.open_price,
+                close_price=close_price,
+                swap=pos.swap or Decimal("0"),
+                commission=pos.commission or Decimal("0"),
+                profit=profit,
+                close_reason="margin",
+                opened_at=pos.created_at,
+                closed_at=closed_at,
+            ))
+            db.add(Transaction(
+                user_id=account.user_id,
+                account_id=account.id,
+                type="profit" if profit >= 0 else "loss",
+                amount=profit,
+                balance_after=account.balance,
+                reference_id=pos.id,
+                description=(
+                    f"Stop-out: {pos.instrument.symbol} {pos.side.value} "
+                    f"{pos.lots} lots @ {close_price}"
+                ),
+            ))
+            db.add(Notification(
+                user_id=account.user_id,
+                title=f"Stop-out — {pos.instrument.symbol}",
+                message=(
+                    f"{pos.side.value.upper()} {pos.lots} lots closed @ {close_price} "
+                    f"to restore margin | P&L: "
+                    f"{'+' if profit >= 0 else '-'}${abs(float(profit)):.2f}"
+                ),
+                type="trade",
+            ))
 
             await redis_client.publish(f"account:{account.id}", json.dumps({
                 "type": "stop_out",
