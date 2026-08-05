@@ -13,18 +13,17 @@ from decimal import Decimal
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import select, and_
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.common.src.database import AsyncSessionLocal
 from packages.common.src.models import (
     Order, OrderType, OrderSide, OrderStatus,
     Position, PositionStatus, TradingAccount, Instrument,
-    SpreadConfig, ChargeConfig, Transaction, User,
+    SpreadConfig, ChargeConfig,
 )
 from packages.common.src.redis_client import redis_client, PriceChannel
 from packages.common.src.kafka_client import produce_event, KafkaTopics
-from packages.common.src import corecen_trade_client
 
 logger = logging.getLogger("b-book-engine")
 
@@ -37,9 +36,18 @@ class MatchingEngine:
         self._running = True
         logger.info("B-Book Matching Engine started")
 
+        # SL/TP is NOT monitored here. The gateway's sltp_engine owns it — it is
+        # the only closer that writes the trade_history row, the transaction
+        # ledger entry and the client notification, and that fills at the SL/TP
+        # price rather than at market.
+        #
+        # Both engines used to run: this one polled at 0.1s and the gateway's at
+        # 1s, so this one always won the race and closed the position with none
+        # of that bookkeeping. The trade vanished from the open list, the balance
+        # moved, and nothing ever appeared in Trade History — which is exactly the
+        # "SL hit but the trade didn't close" the client reported. (2026-08-05)
         await asyncio.gather(
             self._monitor_pending_orders(),
-            self._monitor_sl_tp(),
         )
 
     async def stop(self):
@@ -227,130 +235,3 @@ class MatchingEngine:
             "price": str(fill_price),
             "lots": str(order.lots),
         }))
-
-    async def _monitor_sl_tp(self):
-        """Monitor open positions for SL/TP hits."""
-        logger.info("SL/TP monitor started")
-        while self._running:
-            try:
-                async with AsyncSessionLocal() as db:
-                    result = await db.execute(
-                        select(Position).where(
-                            Position.status == PositionStatus.OPEN,
-                            # MT5-mirrored rows are exits owned by MT5 — never close them here.
-                            Position.mt5_link_id.is_(None),
-                            (Position.stop_loss.isnot(None)) | (Position.take_profit.isnot(None))
-                        )
-                    )
-                    positions = result.scalars().all()
-
-                    for pos in positions:
-                        price_data = await self._get_price(pos.instrument.symbol)
-                        if not price_data:
-                            continue
-
-                        bid, ask = price_data
-                        close_price = bid if pos.side == OrderSide.BUY else ask
-
-                        sl_hit = False
-                        tp_hit = False
-
-                        if pos.stop_loss:
-                            if pos.side == OrderSide.BUY and close_price <= pos.stop_loss:
-                                sl_hit = True
-                            elif pos.side == OrderSide.SELL and close_price >= pos.stop_loss:
-                                sl_hit = True
-
-                        if pos.take_profit:
-                            if pos.side == OrderSide.BUY and close_price >= pos.take_profit:
-                                tp_hit = True
-                            elif pos.side == OrderSide.SELL and close_price <= pos.take_profit:
-                                tp_hit = True
-
-                        if sl_hit or tp_hit:
-                            await self._close_position(pos, close_price, "sl" if sl_hit else "tp", db)
-
-                    await db.commit()
-
-            except Exception as e:
-                logger.error(f"SL/TP monitor error: {e}")
-
-            await asyncio.sleep(0.1)
-
-    async def _close_position(self, pos: Position, close_price: Decimal, reason: str, db: AsyncSession):
-        from packages.common.src.trading_service import quote_to_account_pnl
-        instrument = pos.instrument
-        if pos.side == OrderSide.BUY:
-            profit = (close_price - pos.open_price) * pos.lots * instrument.contract_size
-        else:
-            profit = (pos.open_price - close_price) * pos.lots * instrument.contract_size
-        profit = quote_to_account_pnl(
-            profit,
-            getattr(instrument, "base_currency", None),
-            getattr(instrument, "quote_currency", None),
-            close_price,
-            symbol=getattr(instrument, "symbol", None),
-        )
-
-        pos.status = PositionStatus.CLOSED
-        pos.close_price = close_price
-        pos.profit = profit
-        pos.closed_at = datetime.now(timezone.utc)
-
-        account = await db.get(TradingAccount, pos.account_id)
-        if account:
-            account.balance += profit
-            margin_release = (pos.lots * instrument.contract_size * pos.open_price) / Decimal(str(account.leverage))
-            account.margin_used = max(Decimal("0"), account.margin_used - margin_release)
-            account.equity = account.balance + account.credit
-            account.free_margin = account.equity - account.margin_used
-
-        logger.info(
-            f"Position {pos.id} closed by {reason}: {instrument.symbol} "
-            f"{pos.side.value} @ {close_price}, profit: {profit}"
-        )
-
-        await redis_client.publish(f"account:{pos.account_id}", json.dumps({
-            "type": f"position_closed_{reason}",
-            "position_id": str(pos.id),
-            "symbol": instrument.symbol,
-            "close_price": str(close_price),
-            "profit": str(profit),
-        }))
-
-        await produce_event(KafkaTopics.TRADES, str(pos.id), {
-            "event": f"position_closed_{reason}",
-            "position_id": str(pos.id),
-            "account_id": str(pos.account_id),
-            "symbol": instrument.symbol,
-            "profit": str(profit),
-        })
-
-        # ── A-Book: forward SL/TP close to Corecen LP ────────────────────
-        _pos_id = str(pos.id)
-        _cp = float(close_price)
-        _pnl = float(profit)
-        _reason_upper = reason.upper()
-        _user_id = account.user_id if account else None
-        _is_demo = bool(account.is_demo) if account else True
-
-        async def _forward_sltp_close():
-            try:
-                # Demo accounts never route to LP, regardless of user's book_type.
-                if not _user_id or _is_demo:
-                    return
-                async with AsyncSessionLocal() as bg_db:
-                    u = (await bg_db.execute(
-                        select(User).where(User.id == _user_id)
-                    )).scalar_one_or_none()
-                    if u and (u.book_type or "B") == "A":
-                        await corecen_trade_client.forward_trade_close(
-                            position_id=_pos_id,
-                            close_price=_cp,
-                            pnl=_pnl,
-                            closed_by=_reason_upper,
-                        )
-            except Exception as exc:
-                logger.error("[A-BOOK] B-book engine SL/TP close forward failed: %s", exc)
-
-        asyncio.create_task(_forward_sltp_close())

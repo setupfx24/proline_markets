@@ -1,8 +1,14 @@
 """SL/TP Monitoring Engine — Auto-closes positions when Stop Loss or Take Profit is hit.
 
-Subscribes to the Redis price channel and checks all open positions with SL/TP
-against every incoming tick. Closes positions at the SL/TP price (not market price)
-to match MT5 behavior.
+Reads the latest tick for every symbol that actually has a bracketed position and
+checks each one. Closes at the SL/TP price (not market price) to match MT5
+behaviour and to honour the exact level — and the exact P&L — the chart pill
+showed the client when they set it.
+
+This is the ONLY SL/TP closer in the platform. The b-book matching engine used to
+run a second, faster monitor that closed at market and skipped the trade_history
+row, the ledger entry and the notification; it always won the race, so brackets
+appeared to "not close". That monitor is gone. (2026-08-05)
 """
 import asyncio
 import json
@@ -23,7 +29,10 @@ from packages.common.src import corecen_trade_client
 
 logger = logging.getLogger("gateway.sltp")
 
-CHECK_INTERVAL = 1.0
+# Now that this is the only closer, the old 1s poll would be a real slippage cost
+# on a fast move. Ticks land far more often than this, so a bracket fires within
+# roughly a fifth of a second of being breached.
+CHECK_INTERVAL = 0.2
 
 
 def _side_val(side) -> str:
@@ -54,36 +63,37 @@ class SLTPEngine:
     async def _run(self):
         while self._running:
             try:
-                await self._load_prices()
                 await self._check_positions()
-                await asyncio.sleep(CHECK_INTERVAL)
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.error("SL/TP engine error: %s", e)
                 await asyncio.sleep(3)
+                continue
+            await asyncio.sleep(CHECK_INTERVAL)
 
-    async def _load_prices(self):
-        """Load latest prices directly from Redis keys instead of pubsub."""
+    async def _load_prices(self, symbols: set[str]):
+        """Refresh the tick cache for just the symbols we need to evaluate.
+
+        Only bracketed positions matter, so this reads those keys by name rather
+        than doing a `KEYS tick:*` sweep of the whole keyspace every cycle.
+        """
+        if not symbols:
+            return
         try:
-            keys = await redis_client.keys("tick:*")
-            if not keys:
-                return
-            values = await redis_client.mget(keys)
-            for val in values:
-                if val:
-                    try:
-                        data = json.loads(val)
-                        self._prices[data["symbol"]] = data
-                    except (json.JSONDecodeError, KeyError):
-                        pass
+            ordered = sorted(symbols)
+            values = await redis_client.mget([f"tick:{s}" for s in ordered])
+            for sym, val in zip(ordered, values):
+                if not val:
+                    continue
+                try:
+                    self._prices[sym] = json.loads(val)
+                except json.JSONDecodeError:
+                    pass
         except Exception as e:
             logger.warning("Failed to load prices: %s", e)
 
     async def _check_positions(self):
-        if not self._prices:
-            return
-
         async with AsyncSessionLocal() as db:
             result = await db.execute(
                 select(Position)
@@ -95,45 +105,65 @@ class SLTPEngine:
                 )
             )
             positions = result.scalars().all()
+            if not positions:
+                return
 
-            if positions:
-                logger.info("Checking %d positions with SL/TP", len(positions))
+            await self._load_prices({
+                pos.instrument.symbol for pos in positions if pos.instrument
+            })
 
+            closed = 0
             for pos in positions:
-                symbol = pos.instrument.symbol if pos.instrument else None
-                if not symbol or symbol not in self._prices:
-                    continue
-
-                tick = self._prices[symbol]
-                bid = Decimal(str(tick["bid"]))
-                ask = Decimal(str(tick["ask"]))
-                side = _side_val(pos.side)
-
-                triggered = None
-
-                if pos.stop_loss:
-                    sl = Decimal(str(pos.stop_loss))
-                    if side == "buy" and sl < pos.open_price and bid <= sl:
-                        triggered = "sl"
-                    elif side == "sell" and sl > pos.open_price and ask >= sl:
-                        triggered = "sl"
-
-                if not triggered and pos.take_profit:
-                    tp = Decimal(str(pos.take_profit))
-                    if side == "buy" and tp > pos.open_price and bid >= tp:
-                        triggered = "tp"
-                    elif side == "sell" and tp < pos.open_price and ask <= tp:
-                        triggered = "tp"
-
-                if triggered:
-                    # Close at the SL/TP price itself (not market price) — MT5 behavior
-                    if triggered == "sl":
-                        close_price = Decimal(str(pos.stop_loss))
-                    else:
-                        close_price = Decimal(str(pos.take_profit))
-                    await self._close_position(db, pos, close_price, triggered)
+                # One unusable row (missing instrument, malformed tick) must never
+                # abort the sweep and leave every other bracket unchecked.
+                try:
+                    if await self._maybe_close(db, pos):
+                        closed += 1
+                except Exception as e:
+                    logger.error("SL/TP check failed for position %s: %s", pos.id, e)
 
             await db.commit()
+            if closed:
+                logger.info("Closed %d position(s) on SL/TP", closed)
+
+    async def _maybe_close(self, db: AsyncSession, pos: Position) -> bool:
+        """Evaluate one position's brackets; close it if either is breached."""
+        symbol = pos.instrument.symbol if pos.instrument else None
+        tick = self._prices.get(symbol) if symbol else None
+        if not tick:
+            return False
+
+        bid = Decimal(str(tick["bid"]))
+        ask = Decimal(str(tick["ask"]))
+        side = _side_val(pos.side)
+
+        # A BUY is closed on the bid, a SELL on the ask — the same side of the
+        # book the client would actually get out on.
+        exit_price = bid if side == "buy" else ask
+
+        triggered = None
+
+        # No "SL must be below entry" sanity gate here: a stop moved up to
+        # break-even or into profit is a normal trailing stop and must still
+        # fire. Level crossed is the only thing that matters.
+        if pos.stop_loss:
+            sl = Decimal(str(pos.stop_loss))
+            if (side == "buy" and exit_price <= sl) or (side == "sell" and exit_price >= sl):
+                triggered = "sl"
+
+        if not triggered and pos.take_profit:
+            tp = Decimal(str(pos.take_profit))
+            if (side == "buy" and exit_price >= tp) or (side == "sell" and exit_price <= tp):
+                triggered = "tp"
+
+        if not triggered:
+            return False
+
+        # Fill at the level itself, not at market — that is what the client was
+        # shown when they placed it, so the realised P&L matches the pill exactly.
+        close_price = Decimal(str(pos.stop_loss if triggered == "sl" else pos.take_profit))
+        await self._close_position(db, pos, close_price, triggered)
+        return True
 
     async def _close_position(
         self, db: AsyncSession, pos: Position, close_price: Decimal, reason: str

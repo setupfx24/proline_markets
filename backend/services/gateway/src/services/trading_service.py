@@ -699,20 +699,44 @@ async def modify_position(position_id: UUID, req, user_id: UUID, db: AsyncSessio
     sv = side_val(pos.side)
     updated = False
 
-    if req.stop_loss is not None:
-        if sv == "buy" and req.stop_loss >= pos.open_price:
-            raise HTTPException(status_code=400, detail="BUY SL must be below open price")
-        if sv == "sell" and req.stop_loss <= pos.open_price:
-            raise HTTPException(status_code=400, detail="SELL SL must be above open price")
-        pos.stop_loss = req.stop_loss
+    # An omitted field leaves that bracket untouched; an explicit null clears it.
+    # Both arrive as None, so only `fields_set` can tell them apart — without this
+    # the chart's "leave blank to remove" silently did nothing. (2026-08-05)
+    sent = getattr(req, "model_fields_set", None) or getattr(req, "__fields_set__", set())
+
+    # Brackets are validated against the CURRENT market, not the entry price: a
+    # stop trailed up to break-even or into profit is legitimate, and the chart
+    # lets the client drag it there.
+    exit_price = None
+    if pos.instrument is not None and ("stop_loss" in sent or "take_profit" in sent):
+        try:
+            bid, ask = await get_current_price(pos.instrument.symbol)
+            exit_price = bid if sv == "buy" else ask
+        except Exception:
+            exit_price = None  # no tick — skip the side check rather than block
+
+    if "stop_loss" in sent:
+        if req.stop_loss is None:
+            pos.stop_loss = None
+        else:
+            if exit_price is not None:
+                if sv == "buy" and req.stop_loss >= exit_price:
+                    raise HTTPException(status_code=400, detail="BUY SL must be below the current price")
+                if sv == "sell" and req.stop_loss <= exit_price:
+                    raise HTTPException(status_code=400, detail="SELL SL must be above the current price")
+            pos.stop_loss = req.stop_loss
         updated = True
 
-    if req.take_profit is not None:
-        if sv == "buy" and req.take_profit <= pos.open_price:
-            raise HTTPException(status_code=400, detail="BUY TP must be above open price")
-        if sv == "sell" and req.take_profit >= pos.open_price:
-            raise HTTPException(status_code=400, detail="SELL TP must be below open price")
-        pos.take_profit = req.take_profit
+    if "take_profit" in sent:
+        if req.take_profit is None:
+            pos.take_profit = None
+        else:
+            if exit_price is not None:
+                if sv == "buy" and req.take_profit <= exit_price:
+                    raise HTTPException(status_code=400, detail="BUY TP must be above the current price")
+                if sv == "sell" and req.take_profit >= exit_price:
+                    raise HTTPException(status_code=400, detail="SELL TP must be below the current price")
+            pos.take_profit = req.take_profit
         updated = True
 
     if updated:
