@@ -69,9 +69,18 @@ UNHEALTHY_SECONDS = 45.0
 
 
 def _norm_symbol(raw: str) -> str:
-    """Normalize a broker symbol to the platform symbol (strip suffix like .m)."""
+    """Normalize a broker symbol to the platform symbol.
+
+    Strips the broker suffix (XAUUSD.m → XAUUSD) and then maps the broker's own
+    naming onto ours (GOLD → XAUUSD, SILVER → XAGUSD). Without the second step
+    every mirrored metal landed on an auto-created instrument named after the
+    broker: no price feed, contract_size defaulted to the FX 100000 instead of
+    100/5000, and the client saw "SILVER" next to the platform's own XAGUSD.
+    """
     s = (raw or "").upper().strip()
-    return s.split(".")[0] if "." in s else s
+    if "." in s:
+        s = s.split(".")[0]
+    return _INBOUND_ALIASES.get(s, s)
 
 
 def _dec(v, default="0") -> Decimal:
@@ -114,6 +123,19 @@ _OUTBOUND_ALIASES = {
     "JPN225": ("JPN225", "JP225", "NIKKEI"),
     "AUS200": ("AUS200", "AU200", "ASX200"),
 }
+
+
+# The same table read the other way: broker name → platform symbol, for INBOUND
+# mirroring. Built from _OUTBOUND_ALIASES so the two can never drift apart.
+_INBOUND_ALIASES: dict[str, str] = {}
+for _platform, _aliases in _OUTBOUND_ALIASES.items():
+    for _alias in _aliases:
+        _INBOUND_ALIASES.setdefault(_alias, _platform)
+# A name that is itself one of our platform symbols always maps to itself —
+# NAS100 and US100 list each other, and neither should be rewritten.
+for _platform in _OUTBOUND_ALIASES:
+    _INBOUND_ALIASES[_platform] = _platform
+del _platform, _aliases, _alias
 
 
 def _resolve_broker_symbol(symbol: str, broker_symbols: dict[str, str]) -> str:
