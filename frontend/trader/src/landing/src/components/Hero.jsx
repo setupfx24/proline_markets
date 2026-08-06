@@ -1,11 +1,9 @@
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { ArrowUpRight, Play } from "lucide-react";
-import { ScrubSequence } from "@/components/ScrubSequence";
 import { LiveTickerBar } from "@/components/LiveTickerBar";
 import { BackgroundPaths } from "@/components/ui/background-paths";
 import { Button } from "@/components/ui/button";
-import { FRAME_COUNT, frameUrl } from "@/lib/constants";
 import { HERO_SLIDES, BRAND } from "@/lib/forexData";
 
 const SLIDE_DURATION = 6000;
@@ -24,13 +22,11 @@ export function Hero({ scrollRef }) {
   return (
     <section ref={scrollRef} className="relative h-screen bg-background">
       <div className="relative h-screen w-full overflow-hidden">
+        {/* The hero background is the animated path field alone. It used to sit
+            under a 121-frame scroll-scrub video of a car, which was dropped:
+            those frames were 121 separate image requests on every page load,
+            and none of it said anything about the product. */}
         <BackgroundPaths className="z-0" />
-        <ScrubSequence
-          frameCount={FRAME_COUNT}
-          frameUrl={frameUrl}
-          scrollTargetRef={scrollRef}
-          className="absolute inset-0 w-full h-full z-[1]"
-        />
         <p className="sr-only">
           {BRAND.name} — {BRAND.tagline}.
         </p>
