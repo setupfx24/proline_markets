@@ -1,10 +1,22 @@
 import { useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { motion, useScroll, useMotionValueEvent, AnimatePresence } from "motion/react";
-import { ArrowUpRight, Menu, X, Download } from "lucide-react";
+import { ArrowUpRight, Menu, X, Download, Monitor } from "lucide-react";
 
 // Android APK served as a static file from the trader frontend's public/ dir.
 const APK_DOWNLOAD_HREF = "/proline_apk.apk";
+// Desktop terminal installers — same convention as the APK above: drop the
+// built files into frontend/trader/public/ and they are served from the root.
+//
+// hari_deskterminal builds them under VERSIONED names
+// (ProlineMarketsTerminal-Setup-1.0.2.exe, ProlineMarketsTerminal-1.0.2-universal.dmg).
+// Publish them under a stable name instead — otherwise every version bump
+// silently 404s this link until someone remembers to edit the site too.
+//
+// No macOS constant yet on purpose: that build is unpublished and its row below
+// is inert. When it ships, add "/ProlineMarketsTerminal.dmg" and drop the
+// `soon` flag rather than pointing the link at a file that is not there.
+const DESKTOP_WINDOWS_HREF = "/ProlineMarketsTerminal-Setup.exe";
 import { Button } from "@/components/ui/button";
 import { NAV_ITEMS, HEADER_BUTTONS, BRAND } from "@/lib/forexData";
 
@@ -130,6 +142,107 @@ function DesktopItem({ item, pathname }) {
   );
 }
 
+// lucide dropped brand marks, so the two OS logos are inline paths.
+function WindowsIcon({ className }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden className={className}>
+      <path d="M0 3.449 9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801" />
+    </svg>
+  );
+}
+
+function AppleIcon({ className }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden className={className}>
+      <path d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.476-4.494 2.59-4.559-1.423-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701" />
+    </svg>
+  );
+}
+
+// Round accent button in the header that drops the two desktop-terminal builds.
+// Hover opens it like the nav menus; click also toggles so touch/keyboard users
+// are not locked out of a hover-only control.
+function DesktopTerminalMenu() {
+  const [open, setOpen] = useState(false);
+
+  // The macOS build is not published yet, so its row is inert rather than a
+  // link — a download that 404s reads as a broken site, "Coming soon" does not.
+  const items = [
+    { href: DESKTOP_WINDOWS_HREF, label: "Download for Windows", Icon: WindowsIcon },
+    { href: null,                 label: "Download for macOS",   Icon: AppleIcon, soon: true },
+  ];
+
+  return (
+    <div
+      className="relative"
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+    >
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        aria-haspopup="menu"
+        aria-label="Download the desktop terminal"
+        title="Desktop terminal"
+        className="size-9 rounded-full bg-primary text-primary-foreground flex items-center justify-center transition-transform hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+      >
+        <Monitor className="size-4" />
+      </button>
+
+      {/* Invisible bridge so the cursor can cross the gap into the menu */}
+      {open && <div className="absolute right-0 top-full h-2 w-full" aria-hidden />}
+
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 6 }}
+            transition={{ duration: 0.18 }}
+            className="absolute right-0 top-full pt-2 min-w-[260px] z-[60]"
+          >
+            <div
+              role="menu"
+              className="rounded-2xl p-2 shadow-2xl border border-border bg-popover text-popover-foreground"
+            >
+              <div className="px-3 pt-1.5 pb-2 text-[11px] font-body uppercase tracking-[0.14em] text-popover-foreground/50">
+                Desktop Terminal
+              </div>
+              {items.map(({ href, label, Icon, soon }) =>
+                soon ? (
+                  <div
+                    key={label}
+                    aria-disabled="true"
+                    className="flex items-center gap-3 px-3 py-2.5 text-sm font-body rounded-lg text-popover-foreground/40 cursor-default"
+                  >
+                    <Icon className="size-4 shrink-0" />
+                    {label}
+                    <span className="ml-auto text-[10px] uppercase tracking-[0.12em] rounded-full px-2 py-0.5 bg-white/[0.08] text-popover-foreground/55">
+                      Soon
+                    </span>
+                  </div>
+                ) : (
+                  <a
+                    key={label}
+                    href={href}
+                    download
+                    onClick={() => setOpen(false)}
+                    className="flex items-center gap-3 px-3 py-2.5 text-sm font-body rounded-lg transition-colors cursor-pointer text-popover-foreground/80 hover:text-popover-foreground hover:bg-white/[0.08]"
+                  >
+                    <Icon className="size-4 shrink-0" />
+                    {label}
+                  </a>
+                )
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
 export function Navbar() {
   const [scrolled, setScrolled] = useState(false);
   const [open, setOpen]         = useState(false);
@@ -172,6 +285,7 @@ export function Navbar() {
           </div>
 
           <div className="hidden lg:flex items-center gap-2">
+            <DesktopTerminalMenu />
             <a
               href={APK_DOWNLOAD_HREF}
               download
@@ -271,6 +385,19 @@ export function Navbar() {
                     Download APK
                   </a>
                 </Button>
+                <Button variant="heroGlass" asChild className="w-full">
+                  <a href={DESKTOP_WINDOWS_HREF} download onClick={() => setOpen(false)}>
+                    <WindowsIcon className="mr-1 size-4" />
+                    Terminal for Windows
+                  </a>
+                </Button>
+                <div className="w-full flex items-center justify-center gap-2 rounded-md border border-border/60 px-4 py-2 text-sm text-foreground/40">
+                  <AppleIcon className="size-4" />
+                  Terminal for macOS
+                  <span className="text-[10px] uppercase tracking-[0.12em] rounded-full px-2 py-0.5 bg-white/[0.08] text-foreground/55">
+                    Soon
+                  </span>
+                </div>
                 <Button variant="heroGlass" asChild className="w-full">
                   <a href={HEADER_BUTTONS.clientPortal.href} onClick={() => setOpen(false)}>
                     {HEADER_BUTTONS.clientPortal.label}
