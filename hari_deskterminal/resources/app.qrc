@@ -1,0 +1,7 @@
+<!DOCTYPE RCC>
+<RCC version="1.0">
+    <qresource prefix="/">
+        <file>prolinemarket-256.png</file>
+        <file>prolinemarket.ico</file>
+    </qresource>
+</RCC>

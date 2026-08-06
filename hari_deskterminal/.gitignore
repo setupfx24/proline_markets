@@ -1,0 +1,48 @@
+# ---- build output ----
+# build-msvc/ also holds the deployed copy of web/, the Qt runtime DLLs and
+# vc_redist.x64.exe — none of it belongs in the repo, and Qt6WebEngineCore.dll
+# alone is 147 MB (over GitHub's 100 MB per-file limit).
+#
+# build-macos/ is the same story on the other platform and needs its own line,
+# since the pattern above only matches the exact names: the .app bundle inside
+# it is 553 MB, macdeployqt having copied every Qt framework and the whole
+# Chromium helper into it, and QtWebEngineCore alone clears GitHub's limit.
+build/
+build-msvc/
+build-macos/
+dist/
+
+# ---- logs / scratch ----
+aqtinstall.log
+chart-diag.log
+theme-dbg.log
+layout-dbg.log
+*.log
+
+# ---- CMake / IDE ----
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+*_autogen/
+.ninja_deps
+.ninja_log
+build.ninja
+.vs/
+.vscode/
+*.user
+
+# ---- local config ----
+config.json
+
+# ---- vendored TradingView Charting Library ----
+# NOT published: the Charting Library is licensed, not open source, and its
+# licence does not permit redistribution. This repo is public, so the library is
+# excluded and each developer drops their own copy into web/vendor/charting_library/.
+# (If the repo is ever made private and the licence allows it, remove this line.)
+#
+# The whole vendor/ tree is excluded, not just charting_library/: vendor/datafeeds/
+# ships inside the same licensed Advanced Charts distribution and carries no
+# open-source licence either, so publishing it here would be the same violation
+# in a folder the original rule happened not to name. Nothing loads it anyway —
+# the chart is fed by our own web/pm_datafeed.js.
+web/vendor/

@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Info.plist template for the macOS bundle. CMake fills the @VARS@ in
+  (configure_file, @ONLY) — see the APPLE block in CMakeLists.txt.
+
+  Keep the version in step with app.rc's VERSIONINFO and installer.iss's
+  AppVersion: all three describe the same release, and the website's download
+  links carry the number in the filename.
+-->
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>@PM_APP_NAME@</string>
+    <key>CFBundleDisplayName</key>
+    <string>@PM_APP_NAME@</string>
+    <key>CFBundleExecutable</key>
+    <string>@PM_APP_NAME@</string>
+    <key>CFBundleIdentifier</key>
+    <string>@PM_BUNDLE_ID@</string>
+    <key>CFBundleIconFile</key>
+    <string>prolinemarket.icns</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleShortVersionString</key>
+    <string>@PM_VERSION@</string>
+    <key>CFBundleVersion</key>
+    <string>@PM_VERSION@</string>
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.finance</string>
+
+    <!-- Apple Silicon and Intel both ship 12.0+; QtWebEngine 6.8 needs 12.0
+         anyway, so this is the real floor rather than an optimistic one. -->
+    <key>LSMinimumSystemVersion</key>
+    <string>12.0</string>
+
+    <key>NSHighResolutionCapable</key>
+    <true/>
+
+    <!-- The terminal draws its own light/dark theme and follows the system one
+         at first launch. Leaving this true would force every window into Aqua
+         light, so the dark theme's own chrome (menu bar, native dialogs, the
+         wallet/close sheets) would stay light while the app painted dark. -->
+    <key>NSRequiresAquaSystemAppearance</key>
+    <false/>
+
+    <key>NSHumanReadableCopyright</key>
+    <string>© Proline Markets</string>
+</dict>
+</plist>
