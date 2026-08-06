@@ -48,12 +48,24 @@ BINANCE_PAIRS: dict[str, str] = {
 
 BARS_COUNT = 500
 
+# Per-bar sigma at a 1-minute bar; _generate_bars scales it by sqrt(tf/60).
+#
+# Sized so a full 500-bar seed spans a plausible range for the asset rather than
+# a plausible-looking single bar. Cumulative drift is ~sqrt(500) * sigma * sqrt(tf/60),
+# i.e. ~50x sigma over 500 5-minute bars — so the old commodities value of 0.0015
+# painted gold swinging 7-10% inside 41 hours. The chart then had to fit that
+# range on the price scale, which squashed the real intraday movement into a
+# flat line and made a live, ticking candle look frozen.
+#
+# Targets over a 500-bar seed: forex ~0.5%, commodities ~2%, indices ~1.5%,
+# stocks ~2.5%. Crypto keeps the widest band but is academic — those symbols
+# seed from real Binance klines and never reach this function.
 VOLATILITY = {
     "forex": 0.0001,
-    "crypto": 0.003,
-    "indices": 0.001,
-    "commodities": 0.0015,
-    "stocks": 0.002,
+    "crypto": 0.001,
+    "indices": 0.0003,
+    "commodities": 0.0004,
+    "stocks": 0.0005,
 }
 
 
@@ -104,7 +116,20 @@ async def _fetch_binance_klines(symbol: str, tf_name: str, count: int = 500) -> 
 
 
 def _generate_bars(base_price: float, segment: str, tf_seconds: int, count: int) -> list[dict]:
-    """Walk backwards from now, generating simulated OHLCV bars anchored to current price."""
+    """Simulated OHLCV bars whose NEWEST bar closes on `base_price`.
+
+    The walk is built newest -> oldest and reversed at the end, so the bar that
+    sits next to the live one carries the live price and history joins it
+    seamlessly. Drift accumulates backwards into the past, which is what a real
+    chart looks like.
+
+    It used to run the other way: the OLDEST bar opened on base_price and the
+    walk ran forward, leaving the NEWEST seeded bar wherever ~500 random steps
+    happened to land — 6-7% adrift at these volatilities. The chart then drew a
+    cliff between the seeded history and the live candle (gold history at 3,750
+    while the tick said 4,242), which read as "the candles aren't moving": the
+    price scale was stretched across a gap that dwarfed the real movement.
+    """
     vol = VOLATILITY.get(segment, 0.001)
     bar_vol = vol * math.sqrt(tf_seconds / 60)
 
@@ -112,20 +137,19 @@ def _generate_bars(base_price: float, segment: str, tf_seconds: int, count: int)
     bar_start = (now // tf_seconds) * tf_seconds
 
     bars = []
-    price = base_price
+    close_p = base_price   # the newest bar closes exactly on the live price
 
-    # Generate bars going backwards from current price
-    for i in range(count, 0, -1):
+    for i in range(1, count + 1):
         t = bar_start - i * tf_seconds
-        change = random.gauss(0, bar_vol) * price
-        open_p = price
-        moves = [open_p]
-        for _ in range(4):
-            moves.append(moves[-1] + random.gauss(0, bar_vol * 0.5) * price)
-        close_p = moves[-1]
-        high_p = max(moves) + abs(random.gauss(0, bar_vol * 0.2) * price)
-        low_p = min(moves) - abs(random.gauss(0, bar_vol * 0.2) * price)
 
+        # Step backwards through the bar: from its close to its open.
+        moves = [close_p]
+        for _ in range(4):
+            moves.append(moves[-1] + random.gauss(0, bar_vol * 0.5) * close_p)
+        open_p = moves[-1]
+
+        high_p = max(moves) + abs(random.gauss(0, bar_vol * 0.2) * close_p)
+        low_p = min(moves) - abs(random.gauss(0, bar_vol * 0.2) * close_p)
         high_p = max(high_p, open_p, close_p)
         low_p = min(low_p, open_p, close_p)
 
@@ -139,8 +163,13 @@ def _generate_bars(base_price: float, segment: str, tf_seconds: int, count: int)
             "tick_count": random.randint(5, 200),
         })
 
-        price = close_p + change * 0.3
+        # The previous (older) bar closes where this one opened, so consecutive
+        # bars stay continuous instead of gapping.
+        close_p = open_p
 
+    # Caller LPUSHes in order and expects oldest-first, so the newest lands at
+    # the head of the Redis list — the same end the aggregator pushes to.
+    bars.reverse()
     return bars
 
 

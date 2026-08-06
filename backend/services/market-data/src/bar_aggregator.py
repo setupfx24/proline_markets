@@ -50,12 +50,18 @@ class BarAggregator:
 
         for tf_name, tf_seconds in TIMEFRAMES.items():
             bar_start = (epoch // tf_seconds) * tf_seconds
-            key = f"{symbol}:{tf_name}"
 
             current_start = self._bar_timestamps.get(symbol, {}).get(tf_name)
 
             if current_start != bar_start:
-                if current_start is not None and key in self._bars.get(symbol, {}):
+                # Test tf_name, NOT "{symbol}:{tf_name}". self._bars[symbol] is
+                # keyed by the bare timeframe ("1m"), so the composite key never
+                # matched and this branch was dead: _store_bar() was never once
+                # called, and `bars:<symbol>:<tf>` — the list every chart reads
+                # its history from — only ever held what seed_bars.py wrote at
+                # first boot. Charts were pinned to that seed forever while the
+                # live tick moved away from it.
+                if current_start is not None and tf_name in self._bars.get(symbol, {}):
                     old_bar = self._bars[symbol].pop(tf_name, None)
                     if old_bar:
                         asyncio.create_task(self._store_bar(symbol, tf_name, old_bar, current_start))
