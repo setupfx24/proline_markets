@@ -18,6 +18,7 @@ class QAction;
 class QActionGroup;
 class QSplitter;
 class QFrame;
+class QPushButton;
 
 // MetaTrader-style shell:
 //
@@ -47,6 +48,7 @@ private slots:
     void persistChartLayout();             // grid + per-pane symbols -> Config
     void logout();              // clear the session and return to the sign-in card
     void applyTheme();          // restyle the bits that carry inline style sheets
+    void openWebTerminal();     // this account, in the browser terminal
 
 private:
     void connectServices();
@@ -68,6 +70,7 @@ private:
     // act on. `what` names the action in the message.
     bool requireSession(const QString& what);
     void updateIdentity();      // the "name | type | account no." line by the logo
+    void updateMenuChips();     // the web-terminal button in the menu row
     // Money as text, or a mask when privacy mode is on.
     QString money(double v, const QString& currency = QString()) const;
     void switchAccount(const QString& accountId);
@@ -100,6 +103,8 @@ private:
     // can be re-fetched mid-session, hence the latch.
     bool m_chartLayoutRestored = false;
     QFrame*  m_identityDivider = nullptr;  // hairline before the first menu
+    QWidget* m_chipBox  = nullptr;      // menu row: holder for the button below
+    QPushButton* m_webChip = nullptr;   // menu row: open the browser terminal
     QSplitter* m_centerSplit = nullptr;
 
     QHash<QString, SymbolSpec> m_specs;

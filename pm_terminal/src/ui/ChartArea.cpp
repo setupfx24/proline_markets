@@ -79,6 +79,32 @@ ChartArea::Pane& ChartArea::ensurePane(int index) {
     p.chart = new WebChartWidget(m_api, m_stream, p.frame);
     p.chart->setMinimumSize(220, 160);
 
+    // The chart is also retuned from inside itself — its symbol header and its
+    // timeframe toolbar. Record that against THIS pane (found by its widget,
+    // not by `index`, which a later close would make stale) so the saved layout
+    // matches what is on screen.
+    connect(p.chart, &WebChartWidget::chartSymbolChanged, this,
+            [this, chart = p.chart](const QString& sym) {
+        for (Pane& q : m_panes) {
+            if (q.chart != chart) continue;
+            if (q.symbol == sym) return;
+            q.symbol = sym;
+            refreshPaneHeaders();
+            emitLayoutChanged();
+            return;
+        }
+    });
+    connect(p.chart, &WebChartWidget::chartIntervalChanged, this,
+            [this, chart = p.chart](const QString& iv) {
+        for (Pane& q : m_panes) {
+            if (q.chart != chart) continue;
+            if (q.interval == iv) return;
+            q.interval = iv;
+            emitLayoutChanged();
+            return;
+        }
+    });
+
     v->addWidget(p.header);
     v->addWidget(p.chart, 1);
 
@@ -106,6 +132,10 @@ bool ChartArea::eventFilter(QObject* o, QEvent* e) {
     return QWidget::eventFilter(o, e);
 }
 
+void ChartArea::emitLayoutChanged() {
+    if (!m_restoring) emit layoutChanged();
+}
+
 void ChartArea::setChartCount(int count) {
     const int n = qBound(1, count, 4);
     if (n == m_count) return;
@@ -114,6 +144,39 @@ void ChartArea::setChartCount(int count) {
     if (m_active >= n) setActive(0);
     relayout();
     emit chartCountChanged(m_count);
+    emitLayoutChanged();
+}
+
+void ChartArea::restoreLayout(int count, const QStringList& symbols,
+                              const QStringList& intervals, const QString& fallbackSymbol) {
+    m_restoring = true;
+
+    setChartCount(count);
+
+    for (int i = 0; i < m_count && i < m_panes.size(); ++i) {
+        Pane& p = m_panes[i];
+        if (!p.chart) continue;
+        // A pane the saved list does not cover falls back to the startup
+        // instrument. Left unset it would open on the charting library's own
+        // default — the trader sees a pane they never asked for, on a symbol
+        // the terminal does not even quote first.
+        const QString sym = (i < symbols.size() && !symbols.at(i).isEmpty())
+                                ? symbols.at(i) : fallbackSymbol;
+        if (!sym.isEmpty()) {
+            p.symbol = sym;
+            p.chart->showSymbol(sym);
+        }
+        if (i < intervals.size() && !intervals.at(i).isEmpty()) {
+            p.interval = intervals.at(i);
+            p.chart->showInterval(p.interval);
+        }
+    }
+
+    setActive(0);
+    refreshPaneHeaders();
+
+    m_restoring = false;
+    emit layoutChanged();   // persist what was actually restored, once
 }
 
 void ChartArea::closePane(int index) {
@@ -141,6 +204,7 @@ void ChartArea::closePane(int index) {
     relayout();
     emit activeChartChanged(m_active);
     emit chartCountChanged(m_count);
+    emitLayoutChanged();
 }
 
 void ChartArea::relayout() {
@@ -280,6 +344,13 @@ QStringList ChartArea::visibleSymbols() const {
     return out;
 }
 
+QStringList ChartArea::visibleIntervals() const {
+    QStringList out;
+    for (int i = 0; i < m_count && i < m_panes.size(); ++i)
+        out << m_panes[i].interval;
+    return out;
+}
+
 void ChartArea::setSymbols(const QVector<SymbolSpec>& symbols) {
     m_symbols = symbols;
     for (Pane& p : m_panes) if (p.chart) p.chart->setSymbols(symbols);
@@ -300,9 +371,11 @@ void ChartArea::setTheme(const QString& theme) {
 void ChartArea::showSymbol(const QString& symbol) {
     Pane& p = m_panes[m_active];
     if (!p.chart) return;
+    if (p.symbol == symbol) return;
     p.symbol = symbol;
     p.chart->showSymbol(symbol);
     refreshPaneHeaders();
+    emitLayoutChanged();
 }
 
 void ChartArea::setOverlayWidget(QWidget* overlay) {

@@ -84,6 +84,26 @@ void ChartBridge::setCurrentSymbol(const QString& symbol) {
     emit symbolChanged(symbol);
 }
 
+void ChartBridge::setCurrentInterval(const QString& interval) {
+    if (interval.isEmpty() || interval == m_currentInterval) return;
+    m_currentInterval = interval;
+    emit intervalChanged(interval);
+}
+
+void ChartBridge::reportSymbol(const QString& symbol) {
+    // Only tells the host. The chart is already showing it, so the equality
+    // guard here is also what keeps a host-driven change from echoing back.
+    if (symbol.isEmpty() || symbol == m_currentSymbol) return;
+    m_currentSymbol = symbol;
+    emit chartSymbolChanged(symbol);
+}
+
+void ChartBridge::reportInterval(const QString& interval) {
+    if (interval.isEmpty() || interval == m_currentInterval) return;
+    m_currentInterval = interval;
+    emit chartIntervalChanged(interval);
+}
+
 void ChartBridge::requestBars(const QString& symbol, const QString& timeframe,
                               double /*fromSec*/, double /*toSec*/, const QString& reqId) {
     // The API returns the most-recent N bars (no from/to filter); JS filters to

@@ -23,14 +23,14 @@ AppName={#MyApp}
 ; name ProlineMarketsTerminal-Setup.exe, so publish this build under that name
 ; rather than the versioned one — the version lives here and in the EXE's
 ; VERSIONINFO, not in a URL that has to be edited on every release.
-AppVersion=1.0.2
+AppVersion=1.0.4
 AppPublisher=Proline Markets
 DefaultDirName={autopf}\Proline Markets Terminal
 DefaultGroupName=Proline Markets Terminal
 DisableProgramGroupPage=yes
 UninstallDisplayIcon={app}\{#MyExe}
 OutputDir={#SourcePath}dist
-OutputBaseFilename=ProlineMarketsTerminal-Setup-1.0.2
+OutputBaseFilename=ProlineMarketsTerminal-Setup-1.0.4
 SetupIconFile={#SourcePath}resources\prolinemarket.ico
 Compression=lzma2/max
 SolidCompression=yes

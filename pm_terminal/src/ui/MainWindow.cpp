@@ -27,6 +27,10 @@
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QFrame>
+#include <QPushButton>
+#include <QDesktopServices>
+#include <QUrl>
+#include <QUrlQuery>
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QJsonObject>
@@ -250,6 +254,27 @@ void MainWindow::buildMenuBar() {
         m_centerSplit->setSizes(on ? QList<int>{h - 200, 200} : QList<int>{h, 1});
     });
 
+    // ── "Web Terminal" in the empty stretch of the menu row ──
+    // It rides in the TopRightCorner slot. Inline placement right after "View"
+    // was tried first, via a QWidgetAction: QMenuBar accepts one, but under the
+    // global style sheet it lays the item out with no width at all, so the row
+    // showed the item's divider and nothing else. A corner widget is the slot
+    // this menu bar actually honours — the identity block on the left proves it.
+    // No name box beside it: the identity line already carries the address.
+    m_chipBox = new QWidget;
+    auto* cw = new QHBoxLayout(m_chipBox);
+    cw->setContentsMargins(8, 2, 10, 2);
+    cw->setSpacing(8);
+
+    m_webChip = new QPushButton(tr("Web Terminal"));
+    m_webChip->setCursor(Qt::PointingHandCursor);
+    m_webChip->setFocusPolicy(Qt::NoFocus);   // it is a menu-row control, not a form field
+    connect(m_webChip, &QPushButton::clicked, this, &MainWindow::openWebTerminal);
+    cw->addWidget(m_webChip);
+
+    bar->setCornerWidget(m_chipBox, Qt::TopRightCorner);
+    updateMenuChips();   // also sizes the box — see the note there
+
     // ── who you are trading as, at the far left of the menu row ──
     // A TopLeftCorner widget is laid out before the menu items, so this reads
     // "Name | Type | Account   File  Accounts  View". The brand mark already
@@ -371,6 +396,74 @@ void MainWindow::updateIdentity() {
     // headroom — the bold segment renders wider than those metrics suggest.
     const QString plain = name.isEmpty() ? acct : QString("%1  |  %2").arg(name, acct);
     m_identity->setFixedWidth(m_identity->fontMetrics().horizontalAdvance(plain) + 52);
+
+    updateMenuChips();
+}
+
+// The "Web Terminal" button in the menu row. It carries an inline style sheet,
+// so this runs on every theme switch as well as on sign-in / sign-out.
+void MainWindow::updateMenuChips() {
+    if (!m_webChip) return;
+    const auto& c = Theme::p();
+
+    m_webChip->setToolTip(tr("Open this account in the browser terminal"));
+    m_webChip->setStyleSheet(QString(
+        "QPushButton { background:%1; color:#ffffff; border:1px solid %1;"
+        " border-radius:4px; font-size:11px; font-weight:600; }"
+        "QPushButton:hover { background:%2; border-color:%2; }")
+        .arg(c.accent, c.accentHover));
+
+    // Sized by hand, for the same reason the identity label is: a menu-bar
+    // corner widget is given exactly its size hint, and the hint a styled button
+    // reports before the bar is shown is not trustworthy. Font metrics plus the
+    // padding this style sheet draws is what keeps the text off its own border.
+    const int h = 22;
+    const int webW = m_webChip->fontMetrics().horizontalAdvance(m_webChip->text()) + 28;
+    m_webChip->setFixedSize(webW, h);
+    const QMargins m = m_chipBox->layout()->contentsMargins();
+    m_chipBox->setFixedSize(m.left() + webW + m.right(), h + m.top() + m.bottom());
+}
+
+// Hand the trader over to the browser terminal, on the account this window is
+// already trading — and signed in, without asking for the password again.
+//
+// /auth/desktop turns the access token this window already holds into a browser
+// session (POST /auth/bootstrap-session, the same endpoint admin impersonation
+// uses). The token goes in the URL **fragment**, not the query: a fragment is
+// never sent to the server, so it cannot land in an nginx access log or a
+// Referer header, and the page strips it from the address bar on arrival.
+//
+// Without a JWT — an API-key sign-in has none — this falls back to the plain
+// terminal URL, where the browser's own session (or the login page) takes over.
+void MainWindow::openWebTerminal() {
+    QString base = m_cfg.webBase.trimmed();
+    if (base.isEmpty()) base = QStringLiteral("https://trade.prolinemarket.com");
+    while (base.endsWith('/')) base.chop(1);
+
+    const QString acct  = m_cfg.accountId.trimmed();
+    const QString token = m_cfg.token.trimmed();
+
+    QUrl url;
+    if (!token.isEmpty()) {
+        // A JWT is base64url and an account id a UUID, so neither needs
+        // percent-encoding; QUrl still normalises whatever it is handed.
+        QString frag = "token=" + token;
+        if (!acct.isEmpty()) frag += "&account=" + acct;
+        url = QUrl(base + "/auth/desktop");
+        url.setFragment(frag);
+    } else {
+        url = QUrl(base + (acct.isEmpty() ? "/trading" : "/trading/terminal"));
+        if (!acct.isEmpty()) {
+            QUrlQuery q;
+            q.addQueryItem("account", acct);
+            url.setQuery(q);
+        }
+    }
+
+    if (QDesktopServices::openUrl(url))
+        setStatus(tr("Opened the web terminal in your browser"));
+    else
+        setStatus(tr("Could not open the web terminal"), true);
 }
 
 // --- wiring -----------------------------------------------------------------
@@ -410,9 +503,10 @@ void MainWindow::connectServices() {
     // Clicking a chart pane makes it active — the strip and the order window
     // must follow it, not stay on whatever Market Watch last selected.
     connect(m_charts, &ChartArea::activeChartChanged, this, &MainWindow::onActiveChartChanged);
-    // Grid changed (menu or a pane's ✕) — remember it for the next launch.
-    connect(m_charts, &ChartArea::chartCountChanged, this,
-            [this](int) { persistChartLayout(); });
+    // Grid changed — the pane count (menu or a pane's ✕), a pane's symbol, or a
+    // pane's timeframe. ChartArea stays quiet while it is restoring a saved
+    // layout, so this can never save a half-built grid over the saved one.
+    connect(m_charts, &ChartArea::layoutChanged, this, &MainWindow::persistChartLayout);
     // Double-click a symbol -> order window on that symbol. onSymbolActivated
     // has already run from the selection change, so m_currentSymbol is the
     // row that was double-clicked by the time this fires.
@@ -626,46 +720,53 @@ void MainWindow::onSymbolsReceived(const QVector<SymbolSpec>& symbols) {
 
     setStatus(tr("%1 instruments loaded").arg(symbols.size()));
 
+    if (symbols.isEmpty()) return;
+
+    // The instrument a launch falls back to when nothing is saved for a pane:
+    // XAUUSD, the platform's headline instrument, rather than the alphabetical
+    // first — usually a share with a closed market and an empty chart. The rest
+    // of the list covers a deployment that does not carry gold.
+    QString fallback = symbols.front().symbol;
+    for (const QString& pref : {"XAUUSD", "EURUSD", "BTCUSD", "GBPUSD", "ETHUSD"}) {
+        if (m_specs.contains(pref)) { fallback = pref; break; }
+    }
+
     // Restore the saved grid. This runs HERE, not in the constructor, because
     // a pane can only be pointed at a symbol once the metadata for it has
     // arrived — before that every restored pane would fall back to the default.
     // Guarded so it happens once per launch and never stamps over a layout the
     // trader has since changed (symbols can be re-fetched mid-session).
+    QString pick = fallback;
     if (!m_chartLayoutRestored) {
         m_chartLayoutRestored = true;
-        if (m_cfg.chartCount > 1)
-            m_charts->setChartCount(m_cfg.chartCount);
-        // Pane 0 is deliberately skipped: the terminal always opens on the
-        // startup instrument (XAUUSD, see below), so restoring the saved symbol
-        // there would immediately be overwritten anyway. Panes 1..n keep what
-        // they were showing, so a 2x2 comes back with its other three
-        // instruments intact.
-        for (int i = 1; i < m_cfg.chartSymbols.size() && i < m_charts->chartCount(); ++i) {
-            const QString s = m_cfg.chartSymbols.at(i);
-            if (s.isEmpty() || !m_specs.contains(s)) continue;
-            m_charts->setActivePane(i);
-            m_charts->showSymbol(s);
-        }
-        m_charts->setActivePane(0);
+
+        // Read the saved layout into locals BEFORE touching the grid. Restoring
+        // moves panes around, and every such move asks for the current layout to
+        // be saved — which used to overwrite m_cfg.chartSymbols with the blank
+        // panes that had just been created, so the loop below then had nothing
+        // left to restore and every pane but the first came back empty.
+        const QStringList savedSymbols   = m_cfg.chartSymbols;
+        const QStringList savedIntervals = m_cfg.chartIntervals;
+
+        // Drop symbols this deployment no longer quotes — a pane pointed at one
+        // would sit on a chart the datafeed can never fill.
+        QStringList wanted;
+        for (const QString& s : savedSymbols)
+            wanted << (m_specs.contains(s) ? s : QString());
+
+        // Pane 0 IS restored, unlike before: the terminal used to force gold on
+        // it every launch, which meant a saved 2x2 came back with three of its
+        // four instruments — the one the trader was actually working on was the
+        // one that got thrown away.
+        if (!wanted.isEmpty() && !wanted.first().isEmpty())
+            pick = wanted.first();
+
+        m_charts->restoreLayout(qMax(1, m_cfg.chartCount), wanted, savedIntervals, fallback);
     }
 
-    // Open on XAUUSD — the platform's headline instrument — rather than on the
-    // alphabetical first, which is usually a share with a closed market and an
-    // empty chart. The rest of the list is fallback for a deployment that does
-    // not carry gold.
-    //
-    // This wins over whatever pane 0 was showing last session — every launch
-    // starts on gold. The grid (1/2/4) and the OTHER panes' instruments are
-    // still restored above, so a 2x2 comes back as it was apart from the pane
-    // in focus.
-    if (!symbols.isEmpty()) {
-        QString pick = symbols.front().symbol;
-        for (const QString& pref : {"XAUUSD", "EURUSD", "BTCUSD", "GBPUSD", "ETHUSD"}) {
-            if (m_specs.contains(pref)) { pick = pref; break; }
-        }
-        m_watch->selectSymbol(pick);   // moves selection -> triggers onSymbolActivated
-        onSymbolActivated(pick);
-    }
+    // Market Watch and the one-click strip follow whatever pane 0 is showing.
+    m_watch->selectSymbol(pick);   // moves selection -> triggers onSymbolActivated
+    onSymbolActivated(pick);
 }
 
 void MainWindow::onSymbolActivated(const QString& symbol) {
@@ -704,13 +805,25 @@ void MainWindow::onActiveChartChanged(int) {
 }
 
 void MainWindow::persistChartLayout() {
-    // Remember the grid AND what each pane was showing. Restoring four panes
-    // that all default to one symbol is not "as I left it".
+    // Nothing is saved before the saved layout has been put back. A pane's web
+    // chart announces itself as soon as its page is ready — on the charting
+    // library's default symbol if the host has not pointed it anywhere yet —
+    // and that announcement lands BEFORE the instrument list arrives on a slow
+    // connection. Saving it would overwrite the very layout about to be
+    // restored, which is how a 2x2 of four instruments came back as one chart.
+    if (!m_chartLayoutRestored) return;
+
+    // Remember the grid AND what each pane was showing, timeframe included.
+    // Restoring four panes that all default to one symbol on one timeframe is
+    // not "as I left it".
     const int count = m_charts->chartCount();
     const QStringList syms = m_charts->visibleSymbols();
-    if (m_cfg.chartCount == count && m_cfg.chartSymbols == syms) return;
-    m_cfg.chartCount   = count;
-    m_cfg.chartSymbols = syms;
+    const QStringList ivs  = m_charts->visibleIntervals();
+    if (m_cfg.chartCount == count && m_cfg.chartSymbols == syms
+        && m_cfg.chartIntervals == ivs) return;
+    m_cfg.chartCount     = count;
+    m_cfg.chartSymbols   = syms;
+    m_cfg.chartIntervals = ivs;
     m_cfg.save();
 }
 

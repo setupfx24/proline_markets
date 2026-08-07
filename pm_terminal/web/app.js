@@ -106,9 +106,11 @@
     // Lives outside the widget, so a theme rebuild only restyles it.
     ensureWatermark(t);
 
-    // Carry the user's current view across the rebuild.
+    // Carry the user's current view across the rebuild. On the FIRST build there
+    // is no widget to read from, so the bridge is the source: on a restored
+    // layout it already holds the pane's saved symbol and timeframe.
     let symbol = bridge.currentSymbol || "EURUSD";
-    let interval = "5";
+    let interval = bridge.currentInterval || "5";
     if (widget) {
       try {
         const ch = widget.activeChart();
@@ -183,6 +185,27 @@
       // Re-attached per widget: a theme switch rebuilds the chart, and with it
       // the iframe the observer was watching.
       watchDialogs(bridge);
+
+      // Tell the host what this pane is showing, and keep telling it. The
+      // timeframe toolbar and the chart's own symbol header never go through
+      // the host, so without this the layout it saves is only ever what the
+      // watchlist last set — and a pane left on H1 came back on M5.
+      //
+      // Subscribed per widget for the same reason watchDialogs is: a rebuild
+      // throws the old chart (and its subscriptions) away.
+      try {
+        const ch = widget.activeChart();
+        bridge.reportSymbol(String(ch.symbol() || ""));
+        bridge.reportInterval(String(ch.resolution() || ""));
+        ch.onSymbolChanged().subscribe(null, () => {
+          try { bridge.reportSymbol(String(ch.symbol() || "")); } catch (e) { /* gone */ }
+        });
+        ch.onIntervalChanged().subscribe(null, (iv) => {
+          try { bridge.reportInterval(String(iv || ch.resolution() || "")); } catch (e) { /* gone */ }
+        });
+      } catch (e) {
+        console.warn("chart state reporting unavailable", e);
+      }
     });
   }
 
@@ -273,6 +296,16 @@
     bridge.symbolChanged.connect((sym) => {
       if (!sym || !widget) return;
       try { widget.activeChart().setSymbol(sym); } catch (e) { /* not ready yet */ }
+    });
+    // Host -> chart timeframe. Restoring a saved layout sets this before the
+    // widget exists, which is why createChart also reads it off the bridge; this
+    // handler covers the case where it arrives after the chart is already up.
+    bridge.intervalChanged.connect((iv) => {
+      if (!iv || !widget) return;
+      try {
+        const ch = widget.activeChart();
+        if (String(ch.resolution()) !== String(iv)) ch.setResolution(String(iv));
+      } catch (e) { /* not ready yet */ }
     });
     bridge.themeChanged.connect((theme) => createChart(bridge, theme));
     // Same rebuild path as a theme switch: the features that hide the drawing

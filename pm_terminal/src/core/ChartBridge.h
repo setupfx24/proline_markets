@@ -14,6 +14,10 @@ class ChartBridge : public QObject {
     Q_OBJECT
     Q_PROPERTY(QString symbolsJson    READ symbolsJson    NOTIFY symbolsChanged)
     Q_PROPERTY(QString currentSymbol  READ currentSymbol  NOTIFY symbolChanged)
+    // The pane's timeframe ("5", "60", "1D", …). Read by the web layer when it
+    // builds the widget, so a restored pane opens on the interval it was left
+    // on instead of the library's default.
+    Q_PROPERTY(QString currentInterval READ currentInterval NOTIFY intervalChanged)
     Q_PROPERTY(QString positionsJson  READ positionsJson  NOTIFY positionsChanged)
     Q_PROPERTY(QString theme          READ theme          NOTIFY themeChanged)
     // True while this pane is one of several. The web layer drops the drawing
@@ -23,11 +27,12 @@ class ChartBridge : public QObject {
 public:
     ChartBridge(ApiClient* api, PriceStream* stream, QObject* parent = nullptr);
 
-    QString symbolsJson()   const { return m_symbolsJson; }
-    QString currentSymbol() const { return m_currentSymbol; }
-    QString positionsJson() const { return m_positionsJson; }
-    QString theme()         const { return m_theme; }
-    bool    compact()       const { return m_compact; }
+    QString symbolsJson()    const { return m_symbolsJson; }
+    QString currentSymbol()  const { return m_currentSymbol; }
+    QString currentInterval() const { return m_currentInterval; }
+    QString positionsJson()  const { return m_positionsJson; }
+    QString theme()          const { return m_theme; }
+    bool    compact()        const { return m_compact; }
 
     void setTheme(const QString& theme);   // "dark" | "light"
     // Rebuilds the chart with a reduced chrome set. Costly (the widget is torn
@@ -36,7 +41,18 @@ public:
 
     void setSymbols(const QVector<SymbolSpec>& symbols);  // called by MainWindow
     void setCurrentSymbol(const QString& symbol);          // watchlist selection
+    // Host -> chart timeframe, used when a saved layout is restored. Before the
+    // page has booted this only records the value; the web layer reads it off
+    // the property when it builds the widget, so an early call is not lost.
+    void setCurrentInterval(const QString& interval);
     void setPositions(const QVector<OpenPosition>& positions);  // account poll
+
+    // Chart -> host. The trader can change a pane's symbol from the chart's own
+    // header and its timeframe from the toolbar, neither of which goes through
+    // the host. Without these the saved layout would be whatever the watchlist
+    // last set, not what is actually on screen.
+    Q_INVOKABLE void reportSymbol(const QString& symbol);
+    Q_INVOKABLE void reportInterval(const QString& interval);
 
     // JS -> C++: ask for history. Answered asynchronously via barsReady().
     Q_INVOKABLE void requestBars(const QString& symbol, const QString& timeframe,
@@ -55,6 +71,13 @@ public:
 signals:
     void symbolsChanged();
     void symbolChanged(const QString& symbol);
+    void intervalChanged(const QString& interval);
+    // What the chart itself is now showing, after the trader changed it there.
+    // Separate from symbolChanged/intervalChanged, which travel host -> chart:
+    // re-emitting those here would push the value straight back at the chart
+    // that just reported it.
+    void chartSymbolChanged(const QString& symbol);
+    void chartIntervalChanged(const QString& interval);
     void positionsChanged();
     void themeChanged(const QString& theme);
     void compactChanged(bool compact);
@@ -75,6 +98,7 @@ private:
     QString      m_symbolsJson = "[]";
     QString      m_positionsJson = "[]";
     QString      m_currentSymbol;
+    QString      m_currentInterval;
     bool         m_compact = false;
     QString      m_theme = "dark";
 

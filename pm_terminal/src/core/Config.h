@@ -30,10 +30,12 @@ public:
     // Chart grid, restored on the next launch. A trader who set up a 2x2 of
     // four instruments should not have to rebuild it every session — the
     // terminal used to always reopen on a single chart.
-    // chartSymbols is left-to-right for the visible panes; a short or empty
-    // list just means those panes open on the default symbol.
+    // chartSymbols / chartIntervals are left-to-right for the visible panes; a
+    // short or empty list just means those panes open on the default symbol and
+    // the chart's own default timeframe.
     int         chartCount = 1;   // 1..4
     QStringList chartSymbols;
+    QStringList chartIntervals;   // "5", "60", "1D", … per pane
 
     // Legacy bot auth (still supported for a pasted API key).
     QString apiKey;
@@ -45,6 +47,11 @@ public:
     // WebSockets only work on the api. host — trade.prolinemarket.com proxies REST
     // but its nginx block does not upgrade the connection.
     QString wsUrl    = "wss://api.prolinemarket.com/ws/algo/prices";
+    // Site root of the browser terminal, opened by the "Web terminal" button in
+    // the menu row. Kept separate from restBase rather than derived from it: a
+    // build pointed at a staging or local API still belongs to a web front end
+    // on its own host, and guessing "api." -> "trade." would be wrong there.
+    QString webBase  = "https://trade.prolinemarket.com";
 
     bool hasToken() const {
         return !token.trimmed().isEmpty() && !accountId.trimmed().isEmpty();

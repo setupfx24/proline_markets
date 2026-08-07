@@ -84,6 +84,13 @@ WebChartWidget::WebChartWidget(ApiClient* api, PriceStream* stream, QWidget* par
         if (m_overlay) m_overlay->setVisible(!hidden);
     });
 
+    // Chart -> host: the trader can retune a pane from inside the chart, and the
+    // saved layout has to follow that, not just the watchlist.
+    connect(m_bridge, &ChartBridge::chartSymbolChanged,
+            this, &WebChartWidget::chartSymbolChanged);
+    connect(m_bridge, &ChartBridge::chartIntervalChanged,
+            this, &WebChartWidget::chartIntervalChanged);
+
     // Truncate the diagnostic log at startup, then record load status.
     const QString diag = diagLogPath();
     QFile::remove(diag);
@@ -182,6 +189,10 @@ void WebChartWidget::setSymbols(const QVector<SymbolSpec>& symbols) {
 
 void WebChartWidget::showSymbol(const QString& symbol) {
     m_bridge->setCurrentSymbol(symbol);
+}
+
+void WebChartWidget::showInterval(const QString& interval) {
+    m_bridge->setCurrentInterval(interval);
 }
 
 void WebChartWidget::setPositions(const QVector<OpenPosition>& positions) {

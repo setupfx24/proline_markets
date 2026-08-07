@@ -53,10 +53,17 @@ Config Config::load() {
         for (const QJsonValue& v : o.value("chartSymbols").toArray())
             c.chartSymbols << v.toString();
     }
+    if (o.contains("chartIntervals")) {
+        c.chartIntervals.clear();
+        for (const QJsonValue& v : o.value("chartIntervals").toArray())
+            c.chartIntervals << v.toString();
+    }
     if (o.contains("restBase") && !o.value("restBase").toString().isEmpty())
         c.restBase = o.value("restBase").toString();
     if (o.contains("wsUrl") && !o.value("wsUrl").toString().isEmpty())
         c.wsUrl = o.value("wsUrl").toString();
+    if (o.contains("webBase") && !o.value("webBase").toString().isEmpty())
+        c.webBase = o.value("webBase").toString();
     return c;
 }
 
@@ -74,8 +81,10 @@ bool Config::save() const {
     o["apiSecret"]    = apiSecret;
     o["restBase"]     = restBase;
     o["wsUrl"]        = wsUrl;
-    o["chartCount"]   = chartCount;
-    o["chartSymbols"] = QJsonArray::fromStringList(chartSymbols);
+    o["webBase"]      = webBase;
+    o["chartCount"]     = chartCount;
+    o["chartSymbols"]   = QJsonArray::fromStringList(chartSymbols);
+    o["chartIntervals"] = QJsonArray::fromStringList(chartIntervals);
 
     QFile f(filePath());
     if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate))

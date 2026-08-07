@@ -8,8 +8,8 @@
 1 VERSIONINFO
 // Keep in step with AppVersion in installer.iss and the version in the
 // download filename the website links to.
-FILEVERSION     1,0,2,0
-PRODUCTVERSION  1,0,2,0
+FILEVERSION     1,0,4,0
+PRODUCTVERSION  1,0,4,0
 FILEOS          0x4L
 FILETYPE        0x1L
 BEGIN
@@ -19,11 +19,11 @@ BEGIN
         BEGIN
             VALUE "CompanyName",      "Proline Markets"
             VALUE "FileDescription",  "Proline Markets Terminal"
-            VALUE "FileVersion",      "1.0.2.0"
+            VALUE "FileVersion",      "1.0.4.0"
             VALUE "InternalName",     "terminal"
             VALUE "OriginalFilename", "terminal.exe"
             VALUE "ProductName",      "Proline Markets Terminal"
-            VALUE "ProductVersion",   "1.0.2.0"
+            VALUE "ProductVersion",   "1.0.4.0"
         END
     END
     BLOCK "VarFileInfo"

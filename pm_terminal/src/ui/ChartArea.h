@@ -51,13 +51,27 @@ public:
     // instrument from the chart they are sitting on.
     QString activeSymbol() const;
 
-    // Per-pane symbols, left to right, for the panes currently visible. Saved
-    // to Config so a 2x2 comes back as it was left rather than as one chart.
+    // Per-pane symbols and timeframes, left to right, for the panes currently
+    // visible. Saved to Config so a 2x2 comes back as it was left rather than
+    // as one chart. Intervals are blank for a pane the trader never retuned —
+    // that just means "whatever the chart opens on".
     QStringList visibleSymbols() const;
+    QStringList visibleIntervals() const;
 
-    // Select a pane programmatically. Exists for restoring a saved layout:
-    // showSymbol() only ever targets the ACTIVE pane, so seeding four of them
-    // means stepping the selection across each in turn.
+    // Rebuild a saved layout in one step: pane count, then each pane's symbol
+    // and timeframe, with `fallbackSymbol` filling any pane the saved list does
+    // not cover so no pane comes back empty.
+    //
+    // This exists instead of the caller driving setChartCount() + setActivePane()
+    // + showSymbol() itself, because those each emit as they go — and the very
+    // first emission used to run the caller's "save the layout" slot, which
+    // overwrote the saved symbol list with the blank panes that had just been
+    // created, before the rest of the restore could read it. Everything here is
+    // silent until it is done, then layoutChanged() fires once.
+    void restoreLayout(int count, const QStringList& symbols,
+                       const QStringList& intervals, const QString& fallbackSymbol);
+
+    // Select a pane programmatically.
     void setActivePane(int index);
 
     // Fan-outs — every pane needs the symbol table, the open positions and the
@@ -77,6 +91,10 @@ signals:
     // Fires whenever the pane count changes, including from a ✕ rather than
     // the menu, so the View > Chart layout radio group can follow it.
     void chartCountChanged(int count);
+    // Anything about the grid worth remembering has changed — the count, a
+    // pane's symbol, or a pane's timeframe, whether that came from the menu,
+    // the watchlist or the chart itself. Suppressed while restoreLayout() runs.
+    void layoutChanged();
 
 protected:
     // Clicks on a pane's header select it; the header carries a "paneIndex".
@@ -90,6 +108,7 @@ private:
         QToolButton*    closeBtn = nullptr;
         WebChartWidget* chart  = nullptr;
         QString         symbol;
+        QString         interval;   // "5", "60", "1D", … blank until it is known
     };
 
     Pane& ensurePane(int index);          // builds it the first time it is shown
@@ -112,6 +131,10 @@ private:
     QWidget* m_overlay = nullptr;
     int m_count  = 1;
     int m_active = 0;
+    // Set for the duration of restoreLayout(): swallows layoutChanged() so a
+    // half-built grid is never saved over the layout being restored from.
+    bool m_restoring = false;
+    void emitLayoutChanged();   // no-op while restoring
     QVector<SymbolSpec> m_symbols;      // replayed into panes built later
     QVector<OpenPosition> m_positions;
 };
