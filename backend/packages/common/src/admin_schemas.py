@@ -936,3 +936,36 @@ class ManagedAccountOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# ============================================
+# MANUAL TRADES ON AN EXISTING ACCOUNT
+# ============================================
+
+class AdminManualTrade(BaseModel):
+    """One exact closed trade the admin books onto a real client's account.
+
+    Same shape as ``ManagedManualTrade`` — date, symbol, side, lots, both prices
+    and a verbatim P&L — but it is appended to an existing account instead of
+    being part of a generated history, so nothing else about the account moves.
+    """
+    date: date                       # YYYY-MM-DD (close day)
+    symbol: str                      # any instrument on the platform
+    side: str = Field(pattern="^(buy|sell)$")
+    lots: float = Field(gt=0)
+    open_price: float = Field(gt=0)
+    close_price: float = Field(gt=0)
+    pnl: float                       # USD, may be negative
+    close_reason: str = Field(default="manual", pattern="^(manual|sl|tp|admin|margin)$")
+    close_time: Optional[str] = None  # "HH:MM" close clock time; None → randomised
+    comment: Optional[str] = None     # internal note, never shown to the client
+
+
+class ManualTradeBatch(BaseModel):
+    """Book a batch of manual trades onto one trading account, found by email."""
+    email: str                       # the client's login email
+    account_id: Optional[str] = None  # None → the user's first live account
+    trades: list[AdminManualTrade] = Field(min_length=1)
+    # Off means the trades appear in history without touching balance/equity —
+    # used when the balance was already corrected some other way.
+    adjust_balance: bool = True

@@ -28,6 +28,7 @@ PERMISSION_CATALOG = {
     "Analytics":   ["analytics.view", "exposure.view"],
     "Audit":       ["audit_logs.view"],
     "Managed accounts": ["managed_accounts.view", "managed_accounts.create"],
+    "Manual trades": ["manual_trades.view", "manual_trades.create"],
 }
 
 

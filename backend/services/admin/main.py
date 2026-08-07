@@ -16,7 +16,7 @@ from routes import (
     auth, dashboard, users, trades, deposits, banks, book,
     config as routes_config, instruments_admin, business, social, analytics, bonus, banners,
     support, employees, settings, transactions, kyc, account_types, user_audit_logs,
-    investor_access, notifications, mt5_links, managed_accounts,
+    investor_access, notifications, mt5_links, managed_accounts, manual_trades,
 )
 
 app_settings = get_settings()
@@ -240,6 +240,7 @@ app.include_router(investor_access.router, prefix=prefix)
 app.include_router(notifications.router, prefix=prefix)
 app.include_router(mt5_links.router, prefix=prefix)
 app.include_router(managed_accounts.router, prefix=prefix)
+app.include_router(manual_trades.router, prefix=prefix)
 
 
 @app.get("/health")
