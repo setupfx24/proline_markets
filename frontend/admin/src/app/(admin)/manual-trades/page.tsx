@@ -216,31 +216,27 @@ export default function ManualTradesPage() {
     if (!Number.isFinite(parseFloat(row.open_price))) missing.push('open');
     if (!Number.isFinite(parseFloat(row.close_price))) missing.push('close');
     if (missing.length) return `needs ${missing.join(', ')}`;
-    // Without a feed row there is no contract size, so the number is only the
-    // raw price move — say so rather than let it look authoritative.
-    return quoteOf(row.symbol) ? 'auto' : 'auto · no contract size';
+    return 'auto';
   };
 
-  /** (close − open) × direction × qty × contract size, converted to the account
-      currency — the same arithmetic the engine books a real close with. The
-      stored profit is what the client sees, so type over the box for any other
-      number. With no feed row for the symbol, contract size is unknown and this
-      falls back to the raw price move. */
+  /** (close − open) × direction × qty.
+   *
+   *  The instrument's contract size is deliberately NOT applied, which is a
+   *  departure from how the engine prices a real close — there it is
+   *  move × lots × contract_size, so 1 lot of XAUUSD (size 100) on a 132.09
+   *  move books 13,209. This tool books the move itself: 132.09.
+   *
+   *  That is a choice, not an oversight: the admin is entering an exact trade
+   *  to reproduce, and the figure they have in hand is the price move. The box
+   *  stays editable and whatever is in it is stored verbatim, so any other
+   *  number can still be typed straight over this one. */
   const calcPnl = (row: TradeRow): string => {
     const open = parseFloat(row.open_price);
     const close = parseFloat(row.close_price);
     const lots = parseFloat(row.lots);
     if (!Number.isFinite(open) || !Number.isFinite(close) || !Number.isFinite(lots)) return row.pnl;
-    const q = quoteOf(row.symbol);
     const dir = row.side === 'sell' ? -1 : 1;
-    const size = q?.contract_size && q.contract_size > 0 ? q.contract_size : 1;
-    let pnl = (close - open) * dir * lots * size;
-    // Profit lands in the quote currency. USD-quoted (XAUUSD, US30, EURUSD…) is
-    // already the account currency; USD-based (USDJPY…) divides by the rate.
-    if (q && q.quote_currency && q.quote_currency !== 'USD' && q.base_currency === 'USD' && close) {
-      pnl = pnl / close;
-    }
-    return pnl.toFixed(2);
+    return ((close - open) * dir * lots).toFixed(2);
   };
 
   const filled = rows.filter(
@@ -570,9 +566,10 @@ export default function ManualTradesPage() {
         <p className="text-xxs text-text-tertiary">
           Each row is one exact closed trade on that date. Pick the symbol from the live feed — any
           segment — and its running price is stamped as the <em>Open</em>; the <em>Close</em> is
-          yours to set. P&amp;L is calculated the way a real close is — price move × lots × the
-          instrument&apos;s contract size — and is stored verbatim once you type over it. Negative
-          P&amp;L is a losing trade. Close dates in the future are rejected.
+          yours to set. P&amp;L is the price move × lots — the instrument&apos;s contract size is not
+          applied, so 1 lot over a 132.09 move books 132.09. Type over the box for any other figure
+          and that is what is stored. Negative P&amp;L is a losing trade. Close dates in the future
+          are rejected.
         </p>
       </div>
 
