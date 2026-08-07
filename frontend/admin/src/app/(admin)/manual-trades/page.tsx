@@ -3,14 +3,14 @@
 import { useCallback, useEffect, useState } from 'react';
 import { adminApi } from '@/lib/api';
 import {
-  Loader2, Plus, Trash2, Search, Save, Eye, RefreshCw, PencilLine, RotateCcw,
+  Loader2, Plus, Trash2, Save, Eye, RefreshCw, PencilLine, RotateCcw,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 interface TradeRow {
   date: string; symbol: string; side: string;
   lots: string; open_price: string; close_price: string; pnl: string;
-  close_reason: string; close_time: string; comment: string;
+  close_time: string;
   /** true once the admin types a P&L by hand — stops the auto calculation. */
   pnlManual?: boolean;
 }
@@ -49,6 +49,11 @@ interface ClientInfo {
   status: string; book_type: string; kyc_status: string; country: string | null;
 }
 
+/** One entry in the client picker — every user that owns a trading account. */
+interface ClientOption {
+  id: string; email: string; name: string; status: string; accounts: number;
+}
+
 interface Lookup { user: ClientInfo; accounts: ClientAccount[] }
 
 interface Preview {
@@ -78,7 +83,7 @@ const emptyRow = (): TradeRow => ({
   symbol: '', side: 'buy',
   // A real 1, not a placeholder — P&L cannot compute without a quantity.
   lots: '1', open_price: '', close_price: '', pnl: '',
-  close_reason: 'manual', close_time: '', comment: '',
+  close_time: '',
 });
 
 export default function ManualTradesPage() {
@@ -86,6 +91,9 @@ export default function ManualTradesPage() {
   const [looking, setLooking] = useState(false);
   const [client, setClient] = useState<Lookup | null>(null);
   const [accountId, setAccountId] = useState('');
+
+  const [clients, setClients] = useState<ClientOption[]>([]);
+  const [clientsLoading, setClientsLoading] = useState(false);
 
   const [rows, setRows] = useState<TradeRow[]>([emptyRow()]);
   const [adjustBalance, setAdjustBalance] = useState(true);
@@ -138,13 +146,32 @@ export default function ManualTradesPage() {
     void loadBooked(accountId);
   }, [accountId, loadBooked]);
 
-  const lookup = async () => {
-    const e = email.trim();
-    if (!e) { toast.error('Enter the client email'); return; }
-    setLooking(true);
-    setPreview(null);
+  /** The picker's contents: every client on the platform that has an account. */
+  const loadClients = useCallback(async (notify = false) => {
+    setClientsLoading(true);
     try {
-      const r = await adminApi.get<Lookup>('/manual-trades/lookup', { email: e });
+      const r = await adminApi.get<{ items: ClientOption[] }>('/manual-trades/clients');
+      setClients(r.items || []);
+      if (notify) toast.success(`${r.items?.length || 0} client(s)`);
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Failed to load the client list');
+    } finally {
+      setClientsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void loadClients(); }, [loadClients]);
+
+  /** Picking a client pulls their accounts; clearing it resets the form back to
+      "nothing selected" so a stale account cannot be booked onto by accident. */
+  const selectClient = async (addr: string) => {
+    setEmail(addr);
+    setPreview(null);
+    setBooked([]);
+    if (!addr) { setClient(null); setAccountId(''); return; }
+    setLooking(true);
+    try {
+      const r = await adminApi.get<Lookup>('/manual-trades/lookup', { email: addr });
       setClient(r);
       // Prefer the first live account — that is where a booked trade belongs.
       const live = r.accounts.find((a) => !a.is_demo) || r.accounts[0];
@@ -225,6 +252,12 @@ export default function ManualTradesPage() {
     email: (client?.user.email || email).trim(),
     account_id: accountId || null,
     adjust_balance: adjustBalance,
+    // The date and "closed at" below are wall-clock in THIS browser's zone. Send
+    // the offset so the server stores the instant they actually mean — without
+    // it they were read as UTC, and an evening trade booked from IST came back
+    // stamped on the next day. getTimezoneOffset() counts minutes west, so the
+    // sign is flipped to give minutes east (IST = +330).
+    tz_offset_minutes: -new Date().getTimezoneOffset(),
     trades: filled.map((t) => ({
       date: t.date,
       symbol: t.symbol.trim().toUpperCase(),
@@ -233,14 +266,12 @@ export default function ManualTradesPage() {
       open_price: parseFloat(t.open_price) || 0,
       close_price: parseFloat(t.close_price) || 0,
       pnl: parseFloat(t.pnl) || 0,
-      close_reason: t.close_reason || 'manual',
       close_time: t.close_time || null,
-      comment: t.comment.trim() || null,
     })),
   });
 
   const validate = (): string | null => {
-    if (!client) return 'Look up a client email first';
+    if (!client) return 'Pick the client first';
     if (!accountId) return 'Pick the trading account';
     if (filled.length === 0) return 'Fill at least one complete trade row';
     return null;
@@ -305,8 +336,8 @@ export default function ManualTradesPage() {
           Manual Trades
         </h1>
         <p className="text-xxs text-text-tertiary mt-0.5 max-w-3xl">
-          Book exact closed trades onto any existing client&apos;s account. Find the client by login
-          email, pick the account, then add one row per trade. Each row is written as a real closed
+          Book exact closed trades onto any existing client&apos;s account. Pick the client from the
+          list, pick the account, then add one row per trade. Each row is written as a real closed
           trade — it shows in the client&apos;s history on web, mobile and the desktop terminal — and
           the account balance moves by the total P&amp;L unless you turn that off.
         </p>
@@ -315,20 +346,38 @@ export default function ManualTradesPage() {
       {/* Client lookup */}
       <div className={cardCls}>
         <h3 className="text-sm font-semibold text-text-primary">Client</h3>
-        <div className="flex gap-2">
-          <input
+        <div className="flex gap-2 items-center">
+          <select
             className={inputCls}
             value={email}
-            placeholder="client@example.com"
-            onChange={(e) => setEmail(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') void lookup(); }}
-          />
-          <button
-            type="button" disabled={looking} onClick={() => void lookup()}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-buy/15 text-buy border border-buy/30 hover:bg-buy/25 disabled:opacity-50 shrink-0"
+            disabled={clientsLoading || looking}
+            onChange={(e) => void selectClient(e.target.value)}
           >
-            {looking ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />} Look up
-          </button>
+            <option value="">
+              {clientsLoading
+                ? 'Loading clients…'
+                : clients.length
+                  ? `Select client… (${clients.length})`
+                  : 'No clients with a trading account'}
+            </option>
+            {clients.map((c) => (
+              <option key={c.id} value={c.email}>
+                {c.name} — {c.email}
+                {c.accounts > 1 ? ` · ${c.accounts} accounts` : ''}
+                {c.status !== 'active' ? ` · ${c.status}` : ''}
+              </option>
+            ))}
+          </select>
+          {looking ? (
+            <Loader2 size={14} className="animate-spin text-text-tertiary shrink-0" />
+          ) : (
+            <button
+              type="button" title="Reload the client list" onClick={() => void loadClients(true)}
+              className="p-1.5 rounded-md border border-border-primary text-text-tertiary hover:text-text-primary shrink-0"
+            >
+              <RefreshCw size={13} className={clientsLoading ? 'animate-spin' : ''} />
+            </button>
+          )}
         </div>
 
         {client && (
@@ -498,25 +547,6 @@ export default function ManualTradesPage() {
                       <Trash2 size={12} />
                     </button>
                   </div>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                <div>
-                  <label className={labelCls}>Close reason</label>
-                  <select className={inputCls} value={t.close_reason}
-                    onChange={(e) => upd({ close_reason: e.target.value })}>
-                    <option value="manual">Manual</option>
-                    <option value="tp">Take profit</option>
-                    <option value="sl">Stop loss</option>
-                    <option value="admin">Admin</option>
-                    <option value="margin">Margin call</option>
-                  </select>
-                </div>
-                <div className="md:col-span-3">
-                  <label className={labelCls}>Internal note (optional — not shown to the client)</label>
-                  <input className={inputCls} value={t.comment} placeholder="Why this trade was booked"
-                    onChange={(e) => upd({ comment: e.target.value })} />
                 </div>
               </div>
             </div>

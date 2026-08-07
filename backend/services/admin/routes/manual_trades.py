@@ -16,6 +16,15 @@ def _ip(request: Request) -> str | None:
     return request.client.host if request.client else None
 
 
+@router.get("/clients")
+async def list_clients(
+    admin: User = Depends(require_permission("manual_trades.view")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Every client that has a trading account — fills the admin's client picker."""
+    return await manual_trade_service.list_clients(db=db)
+
+
 @router.get("/lookup")
 async def lookup_client(
     email: str = Query(..., description="Client login email"),

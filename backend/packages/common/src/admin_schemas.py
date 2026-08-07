@@ -969,3 +969,8 @@ class ManualTradeBatch(BaseModel):
     # Off means the trades appear in history without touching balance/equity —
     # used when the balance was already corrected some other way.
     adjust_balance: bool = True
+    # Minutes EAST of UTC for the admin doing the booking (IST = 330), straight
+    # from the browser. The dates and close times in `trades` are wall-clock in
+    # that zone: without it the server read them as UTC, and an evening trade
+    # booked from IST came back rendered on the following day.
+    tz_offset_minutes: int = Field(default=0, ge=-840, le=840)

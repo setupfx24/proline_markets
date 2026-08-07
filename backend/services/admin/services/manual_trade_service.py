@@ -17,7 +17,7 @@ which only reads ``trade_history``) so they can be listed and reversed later.
 """
 import random
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 
 from fastapi import HTTPException
@@ -57,26 +57,41 @@ def _parse_hhmm(value) -> tuple[int, int] | None:
     return h, m
 
 
-def _dt(year: int, month: int, day: int, hour: int = 12, minute: int = 0) -> datetime:
-    return datetime(year, month, day, hour, minute, 0, tzinfo=timezone.utc)
+def _dt(year: int, month: int, day: int, hour: int, minute: int, tz_offset: int) -> datetime:
+    """A local wall-clock time on that date, as the UTC instant it stands for.
+
+    ``tz_offset`` is minutes EAST of UTC — what the admin's browser reports, so
+    IST is +330. Everything downstream stores UTC; this is only about which
+    instant "6 August, 4:18 PM" means to the person who typed it.
+    """
+    local = datetime(year, month, day, hour, minute, 0, tzinfo=timezone.utc)
+    return local - timedelta(minutes=tz_offset)
 
 
-def _times(mt: AdminManualTrade, rng: random.Random) -> tuple[datetime, datetime]:
-    """(opened_at, closed_at) for one trade — both on the trade's own date. The
-    admin may pin the close clock time; the open is then a few hours earlier."""
+def _times(mt: AdminManualTrade, rng: random.Random, tz_offset: int = 0) -> tuple[datetime, datetime]:
+    """(opened_at, closed_at) for one trade — both on the trade's own date, in
+    the admin's timezone. The admin may pin the close clock time; the open is
+    then a few hours earlier.
+
+    The clock times here are LOCAL to whoever booked the trade, which is the
+    whole point: these rows are rendered back with toLocaleString(), so a UTC
+    evening used to cross midnight and a trade booked for the 7th showed up as
+    the 8th. Keeping the generated hours inside a local 08:00–21:00 window means
+    the date the admin picked is the date everyone in that region reads back.
+    """
     y, mo, day = mt.date.year, mt.date.month, mt.date.day
     hhmm = _parse_hhmm(mt.close_time)
     if hhmm:
         c_hour, c_min = hhmm
-        closed = _dt(y, mo, day, c_hour, c_min)
+        closed = _dt(y, mo, day, c_hour, c_min, tz_offset)
         o_hour = max(0, c_hour - rng.randint(1, 4))
         o_min = rng.randint(0, 59) if o_hour != c_hour else max(0, c_min - 5)
-        opened = _dt(y, mo, day, o_hour, o_min)
+        opened = _dt(y, mo, day, o_hour, o_min, tz_offset)
     else:
-        o_hour = rng.randint(8, 18)
-        c_hour = min(23, o_hour + rng.randint(1, 5))
-        opened = _dt(y, mo, day, o_hour, rng.randint(0, 59))
-        closed = _dt(y, mo, day, c_hour, rng.randint(0, 59))
+        o_hour = rng.randint(8, 16)
+        c_hour = min(21, o_hour + rng.randint(1, 5))
+        opened = _dt(y, mo, day, o_hour, rng.randint(0, 59), tz_offset)
+        closed = _dt(y, mo, day, c_hour, rng.randint(0, 59), tz_offset)
     return opened, closed
 
 
@@ -129,6 +144,40 @@ async def _account_summary(acc: TradingAccount, db: AsyncSession) -> dict:
 
 
 # ─── Public API ─────────────────────────────────────────────────────────────
+
+async def list_clients(db: AsyncSession) -> dict:
+    """Every bookable client, for the admin's client picker.
+
+    The join to trading_accounts is the filter, not a decoration: booking needs
+    an account and :func:`lookup` refuses a user without one, so anybody missing
+    from that table could only ever be a dead entry in the dropdown. It also
+    keeps staff logins out of the list for free — they hold no trading account.
+    """
+    r = await db.execute(
+        select(
+            User.id,
+            User.email,
+            User.first_name,
+            User.last_name,
+            User.status,
+            func.count(TradingAccount.id).label("accounts"),
+        )
+        .join(TradingAccount, TradingAccount.user_id == User.id)
+        .group_by(User.id)
+        .order_by(func.lower(func.coalesce(User.first_name, User.email)))
+    )
+    items = [
+        {
+            "id": str(row.id),
+            "email": row.email,
+            "name": f"{row.first_name or ''} {row.last_name or ''}".strip() or row.email,
+            "status": row.status,
+            "accounts": row.accounts,
+        }
+        for row in r.all()
+    ]
+    return {"items": items, "total": len(items)}
+
 
 async def lookup(email: str, db: AsyncSession) -> dict:
     """Find a client by login email and list the accounts trades can go onto."""
@@ -192,10 +241,15 @@ async def _target_account(body: ManualTradeBatch, db: AsyncSession) -> tuple[Use
     return user, acc
 
 
-def _validate_dates(trades: list[AdminManualTrade]) -> None:
+def _validate_dates(trades: list[AdminManualTrade], tz_offset: int = 0) -> None:
     """A trade cannot close in the future — the client's history would show a
-    close that hasn't happened, and the balance would already include its P&L."""
-    today = datetime.now(timezone.utc).date()
+    close that hasn't happened, and the balance would already include its P&L.
+
+    "Today" is the admin's today, not UTC's: booking a trade for the current
+    date is the common case, and east of UTC that date arrives hours before it
+    does in UTC. Judging it by the UTC calendar rejected the admin's own today.
+    """
+    today = (datetime.now(timezone.utc) + timedelta(minutes=tz_offset)).date()
     future = [mt.date.isoformat() for mt in trades if mt.date > today]
     if future:
         raise HTTPException(
@@ -207,7 +261,7 @@ def _validate_dates(trades: list[AdminManualTrade]) -> None:
 async def preview(body: ManualTradeBatch, db: AsyncSession) -> dict:
     """Resolve everything and show what applying would do — writes nothing."""
     user, acc = await _target_account(body, db)
-    _validate_dates(body.trades)
+    _validate_dates(body.trades, body.tz_offset_minutes)
     instruments = await _resolve_instruments(body.trades, db)
 
     rows = []
@@ -243,7 +297,7 @@ async def apply(
 ) -> dict:
     """Book the batch onto the account: closed positions + history (+ balance)."""
     user, acc = await _target_account(body, db)
-    _validate_dates(body.trades)
+    _validate_dates(body.trades, body.tz_offset_minutes)
     instruments = await _resolve_instruments(body.trades, db)
 
     rng = random.Random()
@@ -254,7 +308,7 @@ async def apply(
     for mt in body.trades:
         inst = instruments[mt.symbol.replace("/", "").upper()]
         digits = inst.digits or 2
-        opened, closed = _times(mt, rng)
+        opened, closed = _times(mt, rng, body.tz_offset_minutes)
         profit = Decimal(str(round(mt.pnl, 2)))
         total += profit
         note = f"{tag} · {inst.symbol}"
