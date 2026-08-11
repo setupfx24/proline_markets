@@ -67,6 +67,15 @@ public:
     // lots <= 0 (or >= the position's size) closes it fully; a smaller value is
     // a partial close and leaves the remainder open.
     void closePositionById(const QString& positionId, double lots = 0.0);
+    // Mint (or re-mint) the public share card for a closed or open position.
+    // The server reuses a live link for the same position, so pressing Share
+    // twice hands out the same URL rather than littering the table with codes.
+    void shareTrade(const QString& positionId);
+    // Mint a replacement market-data key pair for the selected account, using
+    // the session JWT. Needed mid-session because /algo/generate revokes the
+    // account's previous key: any later sign-in elsewhere kills the pair this
+    // terminal is holding, and only a fresh one gets the tick stream back.
+    void renewAlgoKey();
 
 signals:
     void symbolsReceived(const QVector<SymbolSpec>& symbols);
@@ -83,6 +92,14 @@ signals:
     void positionOpResult(const QString& positionId, const QString& op, bool ok, const QString& message);
     // Result of placePendingOrder()/cancelOrder(). op = "place" | "cancel".
     void orderOpResult(const QString& op, bool ok, const QString& message);
+    // Share card minted. `shortCode` is the /s/<code> path segment; on failure
+    // ok=false and message carries the server's reason.
+    void shareLinkReady(const QString& positionId, bool ok,
+                        const QString& shortCode, const QString& message);
+    // A fresh market-data key pair. Both must be persisted: the secret is
+    // returned exactly once, and the old pair is dead the moment this fires.
+    void algoKeyRenewed(bool ok, const QString& apiKey, const QString& apiSecret,
+                        const QString& message);
     // New access token, plus the replacement refresh cookie. Both must be
     // persisted: the old refresh token is dead the moment this fires.
     void sessionRefreshed(const QString& accessToken, const QString& refreshToken);

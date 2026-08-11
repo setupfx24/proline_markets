@@ -152,6 +152,15 @@ inline QIcon pencil(const QColor& c, int px = 18) {
         "<path d='M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z'/>"), c, px);
 }
 
+// Share — the two-node/arrow mark every platform uses for "send this
+// somewhere". Sits in the blotter's Action column beside edit and close.
+inline QIcon share(const QColor& c, int px = 18) {
+    return detail::render(detail::wrap(
+        "<path d='M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8'/>"
+        "<path d='M16 6l-4-4-4 4'/>"
+        "<path d='M12 2v14'/>"), c, px);
+}
+
 // Accounts — stacked layers.
 inline QIcon layers(const QColor& c, int px = 18) {
     return detail::render(detail::wrap(

@@ -19,11 +19,11 @@ BEGIN
         BEGIN
             VALUE "CompanyName",      "Proline Markets"
             VALUE "FileDescription",  "Proline Markets Terminal"
-            VALUE "FileVersion",      "1.0.4.0"
+            VALUE "FileVersion",      "1.0.5.0"
             VALUE "InternalName",     "terminal"
             VALUE "OriginalFilename", "terminal.exe"
             VALUE "ProductName",      "Proline Markets Terminal"
-            VALUE "ProductVersion",   "1.0.4.0"
+            VALUE "ProductVersion",   "1.0.5.0"
         END
     END
     BLOCK "VarFileInfo"

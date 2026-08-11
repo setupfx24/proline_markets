@@ -373,6 +373,60 @@ void ApiClient::modifyBracket(const QString& positionId, const QString& kind, do
     handlePositionOp(this, r, positionId, "modify");
 }
 
+void ApiClient::renewAlgoKey() {
+    if (m_cfg.token.trimmed().isEmpty() || m_cfg.accountId.trimmed().isEmpty()) {
+        emit algoKeyRenewed(false, QString(), QString(),
+                            tr("Sign in again to restore market data."));
+        return;
+    }
+    QJsonObject body;
+    body["account_id"] = m_cfg.accountId;
+    body["label"]      = QStringLiteral("Proline Markets Terminal");
+
+    QNetworkReply* r = m_net->post(v1Request("/algo/generate"),
+                                   QJsonDocument(body).toJson(QJsonDocument::Compact));
+    connect(r, &QNetworkReply::finished, this, [this, r]() {
+        r->deleteLater();
+        const int http = r->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        const QJsonObject o = QJsonDocument::fromJson(r->readAll()).object();
+        const bool ok = (r->error() == QNetworkReply::NoError && http < 400);
+        const QString key = o.value("api_key").toString();
+        const QString sec = o.value("api_secret").toString();
+        if (ok && !key.isEmpty() && !sec.isEmpty()) {
+            // Keep our own copy in step — the very next REST call signs with it.
+            m_cfg.apiKey    = key;
+            m_cfg.apiSecret = sec;
+            emit algoKeyRenewed(true, key, sec, QString());
+        } else {
+            emit algoKeyRenewed(false, QString(), QString(), apiDetail(o, r->errorString()));
+        }
+    });
+}
+
+void ApiClient::shareTrade(const QString& positionId) {
+    // display_mode "pnl" matches what the web app shares by default — the card
+    // leads with the money rather than ROI or ticks.
+    QJsonObject body;
+    body["display_mode"] = "pnl";
+    QNetworkReply* r = m_net->post(v1Request("/positions/" + positionId + "/share"),
+                                   QJsonDocument(body).toJson(QJsonDocument::Compact));
+    connect(r, &QNetworkReply::finished, this, [this, r, positionId]() {
+        r->deleteLater();
+        const int http = r->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        const QJsonObject o = QJsonDocument::fromJson(r->readAll()).object();
+        const bool ok = (r->error() == QNetworkReply::NoError && http < 400);
+        const QString code = o.value("short_code").toString();
+        // A 2xx with no code is still a failure from the trader's point of view
+        // — there is nothing to hand out — so it is reported as one.
+        if (ok && !code.isEmpty())
+            emit shareLinkReady(positionId, true, code, QString());
+        else
+            emit shareLinkReady(positionId, false, QString(),
+                                ok ? tr("The server did not return a share link.")
+                                   : apiDetail(o, r->errorString()));
+    });
+}
+
 // The refresh cookie is sent by hand rather than through a cookie jar: the
 // terminal's managers are per-widget and none of them outlives a restart, so
 // the credential has to travel in Config, not in QNetworkAccessManager.

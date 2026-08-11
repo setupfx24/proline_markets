@@ -21,6 +21,10 @@ signals:
     void tickReceived(const Quote& quote);
     void authenticated(const QString& account);
     void statusChanged(const QString& status);   // human-readable, for status bar
+    // The stream's credentials were refused. Retrying cannot fix this — the
+    // key pair has to be replaced before the next attempt, which only the
+    // owner of the JWT can do, so MainWindow handles it.
+    void credentialsRejected(const QString& reason);
 
 private slots:
     void onConnected();
@@ -36,4 +40,11 @@ private:
     QTimer     m_reconnectTimer;
     bool       m_authed  = false;
     bool       m_wantRun = false;
+    // Backoff, so a stream that cannot connect is not hammered every 4s for the
+    // rest of the session — and, just as important, so the status bar is not
+    // rewritten with "Disconnected — retrying…" every four seconds while it
+    // fails. Reset to the floor on every successful authentication.
+    int        m_retryMs = kRetryFloorMs;
+    static constexpr int kRetryFloorMs = 4000;
+    static constexpr int kRetryCeilMs  = 60000;
 };

@@ -22,6 +22,11 @@
 static const char* ARROW_UP   = "\xE2\x96\xB2";   // ▲
 static const char* ARROW_DOWN = "\xE2\x96\xBC";   // ▼
 static const char* ARROW_FLAT = "\xE2\x97\x8B";   // ○
+static const char* STAR_ON    = "\xE2\x98\x85";   // ★
+
+// Not a segment name: no admin-defined segment can begin with '*', so this can
+// never collide with a real group in the filter menu.
+const QString WatchlistWidget::kFavGroup = QStringLiteral("*fav");
 
 // The platform's segments are admin-managed rows in `instrument_segments`, not
 // a fixed list — /api/algo/symbols reports each instrument's own segment name in
@@ -104,6 +109,12 @@ WatchlistWidget::WatchlistWidget(QWidget* parent) : QWidget(parent) {
         if (row < 0 || row >= m_all.size()) return;
         emit symbolDoubleClicked(m_all.at(row).symbol);
     });
+    // Right-click a row to star it. A context menu rather than a star column:
+    // the panel is ~300px wide and every pixel spent on chrome comes out of the
+    // symbol name, which is already the first thing to elide.
+    m_table->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_table, &QTableWidget::customContextMenuRequested,
+            this, &WatchlistWidget::openRowMenu);
 
     auto* lay = new QVBoxLayout(this);
     lay->setContentsMargins(0, 0, 0, 0);
@@ -158,7 +169,11 @@ void WatchlistWidget::setSymbols(const QVector<SymbolSpec>& symbols) {
     m_table->setRowCount(symbols.size());
     int r = 0;
     for (const SymbolSpec& s : symbols) {
-        auto* sym = new QTableWidgetItem(QString("%1  %2").arg(QString::fromUtf8(ARROW_FLAT), s.symbol));
+        // Stars are restored from Config before the symbol list arrives, so they
+        // have to be painted in as the rows are built, not only on toggle.
+        const QString star = isFavourite(s.symbol) ? QString::fromUtf8(STAR_ON) + " " : QString();
+        auto* sym = new QTableWidgetItem(
+            QString("%1%2  %3").arg(star, QString::fromUtf8(ARROW_FLAT), s.symbol));
         sym->setForeground(QColor(c.muted));
 
         for (int col = 1; col <= 3; ++col) {
@@ -178,6 +193,65 @@ void WatchlistWidget::setSymbols(const QVector<SymbolSpec>& symbols) {
 
     applyFilter();
     if (!symbols.isEmpty()) selectSymbol(symbols.front().symbol);
+}
+
+void WatchlistWidget::setFavourites(const QStringList& symbols) {
+    m_favourites = symbols;
+    for (const SymbolSpec& s : m_all) refreshSymbolCell(s.symbol);
+    applyFilter();
+}
+
+// "★ ▲ EURUSD" / "▲ EURUSD". The star leads so a starred row is findable by
+// eye down the left edge of the column, which is the whole point of starring.
+void WatchlistWidget::refreshSymbolCell(const QString& symbol) {
+    auto it = m_rows.constFind(symbol);
+    if (it == m_rows.constEnd() || it->row < 0) return;
+    auto* cell = m_table->item(it->row, 0);
+    if (!cell) return;
+    const char* arrow = it->dir > 0 ? ARROW_UP : it->dir < 0 ? ARROW_DOWN : ARROW_FLAT;
+    const QString star = isFavourite(symbol) ? QString::fromUtf8(STAR_ON) + " " : QString();
+    cell->setText(QString("%1%2  %3").arg(star, QString::fromUtf8(arrow), symbol));
+}
+
+void WatchlistWidget::toggleFavourite(const QString& symbol) {
+    if (m_favourites.contains(symbol)) m_favourites.removeAll(symbol);
+    else                               m_favourites.append(symbol);
+    refreshSymbolCell(symbol);
+    // Un-starring the last favourite while the Favourites filter is on would
+    // leave an empty panel with no obvious way out; fall back to All.
+    if (m_activeGroup == kFavGroup && m_favourites.isEmpty()) setMarket(QString());
+    else                                                      applyFilter();
+    emit favouritesChanged(m_favourites);
+}
+
+void WatchlistWidget::openRowMenu(const QPoint& pos) {
+    const int row = m_table->rowAt(pos.y());
+    if (row < 0 || row >= m_all.size()) return;
+    const QString symbol = m_all.at(row).symbol;
+
+    const auto& c = Theme::p();
+    QMenu menu(this);
+    menu.setStyleSheet(QString(
+        "QMenu{background:%1; border:1px solid %2; padding:3px;}"
+        "QMenu::item{padding:5px 18px 5px 12px; color:%3;}"
+        "QMenu::item:selected{background:%4; color:%5;}")
+        .arg(c.menuBg, c.menuBorder, c.text, c.menuSel, c.textStrong));
+
+    const bool fav = isFavourite(symbol);
+    QAction* star = menu.addAction(fav ? tr("Remove %1 from favourites").arg(symbol)
+                                       : tr("★  Add %1 to favourites").arg(symbol));
+    connect(star, &QAction::triggered, this, [this, symbol]() { toggleFavourite(symbol); });
+
+    if (!m_favourites.isEmpty()) {
+        menu.addSeparator();
+        QAction* only = menu.addAction(tr("Show favourites only  (%1)").arg(m_favourites.size()));
+        connect(only, &QAction::triggered, this, [this]() { setMarket(kFavGroup); });
+    }
+    menu.addSeparator();
+    QAction* trade = menu.addAction(tr("New order…"));
+    connect(trade, &QAction::triggered, this, [this, symbol]() { emit symbolDoubleClicked(symbol); });
+
+    menu.exec(m_table->viewport()->mapToGlobal(pos));
 }
 
 void WatchlistWidget::onSelectionChanged() {
@@ -215,6 +289,14 @@ void WatchlistWidget::openMarketMenu() {
 
     QAction* all = menu.addAction(tr("All Markets   (%1)").arg(m_all.size()));
     connect(all, &QAction::triggered, this, [this]() { setMarket(QString()); });
+
+    // Favourites sits with All at the top, above the segments — it is the entry
+    // a trader who has starred anything reaches for most. Hidden entirely while
+    // nothing is starred rather than shown as a dead "(0)".
+    if (!m_favourites.isEmpty()) {
+        QAction* fav = menu.addAction(tr("★  Favourites   (%1)").arg(m_favourites.size()));
+        connect(fav, &QAction::triggered, this, [this]() { setMarket(kFavGroup); });
+    }
     menu.addSeparator();
 
     // Built from the segments actually present, not a fixed list — the previous
@@ -245,7 +327,10 @@ void WatchlistWidget::openMarketMenu() {
 
 void WatchlistWidget::setMarket(const QString& group) {
     m_activeGroup = group;
-    m_marketBtn->setText((group.isEmpty() ? tr("All") : group) + "  ▾");
+    const QString label = group.isEmpty()      ? tr("All")
+                        : group == kFavGroup   ? QString::fromUtf8(STAR_ON)
+                                               : group;
+    m_marketBtn->setText(label + "  ▾");
     applyFilter();
 }
 
@@ -254,7 +339,9 @@ void WatchlistWidget::applyFilter() {
     for (const SymbolSpec& s : m_all) {
         auto it = m_rows.constFind(s.symbol);
         if (it == m_rows.constEnd() || it->row < 0) continue;
-        const bool groupOk  = m_activeGroup.isEmpty() || it->group == m_activeGroup;
+        const bool groupOk  = m_activeGroup.isEmpty()
+            || (m_activeGroup == kFavGroup ? isFavourite(s.symbol)
+                                           : it->group == m_activeGroup);
         const bool searchOk = q.isEmpty()
             || s.symbol.toUpper().contains(q)
             || s.displayName.toUpper().contains(q);
@@ -285,7 +372,11 @@ void WatchlistWidget::updateQuote(const Quote& q) {
 
     if (auto* sym = m_table->item(row.row, 0)) {
         const char* arrow = row.dir > 0 ? ARROW_UP : row.dir < 0 ? ARROW_DOWN : ARROW_FLAT;
-        sym->setText(QString("%1  %2").arg(QString::fromUtf8(arrow), q.symbol));
+        // The star is re-applied on every tick, not just when it is toggled —
+        // this line rewrites the whole cell, so leaving it out would quietly
+        // strip the star off any symbol that is actually moving.
+        const QString star = isFavourite(q.symbol) ? QString::fromUtf8(STAR_ON) + " " : QString();
+        sym->setText(QString("%1%2  %3").arg(star, QString::fromUtf8(arrow), q.symbol));
         sym->setForeground(dirColor);
     }
     if (auto* bid = m_table->item(row.row, 1)) {

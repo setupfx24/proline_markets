@@ -12,7 +12,6 @@ PriceStream::PriceStream(const Config& cfg, QObject* parent)
             this, &PriceStream::onError);
 
     m_reconnectTimer.setSingleShot(true);
-    m_reconnectTimer.setInterval(4000);
     connect(&m_reconnectTimer, &QTimer::timeout, this, [this]() {
         if (m_wantRun) {
             emit statusChanged(tr("Reconnecting…"));
@@ -23,6 +22,7 @@ PriceStream::PriceStream(const Config& cfg, QObject* parent)
 
 void PriceStream::start() {
     m_wantRun = true;
+    m_retryMs = kRetryFloorMs;   // a deliberate (re)start earns a fresh budget
     emit statusChanged(tr("Connecting…"));
     m_ws.open(QUrl(m_cfg.wsUrl));
 }
@@ -51,13 +51,34 @@ void PriceStream::onConnected() {
 }
 
 void PriceStream::onDisconnected() {
+    const bool wasAuthed = m_authed;
     m_authed = false;
-    if (m_wantRun) {
-        emit statusChanged(tr("Disconnected — retrying…"));
-        scheduleReconnect();
-    } else {
+    if (!m_wantRun) {
         emit statusChanged(tr("Stopped"));
+        return;
     }
+
+    // Application close codes from /ws/algo/prices — see algo_prices_ws():
+    //   4001 auth_timeout   4002 bad_auth_message
+    //   4003 invalid_credentials   4004 account_inactive
+    //
+    // These are the ones no amount of reconnecting will fix. 4003 is the one
+    // traders actually hit: POST /algo/generate revokes the account's previous
+    // key before minting a new one, so signing in anywhere else silently kills
+    // the key this terminal is holding. The old behaviour was to retry every
+    // four seconds forever, which is exactly the "Disconnected — retrying…"
+    // that never goes away. Ask the host for a fresh key pair instead.
+    const int code = m_ws.closeCode();
+    if (!wasAuthed && code >= 4002 && code <= 4004) {
+        const QString why = code == 4004 ? tr("This trading account is not active.")
+                                         : tr("Market-data credentials were rejected.");
+        emit statusChanged(tr("%1 Renewing…").arg(why));
+        emit credentialsRejected(why);
+        return;   // no blind retry — renewAndRestart() drives what happens next
+    }
+
+    emit statusChanged(tr("Disconnected — retrying…"));
+    scheduleReconnect();
 }
 
 void PriceStream::onError() {
@@ -71,6 +92,7 @@ void PriceStream::onTextMessage(const QString& msg) {
     // Auth acknowledgement
     if (o.value("status").toString() == "authenticated") {
         m_authed = true;
+        m_retryMs = kRetryFloorMs;   // a good connection clears the backoff
         const QString acct = o.value("account").toString();
         emit statusChanged(tr("Live • account %1").arg(acct));
         emit authenticated(acct);
@@ -94,6 +116,10 @@ void PriceStream::onTextMessage(const QString& msg) {
 }
 
 void PriceStream::scheduleReconnect() {
-    if (m_wantRun && !m_reconnectTimer.isActive())
-        m_reconnectTimer.start();
+    if (!m_wantRun || m_reconnectTimer.isActive()) return;
+    m_reconnectTimer.start(m_retryMs);
+    // Double up to a minute. A terminal left open overnight against a dead
+    // endpoint used to make 900 attempts an hour and repaint the status bar
+    // with each one; it now settles at one a minute.
+    m_retryMs = qMin(m_retryMs * 2, kRetryCeilMs);
 }

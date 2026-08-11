@@ -2,6 +2,8 @@
 #include <QObject>
 #include <QString>
 #include <QQueue>
+#include <QHash>
+#include <QSet>
 #include "core/Models.h"
 
 class ApiClient;
@@ -106,4 +108,21 @@ private:
     // JS reqId that asked, FIFO per (symbol,timeframe).
     struct Pending { QString key; QString reqId; };
     QQueue<Pending> m_pending;
+
+    // ── /bars de-duplication and short-lived cache ──
+    //
+    // Four panes on the same instrument used to mean four separate 1000-bar
+    // downloads, fired within milliseconds of each other at exactly the moment
+    // the terminal is busiest — sign-in. TradingView also re-asks for history
+    // on every timeframe switch and every scroll into the past, so flipping
+    // 5m -> 1m -> 5m re-downloaded ground already covered.
+    //
+    // Now: one request per (symbol,timeframe) in flight at a time, its answer
+    // fanned out to everyone waiting, and the payload kept for a few seconds so
+    // a switch back is instant. Only HISTORY is cached — the forming candle is
+    // built from live ticks in the datafeed and is not affected by this.
+    QSet<QString>            m_inFlight;   // keys currently awaiting a response
+    QHash<QString, QString>  m_barsCache;  // key -> bars JSON
+    QHash<QString, qint64>   m_cachedAt;   // key -> ms since epoch
+    static constexpr qint64  kBarsCacheMs = 15000;
 };

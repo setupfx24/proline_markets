@@ -25,6 +25,12 @@ public:
     QString currentSymbol() const { return m_selected; }
     void selectSymbol(const QString& symbol);
 
+    // Starred instruments, restored from Config on start. Order is preserved:
+    // it is the order they were starred in, which is the order the Favourites
+    // filter lists them in.
+    void setFavourites(const QStringList& symbols);
+    QStringList favourites() const { return m_favourites; }
+
 public slots:
     void updateQuote(const Quote& q);
     void applyTheme();
@@ -35,6 +41,8 @@ signals:
     // order window. Kept separate from symbolActivated, which also fires on a
     // plain selection change and must not pop a dialog on every arrow key.
     void symbolDoubleClicked(const QString& symbol);
+    // A star was toggled — MainWindow persists the list to Config.
+    void favouritesChanged(const QStringList& symbols);
 
 private:
     struct Row {
@@ -51,6 +59,12 @@ private:
     void setMarket(const QString& group);
     void onSelectionChanged();
     static QString marketGroup(const QString& category);
+    // Right-click on a row: star / unstar it.
+    void openRowMenu(const QPoint& pos);
+    void toggleFavourite(const QString& symbol);
+    bool isFavourite(const QString& symbol) const { return m_favourites.contains(symbol); }
+    // Repaint one row's symbol cell (star + direction arrow + name).
+    void refreshSymbolCell(const QString& symbol);
 
     QLineEdit*    m_search;
     QPushButton*  m_marketBtn;
@@ -59,7 +73,11 @@ private:
     QTimer*       m_clock;
 
     QVector<SymbolSpec>  m_all;
-    QString              m_activeGroup;   // "" = all
+    QString              m_activeGroup;   // "" = all, kFavGroup = starred only
+    QStringList          m_favourites;
+    // Sentinel for the Favourites entry in the market filter. Not a real segment
+    // name, and starts with a character no segment can, so it cannot collide.
+    static const QString kFavGroup;
     QString              m_selected;
     QHash<QString, Row>  m_rows;
     bool                 m_selecting = false;   // guards programmatic selection

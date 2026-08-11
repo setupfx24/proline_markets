@@ -37,6 +37,11 @@ public:
     QStringList chartSymbols;
     QStringList chartIntervals;   // "5", "60", "1D", … per pane
 
+    // Starred instruments in Market Watch, in the order they were starred.
+    // Local to this install on purpose: it is a view preference, not account
+    // state, and there is no endpoint that stores one per user.
+    QStringList favourites;
+
     // Legacy bot auth (still supported for a pasted API key).
     QString apiKey;
     QString apiSecret;

@@ -31,6 +31,8 @@
 #include <QDesktopServices>
 #include <QUrl>
 #include <QUrlQuery>
+#include <QClipboard>
+#include <QGuiApplication>
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QJsonObject>
@@ -49,6 +51,9 @@ MainWindow::MainWindow(const Config& cfg, QWidget* parent)
 
     // --- widgets ---
     m_watch     = new WatchlistWidget;
+    // Before any symbols arrive: setSymbols() paints the stars as it builds the
+    // rows, so the list has to know them first.
+    m_watch->setFavourites(m_cfg.favourites);
     m_charts    = new ChartArea(m_api, m_stream);        // 1/2/4 TradingView panes
     m_ticket    = new OrderTicket;
     m_account   = new AccountPanel;
@@ -512,6 +517,14 @@ void MainWindow::connectServices() {
     // row that was double-clicked by the time this fires.
     connect(m_watch, &WatchlistWidget::symbolDoubleClicked, this,
             [this](const QString& s) { onSymbolActivated(s); openOrderWindow(); });
+    // Starred instruments are a local view preference, so they are saved the
+    // moment they change rather than only on a clean exit — the terminal is
+    // routinely killed with the window ✕.
+    connect(m_watch, &WatchlistWidget::favouritesChanged, this,
+            [this](const QStringList& favs) {
+        m_cfg.favourites = favs;
+        m_cfg.save();
+    });
 
     // The chart (TradingView) pulls bars + ticks itself via the ChartBridge,
     // so no bars/tick wiring is needed here for it.
@@ -593,6 +606,71 @@ void MainWindow::connectServices() {
         if (dlg.exec() != QDialog::Accepted) return;
         // A full close sends no lots at all — see ApiClient::closePositionById.
         m_api->closePositionById(pos.id, dlg.isFullClose() ? 0.0 : dlg.lotsToClose());
+    });
+
+    // Share a trade. The server mints (or reuses) a short code; the link is put
+    // straight on the clipboard, because pasting it into WhatsApp is the whole
+    // reason the button exists — the dialog is confirmation, not a step.
+    connect(m_positions, &PositionsPanel::sharePosition, this,
+            [this](const OpenPosition& pos) {
+        if (!requireSession(tr("Sharing a trade"))) return;
+        setStatus(tr("Creating a share link for %1…").arg(pos.symbol));
+        m_api->shareTrade(pos.id);
+    });
+    connect(m_api, &ApiClient::shareLinkReady, this,
+            [this](const QString&, bool ok, const QString& code, const QString& message) {
+        if (!ok) { setStatus(message, true); return; }
+
+        QString base = m_cfg.webBase.trimmed();
+        if (base.isEmpty()) base = QStringLiteral("https://trade.prolinemarket.com");
+        while (base.endsWith('/')) base.chop(1);
+        const QString url = base + "/s/" + code;
+
+        QGuiApplication::clipboard()->setText(url);
+        setStatus(tr("Share link copied to the clipboard"));
+
+        QMessageBox box(this);
+        box.setIcon(QMessageBox::Information);
+        box.setWindowTitle(tr("Share trade"));
+        box.setText(tr("The link is on your clipboard."));
+        box.setInformativeText(url);
+        QPushButton* open = box.addButton(tr("Open in browser"), QMessageBox::ActionRole);
+        box.addButton(QMessageBox::Close);
+        box.setDefaultButton(QMessageBox::Close);
+        box.exec();
+        if (box.clickedButton() == open) QDesktopServices::openUrl(QUrl(url));
+    });
+
+    // Close all / close the winners / close the losers. Every one of these can
+    // shut a whole book in one click, so it always confirms and always names
+    // the exact set and its combined P/L — "Close all" with no number in front
+    // of it is how someone closes six positions meaning to close one.
+    connect(m_positions, &PositionsPanel::closeBatch, this,
+            [this](const QVector<OpenPosition>& batch, const QString& what) {
+        if (batch.isEmpty()) return;
+        if (!requireSession(tr("Closing positions"))) return;
+
+        double pnl = 0;
+        for (const OpenPosition& p : batch) pnl += p.profit;
+        const QString sign = pnl >= 0 ? "+" : "";
+
+        QMessageBox box(this);
+        box.setIcon(QMessageBox::Question);
+        box.setWindowTitle(tr("Close positions"));
+        box.setText(tr("Close %1 at market?").arg(what));
+        box.setInformativeText(tr("Combined P/L right now is %1%2. Each position closes at "
+                                  "the price available when its order lands, so the realised "
+                                  "figure will differ.")
+                               .arg(sign, money(pnl, m_lastAccount.currency)));
+        box.setStandardButtons(QMessageBox::Yes | QMessageBox::Cancel);
+        box.setDefaultButton(QMessageBox::Cancel);   // never the destructive one
+        if (box.exec() != QMessageBox::Yes) return;
+
+        // Full close each — no lots argument. Sent as separate requests because
+        // that is the only close endpoint there is; they are independent, so one
+        // rejection does not strand the rest.
+        for (const OpenPosition& p : batch) m_api->closePositionById(p.id, 0.0);
+        setStatus(tr("Closing %1…").arg(what));
     });
 
     // S/L and T/P were display-only in the blotter: the columns showed the
@@ -697,6 +775,51 @@ void MainWindow::connectServices() {
         // must not do. Surface only the trouble states, and clear on recovery.
         setStatus(live ? QString() : s, !live);
     });
+
+    // The tick stream's key pair was refused. This is not a network blip and
+    // reconnecting cannot fix it: /algo/generate revokes the account's previous
+    // key, so signing in on another machine (or re-signing in here) kills the
+    // pair this session holds, and the stream then failed every four seconds
+    // forever — the "Disconnected — retrying…" that never clears.
+    //
+    // Mint a replacement with the JWT and restart. Once per episode: the latch
+    // clears on the next good authentication, so a genuinely revoked account
+    // does not turn into a mint loop.
+    connect(m_stream, &PriceStream::credentialsRejected, this, [this](const QString& why) {
+        if (m_keyRenewTried) {
+            setStatus(tr("%1 Sign out and back in to restore market data.").arg(why), true);
+            return;
+        }
+        m_keyRenewTried = true;
+        m_api->renewAlgoKey();
+    });
+    connect(m_api, &ApiClient::algoKeyRenewed, this,
+            [this](bool ok, const QString& key, const QString& secret, const QString& message) {
+        if (!ok) {
+            setStatus(tr("Market data could not be restored: %1").arg(message), true);
+            return;
+        }
+        m_cfg.apiKey    = key;
+        m_cfg.apiSecret = secret;
+        m_cfg.save();          // the secret is returned once — losing it costs a re-login
+        m_api->setConfig(m_cfg);
+        m_stream->setConfig(m_cfg);
+        m_stream->start();
+
+        // The tick stream is not the only thing the dead pair took down: the
+        // instrument list, the price snapshot and every chart's bars are all on
+        // /api/algo too, and a terminal that started with a revoked key fetched
+        // none of them. Restarting the socket alone left a connected terminal
+        // staring at an empty Market Watch — so pull them again here.
+        // onSymbolsReceived() re-seeds the watchlist, the charts and the price
+        // snapshot, which is everything that came up empty.
+        m_api->fetchSymbols();
+        setStatus(tr("Market data reconnected"));
+    });
+    // A good authentication means the current pair works, so the next failure
+    // is allowed its own renewal attempt.
+    connect(m_stream, &PriceStream::authenticated, this,
+            [this](const QString&) { m_keyRenewTried = false; });
 }
 
 void MainWindow::switchAccount(const QString& accountId) {

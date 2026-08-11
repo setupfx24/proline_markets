@@ -92,6 +92,10 @@ private:
     // would loop: the poll 401s, that triggers a refresh, the refresh answers
     // and the next poll 401s again a second later.
     bool     m_authRecoveryTried = false;
+    // One market-data key renewal per failure episode, cleared by the next good
+    // stream authentication. Without it a revoked account would mint a key,
+    // fail, mint another, and so on for as long as the terminal is open.
+    bool     m_keyRenewTried = false;
     QLabel*  m_identity = nullptr;     // menu-bar left: name | type | account no.
     QMenu*   m_accountsMenu = nullptr;
     QAction* m_darkAction   = nullptr;

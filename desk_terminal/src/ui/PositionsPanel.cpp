@@ -18,6 +18,7 @@
 #include <QApplication>
 #include <QFont>
 #include <QColor>
+#include <QStringBuilder>
 
 static const char* MASK = "••••";
 
@@ -189,6 +190,61 @@ QWidget* PositionsPanel::buildFilterBar(int tab) {
     h->addWidget(date);
     h->addStretch();
 
+    // ── Bulk close, Trade tab only ──
+    // Closing out is the one thing a trader does under pressure, and doing it
+    // one ✕ at a time across a dozen rows is exactly when a mis-click costs
+    // money. The three sets MT5 offers are the ones that matter: everything,
+    // the winners, the losers. Each is disabled when its set is empty, so the
+    // bar also answers "is anything in profit right now?" at a glance.
+    if (tab == 0) {
+        const auto& c = Theme::p();
+        auto mkClose = [&](const QString& text, const QString& colour, const QString& tip) {
+            auto* b = new QPushButton(text);
+            b->setMinimumHeight(22);
+            b->setCursor(Qt::PointingHandCursor);
+            b->setFocusPolicy(Qt::NoFocus);
+            b->setToolTip(tip);
+            b->setStyleSheet(QString(
+                "QPushButton{background:transparent; color:%1; border:1px solid %1;"
+                "border-radius:4px; padding:1px 9px; font-size:11px; font-weight:700;}"
+                "QPushButton:hover:!disabled{background:%1; color:#ffffff;}"
+                "QPushButton:disabled{color:%2; border-color:%3;}")
+                .arg(colour, c.dim, c.btnBorder));
+            return b;
+        };
+        m_closeAll    = mkClose(tr("Close all"),    c.down,
+                                tr("Close every open position at market"));
+        m_closeProfit = mkClose(tr("Close profit"), c.up,
+                                tr("Close only the positions currently in profit"));
+        m_closeLoss   = mkClose(tr("Close loss"),   c.down,
+                                tr("Close only the positions currently at a loss"));
+
+        // Built from the same filtered set the table is showing, so a Period
+        // filter narrows what these close too — closing rows the trader cannot
+        // see would be indefensible.
+        auto emitBatch = [this](int which) {
+            QVector<OpenPosition> batch;
+            for (const OpenPosition& p : m_lastPositions) {
+                if (!passes(0, p.openedAt)) continue;
+                if (which == 1 && !(p.profit > 0)) continue;
+                if (which == 2 && !(p.profit < 0)) continue;
+                batch.append(p);
+            }
+            if (batch.isEmpty()) return;
+            emit closeBatch(batch, which == 0 ? tr("all %1 open position(s)").arg(batch.size())
+                                 : which == 1 ? tr("%1 position(s) in profit").arg(batch.size())
+                                              : tr("%1 losing position(s)").arg(batch.size()));
+        };
+        connect(m_closeAll,    &QPushButton::clicked, this, [emitBatch]() { emitBatch(0); });
+        connect(m_closeProfit, &QPushButton::clicked, this, [emitBatch]() { emitBatch(1); });
+        connect(m_closeLoss,   &QPushButton::clicked, this, [emitBatch]() { emitBatch(2); });
+
+        h->addWidget(m_closeProfit);
+        h->addWidget(m_closeLoss);
+        h->addWidget(m_closeAll);
+        updateCloseButtons({});
+    }
+
     // Pagination, Transactions only. The other three tabs hold a working set a
     // trader wants to see whole — open positions and live pending orders are
     // risk, and hiding half of them behind a page control would be wrong. The
@@ -255,7 +311,75 @@ QWidget* PositionsPanel::wrapTable(int tab, QTableWidget* table) {
     v->setSpacing(0);
     v->addWidget(buildFilterBar(tab));
     v->addWidget(table, 1);
+
+    // History carries a totals footer. Picking "Today" and being shown a list
+    // of trades with no total is the one question the tab exists to answer.
+    if (tab == 2) {
+        m_histTotals = new QLabel;
+        m_histTotals->setContentsMargins(8, 4, 8, 4);
+        m_histTotals->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        v->addWidget(m_histTotals);
+    }
     return page;
+}
+
+// Enabled only when the set is non-empty — the bar doubles as a read on what is
+// currently open, and a button that closes nothing is a trap.
+void PositionsPanel::updateCloseButtons(const QVector<OpenPosition>& shown) {
+    if (!m_closeAll) return;
+    int profit = 0, loss = 0;
+    for (const OpenPosition& p : shown) {
+        if (p.profit > 0) ++profit;
+        else if (p.profit < 0) ++loss;
+    }
+    m_closeAll->setEnabled(!shown.isEmpty());
+    m_closeProfit->setEnabled(profit > 0);
+    m_closeLoss->setEnabled(loss > 0);
+}
+
+// Totals over the rows the filter is showing, NOT the whole account: the period
+// selector above is the question ("what did today do?") and this is its answer.
+void PositionsPanel::updateHistoryTotals(const QVector<HistoryTrade>& shown) {
+    if (!m_histTotals) return;
+    const auto& c = Theme::p();
+
+    double lots = 0, swap = 0, comm = 0, profit = 0;
+    int wins = 0;
+    for (const HistoryTrade& h : shown) {
+        lots   += h.lots;
+        swap   += h.swap;
+        comm   += h.commission;
+        profit += h.profit;
+        if (h.profit > 0) ++wins;
+    }
+    // Net is what actually hit the balance: a trade's profit is booked with its
+    // swap and commission, and a "total" that quietly dropped them would be off
+    // by exactly the costs the trader is trying to see.
+    const double net = profit + swap + comm;
+
+    if (shown.isEmpty()) {
+        m_histTotals->setText(QString("<span style='color:%1;'>%2</span>")
+                              .arg(c.muted, tr("No closed trades in this period")));
+        return;
+    }
+    auto money = [this, &c](double v) {
+        if (m_privacy) return QString("<span style='color:%1;'>%2</span>").arg(c.text, MASK);
+        return QString("<span style='color:%1;font-weight:700;'>%2%3</span>")
+               .arg(v < 0 ? c.down : c.up, v > 0 ? "+" : "", fmt(v));
+    };
+    auto plain = [&c](const QString& k, const QString& v) {
+        return QString("<span style='color:%1;'>%2</span> "
+                       "<span style='color:%3;font-weight:600;'>%4</span>").arg(c.muted, k, c.text, v);
+    };
+    m_histTotals->setText(
+        QString("%1 &nbsp;·&nbsp; %2 &nbsp;·&nbsp; %3 &nbsp;·&nbsp; %4 &nbsp;·&nbsp; "
+                "<span style='color:%5;'>%6</span> %7")
+        .arg(plain(tr("Trades"), QString::number(shown.size())),
+             plain(tr("Won"), tr("%1 of %2").arg(wins).arg(shown.size())),
+             plain(tr("Volume"), fmt(lots)),
+             plain(tr("Swap / Comm"), m_privacy ? QString(MASK)
+                                                : QString("%1 / %2").arg(fmt(swap), fmt(comm))),
+             c.muted, tr("Total"), money(net)));
 }
 
 PositionsPanel::PositionsPanel(QWidget* parent) : QWidget(parent) {
@@ -275,12 +399,12 @@ PositionsPanel::PositionsPanel(QWidget* parent) : QWidget(parent) {
     // Action holds a control, not data: pin it narrow so it does not take an
     // equal share of the width like the value columns do — just wide enough for
     // the header word and a centred button.
-    // 68px fits the two 22px icon buttons (edit + close) with their spacing and
-    // the header word. It was 92 while the edit control was a wider "S/L" text
-    // button; that has since become a pencil icon.
+    // 98px fits the three 24px icon buttons — share, edit, close — with their
+    // spacing and the header word. It was 68 for two; a third button at that
+    // width pushed the row's controls under the column edge.
     const int closeCol = m_posTable->columnCount() - 1;
     m_posTable->horizontalHeader()->setSectionResizeMode(closeCol, QHeaderView::Fixed);
-    m_posTable->setColumnWidth(closeCol, 68);
+    m_posTable->setColumnWidth(closeCol, 98);
     // 68px, matching the Trade tab: this cell now holds the same edit + cancel
     // pair rather than a lone ✕.
     const int cancelCol = m_orderTable->columnCount() - 1;
@@ -314,8 +438,24 @@ PositionsPanel::PositionsPanel(QWidget* parent) : QWidget(parent) {
     connect(Theme::notifier(), &Theme::Notifier::changed, this, &PositionsPanel::applyTheme);
 }
 
+// Everything about a row except the numbers that move with the market. The
+// brackets are in it because an S/L cell carries its own level and must be
+// rewritten when the server's value changes.
+QString PositionsPanel::rowsSignature(const QVector<OpenPosition>& v) {
+    QString s;
+    s.reserve(v.size() * 48);
+    for (const OpenPosition& p : v)
+        s += p.id % QLatin1Char('|') % QString::number(p.sl, 'f', 5)
+                  % QLatin1Char('|') % QString::number(p.tp, 'f', 5)
+                  % QLatin1Char('|') % QString::number(p.lots, 'f', 4) % QLatin1Char(';');
+    return s;
+}
+
 void PositionsPanel::applyTheme() {
-    // Colours live in the row items, so the tables are simply re-rendered.
+    // Colours live in the row items, so the tables are simply re-rendered. The
+    // signature is dropped first: the rows are unchanged, but they have to be
+    // repainted, which is the one thing the fast path in setPositions() skips.
+    m_posSig.clear();
     setPositions(m_lastPositions);
     setOrders(m_lastOrders);
     setHistory(m_lastHistory);
@@ -401,7 +541,40 @@ void PositionsPanel::setPositions(const QVector<OpenPosition>& positions) {
         if (passes(0, p.openedAt)) shown.append(p);
 
     const auto& c = Theme::p();
+    updateCloseButtons(shown);
     m_tabs->setTabText(0, tabCaption(tr("Trade"), shown.size(), positions.size()));
+
+    // ── Fast path: same rows, new numbers ──
+    //
+    // This runs every four seconds. The slow path below builds two QPushButtons
+    // per row, each with a freshly rendered SVG icon and an event filter, and
+    // throws away the previous set — for a trader with a dozen positions open
+    // that is two dozen widgets destroyed and recreated, every four seconds,
+    // for the whole session. It showed up exactly as reported: a terminal that
+    // gets sluggish while you are working in it.
+    //
+    // Between opens and closes only three cells actually move, so when the row
+    // structure is untouched they are written in place and every widget stays
+    // exactly where it is.
+    const QString sig = rowsSignature(shown);
+    if (sig == m_posSig && m_posTable->rowCount() == shown.size()) {
+        auto cash = [this](double v) { return m_privacy ? QString::fromUtf8(MASK) : fmt(v); };
+        const auto RA = Qt::AlignRight | Qt::AlignVCenter;
+        for (int i = 0; i < shown.size(); ++i) {
+            const OpenPosition& p = shown.at(i);
+            if (auto* it = m_posTable->item(i, 8))
+                it->setText(p.currentPrice > 0 ? fmt(p.currentPrice, 5) : QString());
+            if (auto* it = m_posTable->item(i, 9)) it->setText(cash(p.swap));
+            if (auto* it = m_posTable->item(i, 10)) {
+                it->setText(cash(p.profit));
+                it->setForeground(p.profit >= 0 ? QColor(c.up) : QColor(c.down));
+                it->setTextAlignment(RA);
+            }
+        }
+        m_populating = false;
+        return;
+    }
+    m_posSig = sig;
     m_posTable->setRowCount(shown.size());
     int r = 0;
     const auto R = Qt::AlignRight | Qt::AlignVCenter;
@@ -468,6 +641,22 @@ void PositionsPanel::setPositions(const QVector<OpenPosition>& positions) {
         connect(editBtn, &QPushButton::clicked, this,
                 [this, row]() { emit modifyBrackets(row); });
 
+        // Share — hands out the public card for this trade. Same size and
+        // treatment as the pair beside it; neutral colour, because unlike edit
+        // and close it changes nothing about the position.
+        auto* shareBtn = new QPushButton;
+        shareBtn->setFixedSize(24, 20);
+        shareBtn->setCursor(Qt::PointingHandCursor);
+        shareBtn->setToolTip(tr("Share this trade — copies a public link"));
+        shareBtn->setIcon(Icons::share(QColor(c.muted), 14));
+        shareBtn->setIconSize(QSize(14, 14));
+        shareBtn->setStyleSheet(QString(
+            "QPushButton{background:transparent; border:1px solid %1; border-radius:3px;}"
+            "QPushButton:hover{border-color:%2;}")
+            .arg(c.btnBorder, c.accent));
+        connect(shareBtn, &QPushButton::clicked, this,
+                [this, row]() { emit sharePosition(row); });
+
         // Centred in the cell — a fixed-size widget handed straight to
         // setCellWidget() sticks to the left edge.
         auto* cellWrap = new QWidget;
@@ -475,6 +664,7 @@ void PositionsPanel::setPositions(const QVector<OpenPosition>& positions) {
         wrapLay->setContentsMargins(0, 0, 0, 0);
         wrapLay->setSpacing(3);
         wrapLay->addStretch();
+        wrapLay->addWidget(shareBtn);
         wrapLay->addWidget(editBtn);
         wrapLay->addWidget(closeBtn);
         wrapLay->addStretch();
@@ -645,4 +835,5 @@ void PositionsPanel::setHistory(const QVector<HistoryTrade>& history) {
         m_histTable->setItem(r, 9, pnl);
         ++r;
     }
+    updateHistoryTotals(shown);
 }

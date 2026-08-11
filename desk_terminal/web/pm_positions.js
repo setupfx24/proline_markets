@@ -183,19 +183,38 @@
     return base + (cur - ref) * dir * Number(p.lots) * this._contract(p.symbol);
   };
 
-  // A bracket may only sit on the side of the entry that its purpose implies:
-  // BUY  -> TP above entry, SL below.   SELL -> TP below entry, SL above.
+  // A bracket may only sit on the side of the CURRENT market that its purpose
+  // implies: a stop must still be somewhere the price has to travel to reach,
+  // and a target somewhere it has not reached yet.
+  //
+  // This used to compare against the ENTRY price, which rejected the single
+  // most common thing a trader does with a stop: trailing it up to break-even
+  // or into profit on a winning position. That is legal — the server allows it
+  // and validates exactly this way (see trading_service.modify_position) — but
+  // the drag never reached the server, because this refused it first with
+  // "Invalid Stop Loss". Reported by a client as "Stoploss moved in profit not
+  // work". The reference is the price the position would CLOSE at: the bid for
+  // a buy, the ask for a sell, same as the server's exit_price.
+  //
   // Returns "" when the level is acceptable (0 = remove, always allowed).
   Overlay.prototype._invalidReason = function (p, kind, level) {
     if (!(level > 0)) return "";
-    var entry = Number(p.open_price) || 0;
     var isBuy = this._isBuy(p);
+
+    var q = this._quote[p.symbol];
+    var ref = q ? (isBuy ? q.bid : q.ask) : 0;
+    // No live tick yet — fall back to the server's last known close price, and
+    // if there is not even that, let it through: the server checks again, and
+    // guessing here would block a legitimate move on a quiet symbol.
+    if (!(ref > 0)) ref = Number(p.current_price) || 0;
+    if (!(ref > 0)) return "";
+
     if (kind === "tp") {
-      if (isBuy  && level <= entry) return "Take Profit must be ABOVE the buy price.";
-      if (!isBuy && level >= entry) return "Take Profit must be BELOW the sell price.";
+      if (isBuy  && level <= ref) return "Take Profit must be ABOVE the current price.";
+      if (!isBuy && level >= ref) return "Take Profit must be BELOW the current price.";
     } else {
-      if (isBuy  && level >= entry) return "Stop Loss must be BELOW the buy price.";
-      if (!isBuy && level <= entry) return "Stop Loss must be ABOVE the sell price.";
+      if (isBuy  && level >= ref) return "Stop Loss must be BELOW the current price.";
+      if (!isBuy && level <= ref) return "Stop Loss must be ABOVE the current price.";
     }
     return "";
   };
@@ -651,9 +670,14 @@
   Overlay.prototype._commit = function (p, kind, level) {
     var why = this._invalidReason(p, kind, level);
     if (why) {
+      // Quote the price the rule was judged against, not the entry — being told
+      // "must be below the current price (Entry 4255.10)" while the market is
+      // at 4310 is the kind of message that sends someone to support.
+      var q = this._quote[p.symbol];
+      var ref = q ? (this._isBuy(p) ? q.bid : q.ask) : (Number(p.current_price) || 0);
       this._dialog({
         title: "Invalid " + (kind === "tp" ? "Take Profit" : "Stop Loss"),
-        body: why + " (Entry " + fmt(p.open_price, this._digits(p.symbol)) + ")",
+        body: why + (ref > 0 ? " (Current " + fmt(ref, this._digits(p.symbol)) + ")" : ""),
         confirmLabel: "OK",
         onConfirm: function () {},
       });

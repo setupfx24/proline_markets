@@ -58,6 +58,11 @@ Config Config::load() {
         for (const QJsonValue& v : o.value("chartIntervals").toArray())
             c.chartIntervals << v.toString();
     }
+    if (o.contains("favourites")) {
+        c.favourites.clear();
+        for (const QJsonValue& v : o.value("favourites").toArray())
+            c.favourites << v.toString();
+    }
     if (o.contains("restBase") && !o.value("restBase").toString().isEmpty())
         c.restBase = o.value("restBase").toString();
     if (o.contains("wsUrl") && !o.value("wsUrl").toString().isEmpty())
@@ -85,6 +90,7 @@ bool Config::save() const {
     o["chartCount"]     = chartCount;
     o["chartSymbols"]   = QJsonArray::fromStringList(chartSymbols);
     o["chartIntervals"] = QJsonArray::fromStringList(chartIntervals);
+    o["favourites"]     = QJsonArray::fromStringList(favourites);
 
     QFile f(filePath());
     if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate))

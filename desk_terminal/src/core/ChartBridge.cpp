@@ -4,6 +4,8 @@
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QDateTime>
+#include <QMetaObject>
 
 ChartBridge::ChartBridge(ApiClient* api, PriceStream* stream, QObject* parent)
     : QObject(parent), m_api(api), m_stream(stream) {
@@ -108,24 +110,48 @@ void ChartBridge::requestBars(const QString& symbol, const QString& timeframe,
                               double /*fromSec*/, double /*toSec*/, const QString& reqId) {
     // The API returns the most-recent N bars (no from/to filter); JS filters to
     // the requested window. Ask for a generous window.
-    m_pending.enqueue({symbol + "|" + timeframe, reqId});
+    const QString key = symbol + "|" + timeframe;
+
+    // Answer straight from the cache when it is fresh. Queued rather than
+    // emitted inline: barsReady() is what the JS datafeed listens on, and
+    // firing it before requestBars() has even returned re-enters the datafeed
+    // inside its own getBars() call.
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    if (m_barsCache.contains(key) && now - m_cachedAt.value(key, 0) < kBarsCacheMs) {
+        const QString cached = m_barsCache.value(key);
+        QMetaObject::invokeMethod(this, [this, reqId, cached]() {
+            emit barsReady(reqId, cached);
+        }, Qt::QueuedConnection);
+        return;
+    }
+
+    m_pending.enqueue({key, reqId});
+    // One fetch per key at a time. Four panes on the same instrument used to
+    // fire four identical 1000-bar downloads; the extra three are now waiters
+    // on the first, and all of them are answered from its response.
+    if (m_inFlight.contains(key)) return;
+    m_inFlight.insert(key);
     m_api->fetchBars(symbol, timeframe, 1000);
 }
 
 void ChartBridge::onBarsReceived(const QString& symbol, const QString& timeframe,
                                  const QVector<Bar>& bars) {
     const QString key = symbol + "|" + timeframe;
+    m_inFlight.remove(key);
 
-    // Find the oldest pending request for this (symbol,timeframe).
-    QString reqId;
-    for (int i = 0; i < m_pending.size(); ++i) {
+    // Collect EVERY request waiting on this (symbol,timeframe), not just the
+    // oldest: with de-duplication above, one response is the answer to all of
+    // them. Popping a single one used to leave the other panes' datafeed
+    // requests unanswered until their 6s timeout fired and reported "no data" —
+    // which is what an empty pane after a symbol or timeframe switch was.
+    QStringList reqIds;
+    for (int i = m_pending.size() - 1; i >= 0; --i) {
         if (m_pending[i].key == key) {
-            reqId = m_pending[i].reqId;
+            reqIds.prepend(m_pending[i].reqId);
             m_pending.removeAt(i);
-            break;
         }
     }
-    if (reqId.isEmpty()) return;   // not ours (e.g. legacy chart request)
+    if (reqIds.isEmpty()) return;   // not ours (e.g. legacy chart request)
 
     QJsonArray arr;
     for (const Bar& b : bars) {
@@ -138,7 +164,15 @@ void ChartBridge::onBarsReceived(const QString& symbol, const QString& timeframe
         o["volume"] = b.volume;
         arr.append(o);
     }
-    emit barsReady(reqId, QString::fromUtf8(QJsonDocument(arr).toJson(QJsonDocument::Compact)));
+    const QString json = QString::fromUtf8(QJsonDocument(arr).toJson(QJsonDocument::Compact));
+
+    // Empty answers are not cached: a 401 or an aggregator hiccup would
+    // otherwise pin an empty chart in place for the whole TTL.
+    if (!bars.isEmpty()) {
+        m_barsCache.insert(key, json);
+        m_cachedAt.insert(key, QDateTime::currentMSecsSinceEpoch());
+    }
+    for (const QString& id : reqIds) emit barsReady(id, json);
 }
 
 void ChartBridge::onTick(const Quote& q) {

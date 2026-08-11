@@ -48,12 +48,18 @@ signals:
     void closePosition(const OpenPosition& position);
     // Edit this position's stop loss / take profit.
     void modifyBrackets(const OpenPosition& position);
+    // Mint a public share card for this trade and hand the trader the link.
+    void sharePosition(const OpenPosition& position);
     // Cancel a listed pending order.
     void cancelOrder(const PendingOrder& order);
     // Amend a listed pending order (price / volume / brackets).
     void modifyOrder(const PendingOrder& order);
     // An S/L or T/P cell was edited in place. level 0 removes that bracket.
     void bracketEdited(const QString& positionId, const QString& kind, double level);
+    // Close every position in `batch` at market. `what` names the set for the
+    // confirmation ("all 6 positions" / "4 positions in profit") — the panel
+    // knows which button was pressed, MainWindow only has to confirm and send.
+    void closeBatch(const QVector<OpenPosition>& batch, const QString& what);
 
 private slots:
     void onBracketEdited(class QTableWidgetItem* item);
@@ -70,6 +76,10 @@ private:
     bool passes(int tab, const QString& iso) const;
     QWidget* buildFilterBar(int tab);
     QWidget* wrapTable(int tab, QTableWidget* table);
+    // Totals under the History table, over the rows the filter is showing.
+    void updateHistoryTotals(const QVector<HistoryTrade>& shown);
+    // Enable/disable the three bulk-close buttons for the current position set.
+    void updateCloseButtons(const QVector<OpenPosition>& shown);
 
     QTabWidget*   m_tabs;
     NewsPanel*    m_news = nullptr;
@@ -106,4 +116,23 @@ private:
     QPushButton* m_txnNext = nullptr;
     QLabel*      m_txnPageLbl = nullptr;
     int          txnPageSize() const;
+
+    // ── History totals ──
+    // A footer under the table rather than a last row in it: a row scrolls out
+    // of sight in a blotter this short, and the total is the thing a trader
+    // looks for after picking a period.
+    QLabel* m_histTotals = nullptr;
+
+    // ── Bulk close (Trade tab) ──
+    QPushButton* m_closeAll    = nullptr;
+    QPushButton* m_closeProfit = nullptr;
+    QPushButton* m_closeLoss   = nullptr;
+
+    // Structure of the rows currently drawn in the Trade table: ids and bracket
+    // levels, i.e. everything except the numbers that move with the market.
+    // While it is unchanged, a poll only rewrites the three live cells instead
+    // of rebuilding every row — see setPositions(). Cleared by anything that
+    // changes how a row is PAINTED (theme, privacy) to force a full redraw.
+    QString m_posSig;
+    static QString rowsSignature(const QVector<OpenPosition>& v);
 };
