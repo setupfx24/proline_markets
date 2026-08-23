@@ -1,9 +1,13 @@
 ﻿/**
  * Custom datafeed for the TradingView Advanced Charting Library.
  *
- * - Crypto history: Binance REST API (real OHLCV data)
- * - Other instruments: Synthetic candles anchored to current live price
+ * - History: the platform's own aggregated bars (/instruments/{sym}/bars) —
+ *   the same source the desktop terminal charts from, so the two agree
+ * - Crypto: Binance REST as a deeper-history fallback (real OHLCV)
  * - Live updates: builds bars from Zustand price ticks (WebSocket fed)
+ *
+ * There is NO synthetic fallback. If there is no real history the chart ends
+ * where the data does; it never draws a price that was not quoted.
  *
  * Modelled after prolinemarket's SetupfxDatafeed â€” fast, no backend bar dependency.
  */
@@ -121,92 +125,6 @@ async function fetchBinanceKlines(
 }
 
 /* â”€â”€â”€ Synthetic historical candles (non-crypto) â”€â”€â”€ */
-
-function seededRand(seed: number) {
-  let s = Math.abs(seed) % 2147483647;
-  if (s === 0) s = 1;
-  return () => {
-    s = (s * 16807) % 2147483647;
-    return (s - 1) / 2147483646;
-  };
-}
-
-function getSymbolCategory(symbol: string): string {
-  const s = symbol.toUpperCase();
-  if (s.startsWith("XAU") || s.startsWith("XAG")) return "metals";
-  if (["USOIL", "UKOIL", "NGAS"].includes(s)) return "commodities";
-  if (["US30", "US500", "NAS100", "UK100", "GER40"].includes(s))
-    return "indices";
-  if (BINANCE_PAIRS[s]) return "crypto";
-  return "forex";
-}
-
-function generateSyntheticBars(
-  symbol: string,
-  mid: number,
-  spread: number,
-  resolution: string,
-  from: number,
-  to: number,
-): Bar[] {
-  if (mid <= 0) return [];
-  const resSec = RESOLUTION_TO_SECONDS[resolution] ?? 300;
-  const cat = getSymbolCategory(symbol);
-
-  let volPct = 0.0003;
-  if (cat === "metals") volPct = 0.0004;
-  if (cat === "indices") volPct = 0.0005;
-  if (cat === "commodities") volPct = 0.0006;
-  if (cat === "crypto") volPct = 0.001;
-  const resFactor = Math.sqrt(resSec / 300);
-  const volatility = Math.max(spread * 1.5, mid * volPct * resFactor);
-
-  const nowSec = Math.floor(Date.now() / 1000);
-  const toSec = Math.min(to, nowSec);
-  const fromAligned = Math.floor(from / resSec) * resSec;
-  const toAligned = Math.floor(toSec / resSec) * resSec;
-  if (fromAligned >= toAligned) return [];
-
-  const count = Math.min(
-    Math.floor((toAligned - fromAligned) / resSec) + 1,
-    500,
-  );
-  const startSec = toAligned - (count - 1) * resSec;
-
-  const seed =
-    symbol.split("").reduce((a, c) => a + c.charCodeAt(0), 0) +
-    Math.floor(startSec / 86400);
-  const rand = seededRand(seed);
-
-  const increments = Array.from(
-    { length: count },
-    () => (rand() - 0.5) * volatility * 2,
-  );
-  let cumSum = 0;
-  const cumSums = increments.map((inc) => {
-    cumSum += inc;
-    return cumSum;
-  });
-  const lastCum = cumSums[cumSums.length - 1];
-  const prices = cumSums.map((c) => mid + (c - lastCum));
-
-  const bars: Bar[] = [];
-  let prev = mid - (cumSums[0] - lastCum);
-  for (let i = 0; i < count; i++) {
-    const open = prev;
-    const close = prices[i];
-    bars.push({
-      time: (startSec + i * resSec) * 1000,
-      open,
-      close,
-      high: Math.max(open, close) + Math.abs(rand() * volatility * 0.4),
-      low: Math.min(open, close) - Math.abs(rand() * volatility * 0.4),
-      volume: Math.floor(rand() * 500) + 50,
-    });
-    prev = close;
-  }
-  return bars;
-}
 
 /* â”€â”€â”€ Wait for price â”€â”€â”€ */
 
@@ -376,41 +294,9 @@ export const ProlineMarketsDatafeed: IBasicDataFeed = {
       const sym = (symbolInfo.ticker || symbolInfo.name).toUpperCase();
       const { from, to } = periodParams;
 
-      // 1. Crypto â†’ Binance (real data, fast)
-      if (BINANCE_PAIRS[sym]) {
-        const bars = await fetchBinanceKlines(
-          sym,
-          String(resolution),
-          from,
-          to,
-        );
-        if (bars.length > 0) {
-          onResult(bars, { noData: false });
-          return;
-        }
-      }
-
-      // 2. Non-crypto â†’ synthetic candles from live price
-      //    Wait for a price tick if it hasn't arrived yet (WebSocket may still be connecting)
-      const tick = await waitForPrice(sym);
-      if (tick && tick.bid > 0) {
-        const mid = (tick.bid + tick.ask) / 2;
-        const spread = Math.abs(tick.ask - tick.bid);
-        const bars = generateSyntheticBars(
-          sym,
-          mid,
-          spread,
-          String(resolution),
-          from,
-          to,
-        );
-        if (bars.length > 0) {
-          onResult(bars, { noData: false });
-          return;
-        }
-      }
-
-      // 3. Fallback: try backend
+      // 1. The platform's own bars. This is the SAME aggregator the desktop
+      //    terminal charts from, so both apps now draw the same candles for
+      //    the same instrument — they used to disagree completely.
       try {
         const params = new URLSearchParams({
           resolution: String(resolution),
@@ -437,9 +323,33 @@ export const ProlineMarketsDatafeed: IBasicDataFeed = {
           }
         }
       } catch {
-        /* backend unavailable */
+        /* backend unavailable — fall through */
       }
 
+      // 2. Crypto → Binance. Still real OHLCV, and it reaches further back than
+      //    the aggregator keeps, so it stays as the deeper-history source.
+      if (BINANCE_PAIRS[sym]) {
+        const bars = await fetchBinanceKlines(
+          sym,
+          String(resolution),
+          from,
+          to,
+        );
+        if (bars.length > 0) {
+          onResult(bars, { noData: false });
+          return;
+        }
+      }
+
+      // 3. Nothing real to draw — so draw nothing.
+      //
+      //    This step used to INVENT the candles: a seeded random walk anchored
+      //    to the live price, generated for every non-crypto instrument. It sat
+      //    above the backend call, so it always won, and gold, FX and the
+      //    indices were charted from prices that were never quoted — a history
+      //    that differed on every device and matched neither the desktop
+      //    terminal nor the platform's own bars. An empty series is reported
+      //    honestly instead.
       onResult([], { noData: true });
     } catch (err) {
       onError((err as Error).message || "getBars failed");
