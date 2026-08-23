@@ -61,6 +61,12 @@ const HISTORY_RANGES = [
 ] as const;
 type HistoryRange = (typeof HISTORY_RANGES)[number]['id'];
 
+// One page of closed trades. The totals below the table are summed over what
+// was actually fetched, so when a period fills this page the total covers only
+// these rows — it says so rather than presenting a short number as the period's
+// real result.
+const HISTORY_PAGE_SIZE = 200;
+
 /** Local-time lower bound for a range, or null for "all". */
 function historyRangeStart(range: HistoryRange): Date | null {
   const now = new Date();
@@ -372,6 +378,28 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
   const profitPositions = positions.filter((p) => (p.profit || 0) > 0);
   const lossPositions = positions.filter((p) => (p.profit || 0) < 0);
 
+  // Totals for the closed trades currently listed. Deliberately derived from
+  // the SAME `net` each row prints (P&L minus commission) so the figure equals
+  // adding up the visible column — a total that quietly folded in swap as well
+  // would never reconcile against the rows a client is looking at. Swap and
+  // commission are still shown, as their own numbers.
+  //
+  // These follow the period buttons because the fetch does: changing the range
+  // refetches with a date_from bound, so `historyTrades` only ever holds the
+  // selected period.
+  const historyTotals = historyTrades.reduce(
+    (acc, t) => {
+      const net = (t.pnl || 0) - (t.commission || 0);
+      acc.lots += t.lots || 0;
+      acc.commission += t.commission || 0;
+      acc.swap += t.swap || 0;
+      acc.net += net;
+      if (net > 0) acc.wins += 1;
+      return acc;
+    },
+    { lots: 0, commission: 0, swap: 0, net: 0, wins: 0 },
+  );
+
   useEffect(() => {
     if (!bulkMenuOpen) return;
     const handler = (e: MouseEvent) => {
@@ -414,7 +442,7 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
     try {
       // Filter server-side: date_from bounds the period, so the 200-row cap
       // applies within it rather than only to the most recent 200 overall.
-      const params: Record<string, string> = { page: '1', per_page: '200' };
+      const params: Record<string, string> = { page: '1', per_page: String(HISTORY_PAGE_SIZE) };
       const start = historyRangeStart(historyRange);
       if (start) params.date_from = start.toISOString();
       const res = await api.get<{ items?: ClosedTrade[] } | ClosedTrade[]>('/portfolio/trades', params);
@@ -1526,6 +1554,53 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
                       )}
                     </tbody>
                   </table>
+                  </div>
+
+                  {/* Totals for the listed period. Pinned below both layouts
+                      rather than added as a last table row: the blotter
+                      scrolls, and the total is the thing being looked for
+                      after picking a period, so it must not scroll away. */}
+                  <div className="shrink-0 border-t border-border-glass/60 bg-bg-secondary/40 px-3 py-1.5
+                                  flex flex-wrap items-center justify-end gap-x-4 gap-y-1 text-[11px]">
+                    {historyTrades.length === 0 ? (
+                      <span className="text-text-tertiary">No closed trades in this period</span>
+                    ) : (
+                      <>
+                        <span className="text-text-tertiary">
+                          Trades <span className="text-text-primary font-semibold">{historyTrades.length}</span>
+                          {historyTrades.length >= HISTORY_PAGE_SIZE && (
+                            <span className="text-warning"> (first {HISTORY_PAGE_SIZE} — narrow the period for a full total)</span>
+                          )}
+                        </span>
+                        <span className="text-text-tertiary">
+                          Won{' '}
+                          <span className="text-text-primary font-semibold">
+                            {historyTotals.wins} of {historyTrades.length}
+                          </span>
+                        </span>
+                        <span className="text-text-tertiary">
+                          Volume{' '}
+                          <span className="text-text-primary font-mono font-semibold">
+                            {historyTotals.lots.toFixed(2)}
+                          </span>
+                        </span>
+                        <span className="text-text-tertiary">
+                          Swap / Comm{' '}
+                          <span className="text-text-primary font-mono font-semibold">
+                            {historyTotals.swap.toFixed(2)} / {historyTotals.commission.toFixed(2)}
+                          </span>
+                        </span>
+                        <span className="text-text-tertiary">
+                          Total{' '}
+                          <span
+                            className="font-mono font-bold tabular-nums"
+                            style={{ color: historyTotals.net >= 0 ? '#2962FF' : '#FF2440' }}
+                          >
+                            {historyTotals.net >= 0 ? '+' : ''}${historyTotals.net.toFixed(2)}
+                          </span>
+                        </span>
+                      </>
+                    )}
                   </div>
                   </>
                 )}
