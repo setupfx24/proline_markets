@@ -1,0 +1,26 @@
+node_modules/
+.expo/
+dist/
+npm-debug.*
+*.jks
+credentials.json
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.orig.*
+web-build/
+android/
+ios/
+.env
+.env.local
+
+# OS / editor junk
+.DS_Store
+Thumbs.db
+
+# Self-hosted TradingView library (hosted separately, not bundled in OTA)
+charting_library-master/
+
+# Local dev helper (QR for Expo Go)
+expo-qr.png

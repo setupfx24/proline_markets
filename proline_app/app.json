@@ -1,0 +1,86 @@
+{
+  "expo": {
+    "name": "ProlineMarket",
+    "slug": "prolinemarket",
+    "version": "1.1.0",
+    "runtimeVersion": "1.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/brand/proline-icon.png",
+    "backgroundColor": "#000000",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "jsEngine": "hermes",
+    "splash": {
+      "image": "./assets/brand/proline-logo-white.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#000000",
+      "dark": {
+        "image": "./assets/brand/proline-logo-white.png",
+        "resizeMode": "contain",
+        "backgroundColor": "#000000"
+      }
+    },
+    "updates": {
+      "enabled": false,
+      "fallbackToCacheTimeout": 3000
+    },
+    "ios": {
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": false,
+          "NSAllowsLocalNetworking": true,
+          "NSExceptionDomains": {
+            "prolinemarket.com": {
+              "NSIncludesSubdomains": true,
+              "NSExceptionAllowsInsecureHTTPLoads": false,
+              "NSExceptionRequiresForwardSecrecy": true,
+              "NSExceptionMinimumTLSVersion": "TLSv1.2"
+            }
+          }
+        }
+      },
+      "bundleIdentifier": "com.prolinemarket.app"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/brand/proline-icon.png",
+        "backgroundColor": "#000000"
+      },
+      "edgeToEdgeEnabled": true,
+      "backgroundColor": "#000000",
+      "package": "com.prolinemarket.app",
+      "splash": {
+        "image": "./assets/brand/proline-logo-white.png",
+        "resizeMode": "contain",
+        "backgroundColor": "#000000",
+        "dark": {
+          "image": "./assets/brand/proline-logo-white.png",
+          "resizeMode": "contain",
+          "backgroundColor": "#000000"
+        }
+      }
+    },
+    "web": {
+      "favicon": "./assets/brand/proline-favicon.png"
+    },
+    "plugins": [
+      "expo-font",
+      "expo-updates",
+      "expo-secure-store",
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Allow ProlineMarket to use Face ID to unlock the app."
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "color": "#F26A1F"
+        }
+      ],
+      "./plugins/withWebChart.js"
+    ]
+  }
+}

@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; width: 100%; overflow: hidden; background: #0b0e11; }
+  #tv_chart { position: absolute; inset: 0; }
+  #boot { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+          color: #8a8f98; font: 13px system-ui; background: #0b0e11; z-index: 5; }
+  .spin { width: 30px; height: 30px; border-radius: 50%;
+          border: 3px solid rgba(242,106,31,.25); border-top-color: #f26a1f; animation: s .8s linear infinite; }
+  @keyframes s { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+  <div id="tv_chart"></div>
+  <div id="ov" style="position:absolute;inset:0;z-index:8;pointer-events:none;overflow:hidden;"></div>
+  <div id="boot"><div class="spin"></div></div>
+
+  <!-- TradingView Advanced Charting Library — bundled LOCALLY inside the APK
+       (android_asset/webchart/charting_library). NOT loaded from the web. -->
+  <script src="charting_library/charting_library.standalone.js"></script>
+  <script>
+  /* ─────────────────────────────────────────────────────────────────────
+   * ProlineMarket self-contained mobile chart.
+   *
+   * The WebView makes NO network calls of its own (CORS from a file:// origin
+   * would block them). Instead the React-Native host does ALL data work with
+   * the user's token and feeds this page over the bridge:
+   *   RN → WebView :  window.SC.onBars(reqId, bars) | onSymbol(reqId, info)
+   *                   window.SC.pushTick(bar) | setConfig({...})
+   *   WebView → RN :  postMessage({type:'getBars'|'resolveSymbol'|...})
+   * ───────────────────────────────────────────────────────────────────── */
+  (function () {
+    var RN = window.ReactNativeWebView;
+    function post(obj) { try { RN && RN.postMessage(JSON.stringify(obj)); } catch (e) {} }
+
+    // Diagnostic stage readout — disabled in production (kept as a no-op so the
+    // stage() calls below don't need removing; re-enable to debug loading).
+    function stage(s) { /* no-op */ }
+    window.onerror = function (m) { try { post({ type: 'jserror', message: String(m).slice(0, 200) }); } catch (e) {} };
+
+    // --- config injected by RN before the chart boots -----------------
+    // { symbol, interval, theme, digits }
+    var CFG = { symbol: 'EURUSD', interval: '60', theme: 'dark', digits: 5 };
+
+    // --- request/response correlation for getBars / resolveSymbol -----
+    var reqSeq = 0;
+    var pending = {};
+    function rnRequest(type, payload) {
+      return new Promise(function (resolve) {
+        var id = ++reqSeq;
+        pending[id] = resolve;
+        var msg = { type: type, id: id };
+        for (var k in payload) msg[k] = payload[k];
+        post(msg);
+      });
+    }
+
+    // --- realtime subscriptions (RN pushes ticks) ---------------------
+    var subs = {}; // uid -> { onTick, key }
+    var lastBar = {}; // "symbol|res" -> bar (enforce non-decreasing time)
+
+    // Public bridge surface RN calls into:
+    window.SC = {
+      setConfig: function (c) { for (var k in c) CFG[k] = c[k]; },
+      onBars: function (id, bars) { var r = pending[id]; if (r) { delete pending[id]; r(bars || []); } },
+      onSymbol: function (id, info) { var r = pending[id]; if (r) { delete pending[id]; r(info || null); } },
+      // bar = { symbol, resolution, time(sec), open, high, low, close, volume }
+      pushTick: function (bar) {
+        try {
+          var key = bar.symbol.toUpperCase() + '|' + bar.resolution;
+          var b = { time: bar.time * 1000, open: +bar.open, high: +bar.high,
+                    low: +bar.low, close: +bar.close, volume: +(bar.volume || 0) };
+          var prev = lastBar[key];
+          if (prev && b.time < prev.time) return; // non-decreasing rule
+          lastBar[key] = b;
+          for (var uid in subs) { if (subs[uid].key === key) subs[uid].onTick(b); }
+        } catch (e) {}
+      },
+      boot: boot, // RN calls SC.boot() once config is set
+
+      // ── M2: positions overlay (entry line + SL/TP lines, draggable) ──
+      setPositions: function (list) { POSITIONS = list || []; syncLines(); },
+      setInstruments: function (map) { INSTR = map || {}; },
+    };
+
+    // ── M2 state ──────────────────────────────────────────────────────
+    var POSITIONS = [];   // injected by RN (open positions on this account)
+    var INSTR = {};       // symbol -> { digits, contract_size }
+    var lines = {};       // key -> { id, price, text }
+    var shapeMeta = {};   // shapeId -> { positionId, kind:'sl'|'tp' }
+    var suppressEvents = false;
+    var lastFitSig = '';  // auto-fit the price scale once per SL/TP change
+
+    function netPnl(p) { return (+p.profit || 0) - (+p.commission || 0) + (+p.swap || 0); }
+    function fmtP(v, d) { return Number(v).toFixed(d); }
+
+    // Draw / update / remove the entry + SL + TP lines for positions on the
+    // current symbol. SL/TP lines are DRAGGABLE (native line drag); the entry
+    // line is locked and just shows live P&L.
+    function syncLines() {
+      if (!window.SC._widget) return;
+      var chart;
+      try { chart = window.SC._widget.chart(); } catch (e) { return; }
+      var sym = (CFG.symbol || '').toUpperCase();
+      var mine = POSITIONS.filter(function (p) { return String(p.symbol).toUpperCase() === sym; });
+      var digits = (INSTR[sym] && INSTR[sym].digits) || CFG.digits || 5;
+      var anchorTime = Math.floor(Date.now() / 1000);
+      try { var vr = chart.getVisibleRange(); if (vr && isFinite(vr.from)) anchorTime = Math.floor(vr.from); } catch (e) {}
+
+      var desired = {};
+      mine.forEach(function (p) {
+        if (p.trade_type === 'copy_trade') return; // MAM followers: master-controlled
+        var side = String(p.side).toUpperCase();
+        var pnl = netPnl(p);
+        var sideColor = side === 'BUY' ? '#3b82f6' : '#ef4444';
+        var pnlStr = (pnl >= 0 ? '+' : '-') + '$' + Math.abs(pnl).toFixed(2);
+        desired[p.id] = { price: +p.open_price, color: sideColor,
+          textColor: pnl >= 0 ? '#3b82f6' : '#ef4444', text: side + ' ' + p.lots + '  ' + pnlStr, dashed: false };
+        if (+p.stop_loss > 0) desired[p.id + '-sl'] = { price: +p.stop_loss, color: '#f59e0b',
+          textColor: '#f59e0b', text: 'SL ' + fmtP(p.stop_loss, digits), dashed: true };
+        if (+p.take_profit > 0) desired[p.id + '-tp'] = { price: +p.take_profit, color: '#14b8a6',
+          textColor: '#14b8a6', text: 'TP ' + fmtP(p.take_profit, digits), dashed: true };
+      });
+
+      suppressEvents = true;
+      Object.keys(lines).forEach(function (key) {
+        if (!desired[key]) {
+          try { chart.removeEntity(lines[key].id); } catch (e) {}
+          delete shapeMeta[lines[key].id]; delete lines[key];
+        }
+      });
+      Object.keys(desired).forEach(function (key) {
+        var d = desired[key]; var ex = lines[key];
+        if (!ex) {
+          try {
+            var id = chart.createShape({ time: anchorTime, price: d.price }, {
+              shape: 'horizontal_line', text: d.text,
+              lock: !d.draggable, disableSelection: !d.draggable, disableSave: true, disableUndo: true,
+              overrides: { linecolor: d.color, linestyle: d.dashed ? 2 : 0, linewidth: d.dashed ? 1 : 2,
+                showLabel: true, textcolor: d.textColor || d.color, fontsize: 11, bold: true,
+                horzLabelsAlign: 'right', vertLabelsAlign: 'middle', showPrice: true },
+            });
+            lines[key] = { id: id, price: d.price, text: d.text };
+            if (d.draggable) shapeMeta[id] = { positionId: d.positionId, kind: d.kind };
+          } catch (e) {}
+        } else {
+          try {
+            var shp = chart.getShapeById(ex.id);
+            if (ex.price !== d.price) { shp.setPoints([{ time: anchorTime, price: d.price }]); ex.price = d.price; }
+            if (ex.text !== d.text) { shp.setProperties({ text: d.text, linecolor: d.color, textcolor: d.textColor || d.color }); ex.text = d.text; }
+          } catch (e) {}
+        }
+      });
+      suppressEvents = false;
+
+
+      // Keep OPEN-position lines visible. A trade often opens a few pips off the
+      // current candles, so its entry/SL/TP line would otherwise sit just above
+      // or below the auto-scaled view and be invisible (the user reported "trade
+      // lagi hai but line gayab"). After drawing, if any line price falls outside
+      // the visible price range, widen the range (auto-scale off) to include it.
+      // With NO position lines we restore auto-scale so the candles fit normally.
+      // The stale-scale risk from the old version is handled by resetting
+      // auto-scale on every symbol switch (see window.SC.setSymbol).
+      try {
+        var pane = chart.getPanes()[0];
+        var ps = pane && pane.getMainSourcePriceScale && pane.getMainSourcePriceScale();
+        var dkeys = Object.keys(desired);
+        if (ps && dkeys.length) {
+          var lo = Infinity, hi = -Infinity;
+          dkeys.forEach(function (k) { var pr = +desired[k].price; if (isFinite(pr)) { if (pr < lo) lo = pr; if (pr > hi) hi = pr; } });
+          var vpr = ps.getVisiblePriceRange && ps.getVisiblePriceRange();
+          if (vpr && isFinite(lo) && isFinite(hi)) {
+            var needLo = Math.min(vpr.from, lo), needHi = Math.max(vpr.to, hi);
+            if (needLo < vpr.from - 1e-9 || needHi > vpr.to + 1e-9) {
+              var pad = (needHi - needLo) * 0.08 || Math.abs(needHi) * 0.0006;
+              ps.setAutoScale(false);
+              ps.setVisiblePriceRange({ from: needLo - pad, to: needHi + pad });
+            }
+          }
+        } else if (ps && ps.setAutoScale) {
+          ps.setAutoScale(true);
+        }
+      } catch (e) {}
+    }
+
+    // ── On-chart [SL] [TP] [x] buttons per position (web-parity) ─────────
+    // HTML buttons pinned to the price lines via the pane's price-scale
+    // geometry (re-read every frame → follows zoom/pan). Drag [SL]/[TP] up/down
+    // to set that bracket (RN saves it); [x] closes the position.
+    function initOverlay() {
+      var container = document.getElementById('tv_chart');
+      var overlay = document.getElementById('ov');
+      if (!container || !overlay || !window.SC._widget) return;
+      var chart = window.SC._widget.chart();
+      var BTN_W = 24, BTN_GAP = 4, RIGHT_PX = 60;
+      var groups = {};            // positionId -> { p, slEl, tpEl, closeEl }
+      var lastMouseY = null, calibOffset = null, calibSamples = [];
+
+      function geom() {
+        try {
+          var pane = chart.getPanes()[0];
+          var ps = pane && pane.getMainSourcePriceScale && pane.getMainSourcePriceScale();
+          if (!ps) return null;
+          var mode = ps.getMode ? ps.getMode() : 0;
+          if (mode !== 0 && mode !== 1) return null;
+          var range = ps.getVisiblePriceRange && ps.getVisiblePriceRange();
+          var h = pane.getHeight ? pane.getHeight() : 0;
+          if (!range || !(h > 0) || !(range.to > range.from)) return null;
+          if (mode === 1 && !(range.from > 0)) return null;
+          return { top: +range.to, bottom: +range.from, h: +h, log: mode === 1 };
+        } catch (e) { return null; }
+      }
+      function paneY(price, g) {
+        if (g.log) { if (!(price > 0)) return NaN; var lt = Math.log(g.top), lb = Math.log(g.bottom); return (g.h * (lt - Math.log(price))) / (lt - lb); }
+        return (g.h * (g.top - price)) / (g.top - g.bottom);
+      }
+      function measurePaneTop(paneH) {
+        try {
+          var rootRect = container.getBoundingClientRect(), best = null, bestDiff = 40;
+          function scan(root, extraTop) {
+            var cs = root.querySelectorAll('canvas');
+            for (var i = 0; i < cs.length; i++) {
+              var r = cs[i].getBoundingClientRect();
+              if (r.width < 100) continue;
+              var diff = Math.abs(r.height - paneH);
+              if (diff < bestDiff) { bestDiff = diff; best = r.top + extraTop - rootRect.top; }
+            }
+          }
+          scan(container, 0);
+          if (best == null) {
+            var ifr = container.querySelectorAll('iframe');
+            for (var j = 0; j < ifr.length; j++) {
+              try { var doc = ifr[j].contentDocument; if (doc) scan(doc, ifr[j].getBoundingClientRect().top); } catch (e) {}
+            }
+          }
+          return best;
+        } catch (e) { return null; }
+      }
+      function paneTopOf(g) {
+        var m = measurePaneTop(g.h);
+        if (m != null) { calibOffset = m; return m; }
+        if (calibOffset != null) return calibOffset;
+        return container.clientHeight - g.h - 46;
+      }
+      function priceForY(cy) {
+        var g = geom(); if (!g) return null;
+        var top = paneTopOf(g); if (top == null) return null;
+        var py = cy - top;
+        if (g.log) { var lt = Math.log(g.top), lb = Math.log(g.bottom); return Math.exp(lt - (py / g.h) * (lt - lb)); }
+        return g.top - (py / g.h) * (g.top - g.bottom);
+      }
+      function digitsFor() { var s = (CFG.symbol || '').toUpperCase(); return (INSTR[s] && INSTR[s].digits) || CFG.digits || 5; }
+      function pnlAt(p, price) {
+        var s = String(p.symbol).toUpperCase();
+        var cs = (INSTR[s] && INSTR[s].contract_size) || 100000;
+        return p.side === 'buy' ? (price - +p.open_price) * +p.lots * cs : (+p.open_price - price) * +p.lots * cs;
+      }
+      try { var chm = chart.crossHairMoved && chart.crossHairMoved(); if (chm && chm.subscribe) chm.subscribe(null, function (params) {
+        var price = params && params.price; if (price == null) return;
+        var my = (params && typeof params.offsetY === 'number') ? params.offsetY : lastMouseY; if (my == null) return;
+        var g = geom(); if (!g) return; var py = paneY(+price, g); if (!isFinite(py)) return;
+        calibSamples.push(my - py); while (calibSamples.length > 15) calibSamples.shift();
+        var srt = calibSamples.slice().sort(function (a, b) { return a - b; }); calibOffset = srt[Math.floor(srt.length / 2)];
+      }); } catch (e) {}
+      container.addEventListener('mousemove', function (e) { lastMouseY = e.clientY - container.getBoundingClientRect().top; });
+
+      function mkSlot(btn) { var w = document.createElement('div'); w.style.cssText = 'position:absolute;transform:translateY(-50%);pointer-events:none;visibility:hidden;z-index:6;'; w.appendChild(btn); overlay.appendChild(w); return w; }
+
+      function mkDragBtn(txt, bg, p, kind) {
+        var color = kind === 'sl' ? '#f59e0b' : '#14b8a6';
+        var b = document.createElement('button'); b.type = 'button'; b.textContent = txt;
+        b.style.cssText = 'display:flex;align-items:center;justify-content:center;height:18px;min-width:18px;padding:0 5px;border:0;border-radius:3px;cursor:ns-resize;touch-action:none;font:700 10px system-ui;line-height:1;color:#fff;pointer-events:auto;background:' + bg + ';box-shadow:0 1px 3px rgba(0,0,0,.55);';
+        b.onpointerdown = function (e) {
+          e.preventDefault(); e.stopPropagation();
+          try { b.setPointerCapture(e.pointerId); } catch (er) {}
+          post({ type: 'chart:drag', active: true });
+          var startY = e.clientY, moved = false;
+          var line = document.createElement('div'); line.style.cssText = 'position:absolute;left:0;right:0;top:0;height:0;border-top:1px dashed ' + color + ';pointer-events:none;z-index:7;';
+          var lbl = document.createElement('div'); lbl.style.cssText = 'position:absolute;right:2px;top:0;transform:translateY(-50%);background:' + color + ';color:#fff;font:700 10px system-ui;padding:1px 6px;border-radius:3px;pointer-events:none;z-index:8;white-space:nowrap;';
+          overlay.appendChild(line); overlay.appendChild(lbl);
+          b.onpointermove = function (ev) {
+            if (Math.abs(ev.clientY - startY) > 3) moved = true;
+            var cy = ev.clientY - container.getBoundingClientRect().top;
+            var price = priceForY(cy); line.style.top = cy + 'px'; lbl.style.top = cy + 'px';
+            var t = (kind === 'sl' ? 'SL ' : 'TP ') + (price ? price.toFixed(digitsFor()) : '-');
+            if (price) { var rr = pnlAt(p, price) - (+p.commission || 0) + (+p.swap || 0); t += '  ' + (rr >= 0 ? '+' : '-') + '$' + Math.abs(rr).toFixed(2); }
+            lbl.textContent = t;
+          };
+          function end(ev, cancelled) {
+            b.onpointermove = null; b.onpointerup = null; b.onpointercancel = null;
+            try { b.releasePointerCapture(ev.pointerId); } catch (er) {}
+            try { overlay.removeChild(line); overlay.removeChild(lbl); } catch (er) {}
+            post({ type: 'chart:drag', active: false });
+            if (cancelled || !moved) return;
+            var price = priceForY(ev.clientY - container.getBoundingClientRect().top);
+            if (price > 0) post({ type: 'setBracket', positionId: p.id, kind: kind, price: price });
+          }
+          b.onpointerup = function (ev) { end(ev, false); };
+          b.onpointercancel = function (ev) { end(ev, true); };
+        };
+        return b;
+      }
+      function mkClose(p) {
+        var b = document.createElement('button'); b.type = 'button'; b.textContent = 'x';
+        var col = String(p.side).toUpperCase() === 'BUY' ? '#3b82f6' : '#ef4444';
+        b.style.cssText = 'display:flex;align-items:center;justify-content:center;height:18px;min-width:18px;padding:0 5px;border:0;border-radius:3px;cursor:pointer;font:700 11px system-ui;line-height:1;color:#fff;pointer-events:auto;background:' + col + ';box-shadow:0 1px 3px rgba(0,0,0,.55);';
+        b.onclick = function (e) { e.stopPropagation(); post({ type: 'closePosition', positionId: p.id }); };
+        return b;
+      }
+
+      function reconcile() {
+        var sym = (CFG.symbol || '').toUpperCase();
+        var mine = POSITIONS.filter(function (p) { return String(p.symbol).toUpperCase() === sym && p.trade_type !== 'copy_trade'; });
+        var want = {}; mine.forEach(function (p) { want[p.id] = p; });
+        Object.keys(groups).forEach(function (id) {
+          if (!want[id]) { var G = groups[id]; [G.slEl, G.tpEl, G.closeEl].forEach(function (el) { try { overlay.removeChild(el); } catch (e) {} }); delete groups[id]; }
+        });
+        mine.forEach(function (p) {
+          if (!groups[p.id]) groups[p.id] = { p: p, slEl: mkSlot(mkDragBtn('SL', 'rgba(245,158,11,0.97)', p, 'sl')), tpEl: mkSlot(mkDragBtn('TP', 'rgba(20,184,166,0.97)', p, 'tp')), closeEl: mkSlot(mkClose(p)) };
+          else groups[p.id].p = p;
+        });
+      }
+
+      function frame() {
+        requestAnimationFrame(frame);
+        reconcile();
+        var ids = Object.keys(groups); if (!ids.length) return;
+        var g = geom(); var top = g ? paneTopOf(g) : null;
+        var rightPx = Math.min(RIGHT_PX, Math.max(8, container.clientWidth - 78));
+        var h = container.clientHeight || (g && g.h) || 0;
+        function place(el, y, rx) { if (!g || top == null || !(y > 8) || y > h - 8) { el.style.visibility = 'hidden'; return; } el.style.top = y + 'px'; el.style.right = rx + 'px'; el.style.visibility = 'visible'; }
+        ids.forEach(function (id) {
+          var G = groups[id], p = G.p;
+          var entryY = (g && top != null) ? paneY(+p.open_price, g) + top : -1;
+          var slSet = +p.stop_loss > 0, tpSet = +p.take_profit > 0, slot = 1;
+          place(G.closeEl, entryY, rightPx);
+          if (slSet) place(G.slEl, (g && top != null) ? paneY(+p.stop_loss, g) + top : -1, rightPx); else { place(G.slEl, entryY, rightPx + slot * (BTN_W + BTN_GAP)); slot++; }
+          if (tpSet) place(G.tpEl, (g && top != null) ? paneY(+p.take_profit, g) + top : -1, rightPx); else { place(G.tpEl, entryY, rightPx + slot * (BTN_W + BTN_GAP)); slot++; }
+        });
+      }
+      requestAnimationFrame(frame);
+    }
+
+    var SUPPORTED = ['1','3','5','10','15','30','45','60','120','180','240','1D','1W','1M','3M','6M','12M'];
+    var INTRADAY = ['1','5','15','30','60','240'];
+
+    var datafeed = {
+      onReady: function (cb) {
+        stage('5 datafeed.onReady');
+        setTimeout(function () {
+          cb({
+            supported_resolutions: SUPPORTED,
+            intraday_multipliers: INTRADAY,
+            has_weekly_and_monthly: false,
+            supports_time: true, supports_marks: false, supports_timescale_marks: false,
+            exchanges: [{ value: 'ProlineMarket', name: 'ProlineMarket', desc: 'ProlineMarket' }],
+            symbols_types: [{ name: 'All', value: '' }],
+          });
+        }, 0);
+      },
+      searchSymbols: function (_u, _e, _t, onResult) { onResult([]); },
+      resolveSymbol: function (symbolName, onResolve, onError) {
+        stage('6 resolveSymbol sent (bridge)');
+        rnRequest('resolveSymbol', { symbol: symbolName }).then(function (info) {
+          stage('7 symbol resolved');
+          var digits = (info && info.digits) || CFG.digits || 5;
+          onResolve({
+            name: symbolName, ticker: symbolName, description: symbolName,
+            type: (info && info.type) || 'forex', session: '24x7', timezone: 'Etc/UTC',
+            exchange: 'ProlineMarket', listed_exchange: 'ProlineMarket', format: 'price',
+            minmov: 1, pricescale: Math.pow(10, digits),
+            has_intraday: true, intraday_multipliers: INTRADAY,
+            has_daily: true, daily_multipliers: ['1'], has_weekly_and_monthly: false,
+            supported_resolutions: SUPPORTED, volume_precision: 2, data_status: 'streaming',
+          });
+        }).catch(function (e) { onError && onError(String(e)); });
+      },
+      getBars: function (symbolInfo, resolution, periodParams, onResult, onError) {
+        stage('8 getBars sent (bridge)');
+        rnRequest('getBars', {
+          symbol: symbolInfo.ticker || symbolInfo.name,
+          resolution: resolution,
+          from: periodParams.from, to: periodParams.to,
+          countBack: periodParams.countBack || 0,
+          firstDataRequest: !!periodParams.firstDataRequest,
+        }).then(function (list) {
+          stage('9 bars received: ' + ((list && list.length) || 0));
+          var bars = (list || []).map(function (b) {
+            return { time: b.time * 1000, open: +b.open, high: +b.high,
+                     low: +b.low, close: +b.close, volume: +(b.volume || 0) };
+          }).filter(function (b) { return isFinite(b.time) && isFinite(b.close); })
+            .sort(function (a, b) { return a.time - b.time; });
+          if (bars.length && periodParams.firstDataRequest) {
+            var key = (symbolInfo.ticker || symbolInfo.name).toUpperCase() + '|' + resolution;
+            lastBar[key] = bars[bars.length - 1];
+          }
+          onResult(bars, { noData: bars.length === 0 });
+        }).catch(function (e) { onError && onError(String(e)); });
+      },
+      subscribeBars: function (symbolInfo, resolution, onTick, uid) {
+        subs[uid] = { onTick: onTick, key: (symbolInfo.ticker || symbolInfo.name).toUpperCase() + '|' + resolution };
+      },
+      unsubscribeBars: function (uid) { delete subs[uid]; },
+    };
+
+    var widget = null;
+    function boot() {
+      if (widget) return;
+      if (typeof TradingView === 'undefined' || !TradingView.widget) { stage('LIBRARY NOT LOADED (standalone.js failed)'); return; }
+      stage('3 boot: creating widget');
+      var dark = CFG.theme !== 'light';
+      widget = new TradingView.widget({
+        container: 'tv_chart',
+        library_path: 'charting_library/',
+        datafeed: datafeed,
+        symbol: CFG.symbol,
+        interval: CFG.interval,
+        locale: 'en',
+        autosize: true,
+        theme: dark ? 'Dark' : 'Light',
+        timezone: 'Etc/UTC',
+        custom_css_url: '',
+        disabled_features: ['use_localstorage_for_settings', 'header_symbol_search', 'header_compare', 'symbol_search_hot_key'],
+        enabled_features: ['hide_left_toolbar_by_default'],
+        overrides: {
+          'paneProperties.background': dark ? '#0b0e11' : '#ffffff',
+          'paneProperties.backgroundType': 'solid',
+        },
+        loading_screen: { backgroundColor: dark ? '#0b0e11' : '#ffffff' },
+      });
+      stage('4 widget created, waiting onChartReady');
+      widget.onChartReady(function () {
+        var el = document.getElementById('boot'); if (el) el.style.display = 'none';
+        window.SC._widget = widget;
+        initOverlay();    // on-chart [SL][TP][x] buttons + drag → RN
+        syncLines();      // draw any already-injected position lines
+        post({ type: 'ready', symbol: (CFG.symbol || '').toUpperCase() });
+        // Let RN switch symbol/interval live without a reload; re-sync the
+        // position lines for the new symbol just after.
+        window.SC.setSymbol = function (sym) {
+          try {
+            // Keep CFG.symbol in lockstep — syncLines()/digitsFor() filter the
+            // position lines by CFG.symbol, so without this a live symbol switch
+            // would draw the PREVIOUS symbol's lines (or none).
+            CFG.symbol = String(sym).toUpperCase();
+            // Wipe the previous symbol's position lines so none linger on the new
+            // symbol (the persistent WebView keeps the same chart across a live
+            // switch), and restore auto-scale so the new symbol isn't stuck on the
+            // widened range left behind by the auto-fit above.
+            try {
+              var c = widget.chart();
+              Object.keys(lines).forEach(function (k) {
+                try { c.removeEntity(lines[k].id); } catch (e2) {}
+                if (lines[k]) delete shapeMeta[lines[k].id];
+                delete lines[k];
+              });
+              var ps2 = c.getPanes()[0].getMainSourcePriceScale();
+              if (ps2 && ps2.setAutoScale) ps2.setAutoScale(true);
+            } catch (e3) {}
+            widget.chart().setSymbol(sym, function () { setTimeout(syncLines, 60); });
+          } catch (e) {}
+        };
+        window.SC.setInterval = function (iv) {
+          try { widget.chart().setResolution(iv, function () { setTimeout(syncLines, 60); }); } catch (e) {}
+        };
+      });
+    }
+
+    // RN injects window.__SC_CONFIG (+ __SC_AUTOBOOT) before content loads via
+    // injectedJavaScriptBeforeContentLoaded, so we can boot immediately with the
+    // right symbol/interval/theme. Otherwise RN calls SC.setConfig()+SC.boot().
+    post({ type: 'bridgeReady' });
+    if (window.__SC_CONFIG) window.SC.setConfig(window.__SC_CONFIG);
+    // URL query string is AUTHORITATIVE and applied LAST so it always wins.
+    // Unlike the injected __SC_CONFIG (which can be missed on a fast remount or
+    // when the WebView serves cached content → chart stuck on the default
+    // EURUSD/60), location.search is always present in the loaded page. This is
+    // why tapping Gold/NAS100 used to open EURUSD; reading the symbol from the
+    // URL — exactly like the old web chart — makes the wrong-symbol bug
+    // impossible.
+    try {
+      var __q = new URLSearchParams(location.search || '');
+      var __cfg = {};
+      if (__q.get('symbol'))   __cfg.symbol   = String(__q.get('symbol')).toUpperCase();
+      if (__q.get('interval')) __cfg.interval = String(__q.get('interval'));
+      if (__q.get('theme'))    __cfg.theme    = String(__q.get('theme'));
+      if (__q.get('digits'))   __cfg.digits   = Number(__q.get('digits')) || undefined;
+      if (__cfg.symbol) window.SC.setConfig(__cfg);
+    } catch (e) {}
+    // Boot UNCONDITIONALLY — don't gate on __SC_AUTOBOOT. On a small/fast-
+    // mounting WebView the pre-load config injection sometimes lost the race,
+    // so __SC_AUTOBOOT was undefined and boot() never ran → stuck at "1 script
+    // running". boot() is idempotent (returns if a widget already exists), and
+    // if the symbol wasn't injected yet it starts on the default and RN's
+    // setSymbol updates it. A short retry covers a very-late config injection.
+    boot();
+    setTimeout(function () { if (!widget) { if (window.__SC_CONFIG) window.SC.setConfig(window.__SC_CONFIG); boot(); } }, 500);
+  })();
+  </script>
+</body>
+</html>
