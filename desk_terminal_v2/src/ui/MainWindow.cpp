@@ -934,11 +934,9 @@ void MainWindow::onSymbolsReceived(const QVector<SymbolSpec>& symbols) {
     m_watch->setSymbols(symbols);
     // Snapshot prices immediately (before first ticks arrive).
     m_api->fetchPrices({});
-    // "loaded", not "available": this is the platform's whole instrument list,
-    // and Market Watch lists only the ones the price feed actually carries. The
-    // two numbers differ, and a client comparing this line against the panel
-    // read the difference as missing symbols.
-    setStatus(tr("%1 instruments loaded — quotes arriving").arg(symbols.size()));
+    // Market Watch lists every one of these now, so the count and the panel
+    // agree again — which is the whole point of reporting it.
+    setStatus(tr("%1 instruments loaded").arg(symbols.size()));
 
     // Open on XAUUSD — the platform's headline instrument — rather than on the
     // alphabetical first, which is usually a share with a closed market and an

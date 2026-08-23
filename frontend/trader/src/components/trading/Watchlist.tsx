@@ -14,8 +14,6 @@ type Trend = 'up' | 'down' | 'neutral';
 
 const TERMINAL_GROUPS = ['FOREX', 'METALS', 'ENERGIES', 'COMMODITIES', 'INDICES', 'CRYPTO'] as const;
 type TerminalGroup = (typeof TERMINAL_GROUPS)[number] | 'STOCKS';
-/** Stocks are not offered in the terminal — symbols in this group are dropped. */
-const HIDDEN_GROUPS = new Set<TerminalGroup>(['STOCKS']);
 
 const SYMBOL_EMOJI: Record<string, string> = {
   BTCUSD: '₿',
@@ -304,10 +302,15 @@ export default function Watchlist({ variant = 'default', onExitMarkets }: Watchl
     for (const inst of instruments) {
       syms.add(inst.symbol);
     }
-    // Only show symbols that have a live price tick, and never stocks.
-    return Array.from(syms).filter(
-      (s) => prices[s] != null && !HIDDEN_GROUPS.has(terminalGroup(s, instruments)),
-    );
+    // Every instrument the platform lists, quoted or not.
+    //
+    // This used to drop anything without a live tick, and stocks outright. The
+    // platform lists 61 instruments and the feed carries 49, so the panel
+    // showed 49 with no hint that the other twelve existed — while the desktop
+    // terminal's own count said 61 and the two apps read as disagreeing. Both
+    // now list all 61; a symbol the feed does not carry sits without a price
+    // rather than vanishing.
+    return Array.from(syms);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [watchlist, instruments, priceCount]);
 

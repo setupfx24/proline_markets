@@ -297,8 +297,6 @@ void WatchlistWidget::openMarketMenu() {
     QMap<QString, int> counts;
     int listed = 0;
     for (const SymbolSpec& s : m_all) {
-        auto it = m_rows.constFind(s.symbol);
-        if (it == m_rows.constEnd() || !it->hasPrice) continue;
         counts[marketGroup(s.category)]++;
         ++listed;
     }
@@ -355,7 +353,11 @@ void WatchlistWidget::applyFilter() {
         // Instruments the feed never quotes would sit here as a column of "—"
         // forever. Hide until a price arrives; updateQuote() reveals the row on
         // the first quote, so nothing tradable stays hidden.
-        m_table->setRowHidden(it->row, !(groupOk && searchOk && it->hasPrice));
+        // Every instrument the platform lists is shown, quoted or not. An
+        // unquoted row sits at "—" until a price arrives; it used to be hidden
+        // entirely, which is why the panel listed 49 of 61 and the twelve the
+        // feed does not carry were invisible with nothing to explain them.
+        m_table->setRowHidden(it->row, !(groupOk && searchOk));
     }
 }
 
