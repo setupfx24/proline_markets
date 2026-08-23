@@ -287,8 +287,21 @@ void WatchlistWidget::selectSymbol(const QString& symbol) {
 }
 
 void WatchlistWidget::openMarketMenu() {
+    // Count only what the list actually shows.
+    //
+    // These used to count every instrument the platform defines, which is 61 —
+    // while the panel lists the 49 that the price feed carries, because a row
+    // with no quote is hidden. So the menu advertised "All Markets (61)" over a
+    // list of 49, and the twelve that never appear were reported as available.
+    // A count beside a filter has to be the number of rows that filter yields.
     QMap<QString, int> counts;
-    for (const SymbolSpec& s : m_all) counts[marketGroup(s.category)]++;
+    int listed = 0;
+    for (const SymbolSpec& s : m_all) {
+        auto it = m_rows.constFind(s.symbol);
+        if (it == m_rows.constEnd() || !it->hasPrice) continue;
+        counts[marketGroup(s.category)]++;
+        ++listed;
+    }
 
     const auto& c = Theme::p();
     QMenu menu(this);
@@ -298,7 +311,7 @@ void WatchlistWidget::openMarketMenu() {
         "QMenu::item:selected{background:%4; color:%5;}")
         .arg(c.menuBg, c.menuBorder, c.text, c.menuSel, c.textStrong));
 
-    QAction* all = menu.addAction(tr("All Markets   (%1)").arg(m_all.size()));
+    QAction* all = menu.addAction(tr("All Markets   (%1)").arg(listed));
     connect(all, &QAction::triggered, this, [this]() { setMarket(QString()); });
 
     // Favourites sits with All at the top, above the segments — it is the entry

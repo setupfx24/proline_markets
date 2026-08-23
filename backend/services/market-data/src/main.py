@@ -46,7 +46,16 @@ STALE_TICK_AFTER_SEC = 90.0
 STALE_REFRESH_INTERVAL_SEC = 30.0
 
 # Segments the platform does not quote — never subscribed on the upstream feed.
-EXCLUDED_FEED_SEGMENTS = {"stocks", "equities", "shares"}
+# Segments the feed does not subscribe to.
+#
+# Empty on purpose. This used to hold {"stocks", "equities", "shares"}, which
+# quietly dropped the eight US equities from the Infoway subscription: the
+# platform listed 61 instruments while only 53 were ever asked for and 49
+# quoted, and both terminals showed the shorter list. Whether a code returns
+# data is Infoway's call — an unknown one is accepted and simply stays silent,
+# which is how GOLD/SILVER/US100/NATGAS already behave — so excluding a whole
+# segment here bought nothing and hid the instruments from every client.
+EXCLUDED_FEED_SEGMENTS: set[str] = set()
 
 # Infoway fallback timing. The wait must outlast a redeploy handover: until the
 # old container's sockets are released the key is over its connection limit and
