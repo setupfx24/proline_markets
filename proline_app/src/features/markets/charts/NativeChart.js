@@ -1,10 +1,10 @@
-import React, { useCallback, useEffect, useRef } from 'react';
-import { View, ActivityIndicator, StyleSheet, Platform } from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { View, Text, Pressable, ActivityIndicator, StyleSheet, Platform } from 'react-native';
 import { WebView } from 'react-native-webview';
 import * as SecureStore from 'expo-secure-store';
 
-import { API_URL } from '../../../constants';
-import { vantage } from '../../../theme/vantageTheme';
+import { API_URL, CHART_URL } from '../../../constants';
+import { vantage, space, sizes, weights, fontFamily, radius } from '../../../theme/vantageTheme';
 import { getInstruments } from '../../../utils/instrumentsCache';
 import logger from '../../../utils/logger';
 
@@ -30,6 +30,14 @@ function resSeconds(r) { return RES_SECONDS[r] || 300; }
 
 export default function NativeChart({ symbol = 'EURUSD', interval = '60', theme, accountId, onDrag, refreshTick, onClosePosition }) {
   const webRef = useRef(null);
+  // The bundled chart lives in android_asset, which only exists in a real
+  // build — in Expo Go (and if the asset ever fails to ship) the WebView
+  // renders its own raw "ERR_FILE_NOT_FOUND" browser error page, which is what
+  // a user/client actually sees. Degrade in stages instead:
+  //   0 = bundled chart · 1 = hosted chart · 2 = branded placeholder
+  // Never leave the WebView showing its own error page.
+  const [stage, setStage] = useState(0);
+  const remoteFallback = stage === 1;
   const tokenRef = useRef('');
   const instrRef = useRef([]);
   const readyRef = useRef(false);
@@ -270,10 +278,32 @@ export default function NativeChart({ symbol = 'EURUSD', interval = '60', theme,
   if (bootRef.current === null) {
     bootRef.current = { symbol: String(symbol).toUpperCase(), interval: String(interval) };
   }
-  const chartUri = `${LOCAL_HTML}?symbol=${encodeURIComponent(bootRef.current.symbol)}`
-    + `&interval=${encodeURIComponent(bootRef.current.interval)}`
+  // On the local page the boot symbol is fixed and later switches go through
+  // the bridge. The hosted fallback has no bridge, so it has to carry the LIVE
+  // symbol/interval in its URL — that reloads the page on each switch, which is
+  // the trade-off for having a chart at all.
+  const q = remoteFallback
+    ? { symbol: String(symbol).toUpperCase(), interval: String(interval) }
+    : bootRef.current;
+  const chartUri = `${remoteFallback ? CHART_URL : LOCAL_HTML}?symbol=${encodeURIComponent(q.symbol)}`
+    + `&interval=${encodeURIComponent(q.interval)}`
     + `&theme=${dark ? 'dark' : 'light'}`
-    + `&digits=${resolveSymbolInfo(bootRef.current.symbol).digits}`;
+    + `&digits=${resolveSymbolInfo(q.symbol).digits}`;
+
+  // Calm branded panel used both as the final stage and as the WebView's own
+  // error renderer. Trading and live prices are untouched, so the copy says so
+  // rather than implying the whole screen is broken.
+  const Unavailable = () => (
+    <View style={[styles.wrap, styles.fallback]}>
+      <Text style={styles.fallbackTitle}>Chart unavailable</Text>
+      <Text style={styles.fallbackSub}>Live prices and trading are unaffected.</Text>
+      <Pressable onPress={() => setStage(0)} style={styles.retry} accessibilityRole="button" accessibilityLabel="Retry loading the chart">
+        <Text style={styles.retryTxt}>Retry</Text>
+      </Pressable>
+    </View>
+  );
+
+  if (stage >= 2) return <Unavailable />;
 
   return (
     <View style={styles.wrap}>
@@ -286,7 +316,9 @@ export default function NativeChart({ symbol = 'EURUSD', interval = '60', theme,
         // whitelisted, and file:// pages may read sibling file:// subresources
         // (the charting_library/ bundle next to index.html) but get NO
         // universal (network) access and no mixed-content allowance.
-        originWhitelist={['file://*']}
+        // Local mode stays file://-only. The fallback additionally allows the
+        // trader-web origin (and nothing else) so the hosted chart can load.
+        originWhitelist={remoteFallback ? ['file://*', `${CHART_URL.replace(/^(https?:\/\/[^/]+).*$/, '$1')}/*`] : ['file://*']}
         style={styles.web}
         javaScriptEnabled
         domStorageEnabled
@@ -299,11 +331,20 @@ export default function NativeChart({ symbol = 'EURUSD', interval = '60', theme,
           try { webRef.current?.injectJavaScript(beforeLoad + '\nwindow.SC && window.SC.setConfig && window.SC.setConfig(window.__SC_CONFIG); window.SC && window.SC.boot && window.SC.boot(); true;'); } catch (e) {}
         }}
         onMessage={onMessage}
-        onError={(e) => logger.error('NativeChart webview error', e?.nativeEvent)}
+        onError={(e) => {
+          const ne = e?.nativeEvent;
+          logger.log('NativeChart: chart source failed at stage', stage, ne?.description);
+          setStage((s) => (s < 2 ? s + 1 : s));
+        }}
         startInLoadingState
         renderLoading={() => (
           <View style={styles.loader}><ActivityIndicator size="large" color={vantage.accent} /></View>
         )}
+        // Without this the WebView paints Android's own "Error loading page /
+        // net::ERR_FILE_NOT_FOUND" chrome, which is what the user actually saw.
+        // renderError replaces that surface entirely, so the raw browser error
+        // can never reach the screen no matter which stage failed.
+        renderError={() => <Unavailable />}
       />
     </View>
   );
@@ -313,4 +354,12 @@ const styles = StyleSheet.create({
   wrap: { flex: 1, backgroundColor: vantage.bg },
   web: { flex: 1, backgroundColor: vantage.bg },
   loader: { position: 'absolute', inset: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: vantage.bg },
+  fallback: { alignItems: 'center', justifyContent: 'center', padding: space.xl, gap: space.sm },
+  fallbackTitle: { color: vantage.textPrimary, fontFamily, fontSize: sizes.h3, fontWeight: weights.bold },
+  fallbackSub: { color: vantage.textMuted, fontFamily, fontSize: sizes.label, textAlign: 'center' },
+  retry: {
+    marginTop: space.sm, paddingHorizontal: space.lg, paddingVertical: space.sm,
+    borderRadius: radius.pill, borderWidth: 1, borderColor: vantage.border, backgroundColor: vantage.bgElevated,
+  },
+  retryTxt: { color: vantage.accent, fontFamily, fontSize: sizes.label, fontWeight: weights.bold },
 });

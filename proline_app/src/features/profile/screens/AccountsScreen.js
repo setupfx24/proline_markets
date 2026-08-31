@@ -20,6 +20,7 @@ import { useAccount } from '../../../app/providers/AccountContext';
 import { BOTTOM_NAV_PILL_HEIGHT } from '../../../components/vantage/BottomNavPill';
 import ApiService from '../../../services/api/ApiService';
 import logger from '../../../utils/logger';
+import { isKycRequiredError, showKycGate } from '../../../utils/kycGate';
 
 function isDemoAccount(a) {
   return !!(a?.is_demo || a?.isDemo || a?.accountTypeId?.isDemo);
@@ -459,8 +460,9 @@ const AccountsScreen = ({ navigation, route }) => {
   };
 
   const openNewAccountModal = async () => {
-    // No KYC gate — platform policy is open/deposit/trade freely; identity
-    // is verified at withdrawal time instead (see kycGate.js).
+    // No gate here on purpose: DEMO accounts open without KYC, so the picker
+    // must stay reachable. The live-only KYC rule is enforced by the backend
+    // and handled in handleOpenAccount's catch (see kycGate.js).
     setSelectedGroupId(null);
     setShowOpenModal(true);
     await fetchAccountGroups();
@@ -487,8 +489,17 @@ const AccountsScreen = ({ navigation, route }) => {
         is_demo: !!(data.is_demo || grp.is_demo),
       });
     } catch (e) {
-      logger.error('AccountsScreen: open account error', e);
-      Alert.alert('Error', e.message || 'Could not open account');
+      // Opening a LIVE account needs approved KYC (demo is exempt). That is a
+      // business rule, not a failure — show the gate instead of the raw
+      // "KYC_REQUIRED" token, and don't log it as an error (it was surfacing
+      // as a red console error box on top of the app).
+      if (isKycRequiredError(e)) {
+        setShowOpenModal(false);
+        showKycGate(navigation, 'account');
+      } else {
+        logger.error('AccountsScreen: open account error', e);
+        Alert.alert('Error', e.message || 'Could not open account');
+      }
     }
     setOpeningAccount(false);
   };
