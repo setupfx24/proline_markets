@@ -209,7 +209,7 @@ export default function KycPage() {
         <div className="flex flex-1 items-center justify-center py-20">
           <div className="flex flex-col items-center gap-3">
             <div className="h-8 w-8 border-2 border-accent border-t-transparent rounded-full animate-spin" />
-            <span className="text-sm text-text-secondary">Loadingâ€¦</span>
+            <span className="text-sm text-text-secondary">Loading…</span>
           </div>
         </div>
       </DashboardShell>
@@ -439,7 +439,7 @@ export default function KycPage() {
       {/* Modal: submit form */}
       {showFormModal && canSubmit && (
         <div
-          className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-0 sm:p-4"
+          className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-0 sm:p-4 md:p-6"
           role="dialog"
           aria-modal="true"
           aria-labelledby="kyc-modal-title"
@@ -450,22 +450,24 @@ export default function KycPage() {
             aria-label="Close"
             onClick={() => !submitting && setShowFormModal(false)}
           />
-          <div className="relative w-full sm:max-w-lg max-h-[92dvh] overflow-y-auto rounded-t-2xl sm:rounded-2xl border border-border-primary bg-card shadow-2xl sidebar-scroll">
-            <div className="sticky top-0 z-10 flex items-center justify-between gap-3 px-5 py-4 border-b border-border-primary bg-card">
-              <h3 id="kyc-modal-title" className="text-base font-bold text-text-primary">
+          {/* Header stays put and only the body scrolls, so the scrollbar can
+              never sit on top of the rounded border. */}
+          <div className="relative flex flex-col w-full sm:max-w-lg max-h-[94dvh] sm:max-h-[88dvh] overflow-hidden rounded-t-2xl sm:rounded-2xl border border-border-primary bg-card shadow-2xl">
+            <div className="flex-none flex items-center justify-between gap-3 px-4 sm:px-5 py-3.5 sm:py-4 border-b border-border-primary bg-card">
+              <h3 id="kyc-modal-title" className="text-sm sm:text-base font-bold text-text-primary truncate">
                 {isRejected ? 'Re-submit documents' : 'Submit documents'}
               </h3>
               <button
                 type="button"
                 onClick={() => !submitting && setShowFormModal(false)}
-                className="p-2 rounded-lg text-text-tertiary hover:text-text-primary hover:bg-bg-hover transition-colors"
+                className="shrink-0 p-2 rounded-lg text-text-tertiary hover:text-text-primary hover:bg-bg-hover transition-colors"
                 aria-label="Close"
               >
                 <X size={18} />
               </button>
             </div>
 
-            <div className="p-5 space-y-5">
+            <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain scrollbar-hide p-4 sm:p-5 space-y-5">
               <div className="space-y-2">
                 <label className="text-xs text-text-secondary uppercase tracking-wide font-semibold">
                   Primary document *
@@ -591,7 +593,7 @@ export default function KycPage() {
                   placeholder="Residential address"
                   className={inputCls}
                 />
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 min-[380px]:grid-cols-2 gap-3">
                   <input
                     type="text"
                     value={city}
@@ -625,7 +627,7 @@ export default function KycPage() {
                 {submitting ? (
                   <>
                     <div className="w-4 h-4 border-2 border-black/30 border-t-black rounded-full animate-spin" />
-                    Uploadingâ€¦
+                    Uploading…
                   </>
                 ) : (
                   <>
