@@ -100,6 +100,7 @@ export default function KycPage() {
 
   const [docType, setDocType] = useState('passport');
   const [file, setFile] = useState<File | null>(null);
+  const [fileBack, setFileBack] = useState<File | null>(null);
   const [docType2, setDocType2] = useState('proof_of_address');
   const [file2, setFile2] = useState<File | null>(null);
   const [address, setAddress] = useState('');
@@ -135,6 +136,7 @@ export default function KycPage() {
 
   const openForm = () => {
     setFile(null);
+    setFileBack(null);
     setFile2(null);
     setShowFormModal(true);
   };
@@ -147,6 +149,12 @@ export default function KycPage() {
     const fd = new FormData();
     fd.append('document_type', docType);
     fd.append('file', file);
+    // Back side rides in the THIRD slot so the optional second slot stays free
+    // for proof of address. `id_back` is already an accepted document type.
+    if (fileBack) {
+      fd.append('document_type_3', 'id_back');
+      fd.append('file_3', fileBack);
+    }
     if (file2) {
       fd.append('document_type_2', docType2);
       fd.append('file_2', file2);
@@ -499,9 +507,32 @@ export default function KycPage() {
                     <div className="flex flex-col items-center gap-1 text-center py-2">
                       <Upload size={18} className="text-text-tertiary" />
                       <span className="text-xs text-text-secondary">
-                        Tap to upload Â· JPG, PNG, PDF, WEBP Â· max 10 MB
+                        Tap to upload front side · JPG, PNG, PDF, WEBP · max 10 MB
                       </span>
                     </div>
+                  )}
+                </label>
+
+                {/* Back side of the same ID. Optional because a passport only
+                    has one page — cards and licences need both. */}
+                <label
+                  className={clsx(
+                    'flex items-center justify-center w-full min-h-[4rem] rounded-xl border-2 border-dashed cursor-pointer transition-colors',
+                    fileBack
+                      ? 'border-accent/40 bg-accent/5'
+                      : 'border-border-primary hover:border-border-accent bg-card-nested',
+                  )}
+                >
+                  <input
+                    type="file"
+                    accept=".jpg,.jpeg,.png,.pdf,.webp"
+                    className="hidden"
+                    onChange={(e) => setFileBack(e.target.files?.[0] ?? null)}
+                  />
+                  {fileBack ? (
+                    <span className="text-xs text-accent font-medium px-2 break-all text-center">{fileBack.name}</span>
+                  ) : (
+                    <span className="text-xs text-text-secondary">Tap to upload back side (optional)</span>
                   )}
                 </label>
               </div>

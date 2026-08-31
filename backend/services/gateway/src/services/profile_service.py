@@ -208,6 +208,8 @@ async def submit_kyc(
     file: UploadFile,
     document_type_2: str | None,
     file_2: UploadFile | None,
+    document_type_3: str | None,
+    file_3: UploadFile | None,
     residential_address: str | None,
     city: str | None,
     postal_code: str | None,
@@ -246,12 +248,28 @@ async def submit_kyc(
             detail="Second document type was set but no second file was uploaded.",
         )
 
+    has_third = bool(file_3 and file_3.filename)
+    if has_third:
+        if not document_type_3 or document_type_3 not in VALID_DOC_TYPES:
+            raise HTTPException(
+                status_code=400,
+                detail="Select a valid document type for the third file.",
+            )
+    elif document_type_3 and document_type_3.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Third document type was set but no third file was uploaded.",
+        )
+
     uploads: list[tuple[str, bytes, str]] = []
     c1, s1 = await _read_upload_file(file, "primary document")
     uploads.append((document_type, c1, s1))
     if has_second:
         c2, s2 = await _read_upload_file(file_2, "second document")
         uploads.append((document_type_2, c2, s2))
+    if has_third:
+        c3, s3 = await _read_upload_file(file_3, "third document")
+        uploads.append((document_type_3, c3, s3))
 
     root = _kyc_upload_root()
     try:

@@ -97,12 +97,17 @@ async def submit_kyc(
     file: UploadFile = File(...),
     document_type_2: str | None = Form(default=None),
     file_2: UploadFile | None = File(default=None),
+    # Third slot exists so an ID can be sent as front + back WITHOUT giving up
+    # the optional proof-of-address slot. Optional, so existing clients (the
+    # mobile app included) keep working unchanged.
+    document_type_3: str | None = Form(default=None),
+    file_3: UploadFile | None = File(default=None),
     residential_address: str | None = Form(None),
     city: str | None = Form(None),
     postal_code: str | None = Form(None),
     country_of_residence: str | None = Form(None),
 ):
-    """Upload one or two KYC documents (multipart). Optional address fields update the user profile.
+    """Upload one to three KYC documents (multipart). Optional address fields update the user profile.
 
     Allowed when kyc_status is pending/rejected. Blocked when submitted, under_review, or approved.
     Sets kyc_status to 'submitted' so admin KYC queue can pick it up.
@@ -113,6 +118,8 @@ async def submit_kyc(
         file=file,
         document_type_2=document_type_2,
         file_2=file_2,
+        document_type_3=document_type_3,
+        file_3=file_3,
         residential_address=residential_address,
         city=city,
         postal_code=postal_code,
