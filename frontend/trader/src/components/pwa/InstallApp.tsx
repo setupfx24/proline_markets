@@ -50,7 +50,13 @@ function useInstallable() {
 
     const existing = document.getElementById(MANIFEST_ID) as HTMLLinkElement | null;
 
-    if (!isAuthenticated && !onInvestorLogin) {
+    // app/investor/layout.tsx already renders the investor manifest server-side
+    // — injecting a second <link rel="manifest"> here would be ignored anyway.
+    if (onInvestorLogin) {
+      existing?.remove();
+      return;
+    }
+    if (!isAuthenticated) {
       existing?.remove();
       return;
     }
