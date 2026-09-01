@@ -1,11 +1,17 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { usePathname } from 'next/navigation';
 import { clsx } from 'clsx';
 import { Download } from 'lucide-react';
 import { useAuthStore } from '@/stores/authStore';
 
 const MANIFEST_HREF = '/manifest.webmanifest';
+// Read-only investor sessions get their own manifest: same icons, but
+// start_url=/investor. Without it iOS "Add to Home Screen" reads the terminal
+// manifest and the saved icon opens /trading/terminal, which an investor
+// cannot log into — the login they were given lives at /investor.
+const INVESTOR_MANIFEST_HREF = '/investor.webmanifest';
 const MANIFEST_ID = 'proline-manifest';
 
 /** The `beforeinstallprompt` event isn't in lib.dom yet. */
@@ -28,29 +34,44 @@ interface BeforeInstallPromptEvent extends Event {
  */
 function useInstallable() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const isInvestor = useAuthStore((s) => s.user?.role === 'investor');
+  const pathname = usePathname();
   const [deferred, setDeferred] = useState<BeforeInstallPromptEvent | null>(null);
   const [installed, setInstalled] = useState(false);
+
+  // The investor login page is itself installable: that is the page an investor
+  // is told to add to their home screen, and they reach it signed out.
+  const onInvestorLogin = pathname === '/investor';
+  const wantsInvestorManifest = isInvestor || onInvestorLogin;
+  const href = wantsInvestorManifest ? INVESTOR_MANIFEST_HREF : MANIFEST_HREF;
 
   useEffect(() => {
     if (typeof document === 'undefined') return;
 
-    if (!isAuthenticated) {
-      document.getElementById(MANIFEST_ID)?.remove();
+    const existing = document.getElementById(MANIFEST_ID) as HTMLLinkElement | null;
+
+    if (!isAuthenticated && !onInvestorLogin) {
+      existing?.remove();
       return;
     }
-    if (document.getElementById(MANIFEST_ID)) return;
+    if (existing) {
+      // Role is known only after the session loads, so the href can change
+      // under a link that is already in the head.
+      if (!existing.href.endsWith(href)) existing.href = href;
+      return;
+    }
 
     const link = document.createElement('link');
     link.id = MANIFEST_ID;
     link.rel = 'manifest';
-    link.href = MANIFEST_HREF;
+    link.href = href;
     document.head.appendChild(link);
-  }, [isAuthenticated]);
+  }, [isAuthenticated, onInvestorLogin, href]);
 
   useEffect(() => {
     if (!('serviceWorker' in navigator)) return;
 
-    if (!isAuthenticated) {
+    if (!isAuthenticated && !onInvestorLogin) {
       // Drop the worker on sign-out so the next anonymous visitor on this
       // browser is not installable. An already-installed app is unaffected.
       void navigator.serviceWorker.getRegistrations().then((regs) => {
@@ -70,7 +91,7 @@ function useInstallable() {
     };
     if (document.readyState === 'complete') register();
     else window.addEventListener('load', register, { once: true });
-  }, [isAuthenticated]);
+  }, [isAuthenticated, onInvestorLogin]);
 
   useEffect(() => {
     const onPrompt = (e: Event) => {
@@ -102,7 +123,7 @@ function useInstallable() {
     setDeferred(null);
   };
 
-  return { canInstall: isAuthenticated && !!deferred && !installed, install };
+  return { canInstall: (isAuthenticated || onInvestorLogin) && !!deferred && !installed, install };
 }
 
 /** Mount once in the root layout. */

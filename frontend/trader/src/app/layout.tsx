@@ -49,7 +49,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             stops the dashboard flashing up in the frame before it runs. */}
         <script
           dangerouslySetInnerHTML={{
-            __html: `(function(){try{if(window.matchMedia('(display-mode: standalone)').matches||window.navigator.standalone===true){document.documentElement.setAttribute('data-standalone','1');}}catch(e){}})();`,
+            __html: `(function(){try{if(window.matchMedia('(display-mode: standalone)').matches||window.navigator.standalone===true){document.documentElement.setAttribute('data-standalone','1');if(localStorage.getItem('proline-standalone-chrome')==='keep'){document.documentElement.setAttribute('data-standalone-chrome','keep');}}}catch(e){}})();`,
           }}
         />
       </head>

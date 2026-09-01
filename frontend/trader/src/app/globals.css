@@ -719,6 +719,10 @@ html[data-page="accounts"] div:has(> header.h-\[65px\]) {
    layout.tsx; StandaloneGuard then redirects to the terminal. Hiding the
    chrome here covers the frames before that effect runs, so the full site
    never flashes up inside the app window. */
-html[data-standalone='1'] [data-app-chrome] {
+/* Investor (read-only) sessions keep the chrome: their app is Accounts +
+   Transactions, not the terminal, so hiding the shell leaves a blank window.
+   The attribute is set pre-paint from localStorage and kept in sync by
+   StandaloneGuard. */
+html[data-standalone='1']:not([data-standalone-chrome='keep']) [data-app-chrome] {
   display: none !important;
 }

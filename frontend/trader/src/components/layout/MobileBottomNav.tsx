@@ -100,6 +100,7 @@ export default function MobileBottomNav() {
   const setActiveAccount = useTradingStore((s) => s.setActiveAccount);
   const [showMore, setShowMore] = useState(false);
   const standalone = useStandalone();
+  const isInvestor = useAuthStore((s) => s.user?.role === 'investor');
 
   const tradingAccountId = useMemo(() => {
     if (pathname?.startsWith('/trading/terminal')) return searchParams.get('account');
@@ -146,8 +147,10 @@ export default function MobileBottomNav() {
     pathname === '/platforms' || pathname === '/white-label';
   if (pathname?.startsWith('/auth') || isPublicPage) return null;
   // The installed app is terminal-only, so the nav that leaves it is dropped
-  // rather than left to bounce off StandaloneGuard.
-  if (standalone) return null;
+  // rather than left to bounce off StandaloneGuard. Investor (read-only)
+  // sessions are the exception: their app IS Accounts + Transactions, and
+  // without this bar the installed app has no navigation at all on a phone.
+  if (standalone && !isInvestor) return null;
 
   const currentView = searchParams.get('view') || '';
   const isTradingArea = pathname?.startsWith('/trading');
