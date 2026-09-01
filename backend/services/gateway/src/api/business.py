@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.common.src.database import get_db
-from packages.common.src.auth import get_current_user
+from packages.common.src.auth import get_current_user, forbid_investor
 from ..services import business_service
 
 router = APIRouter()
@@ -21,7 +21,7 @@ async def ib_status(
 async def apply_ib(
     application_data: dict = None,
     referral_code: str = Query(None),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(forbid_investor),
     db: AsyncSession = Depends(get_db),
 ):
     return await business_service.apply_ib(
@@ -32,7 +32,7 @@ async def apply_ib(
 @router.post("/apply-sub-broker", status_code=201)
 async def apply_sub_broker(
     application_data: dict = None,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(forbid_investor),
     db: AsyncSession = Depends(get_db),
 ):
     return await business_service.apply_sub_broker(
@@ -90,7 +90,7 @@ async def generate_referral_link(
     utm_source: str = Query(None),
     utm_medium: str = Query(None),
     utm_campaign: str = Query(None),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(forbid_investor),
     db: AsyncSession = Depends(get_db),
 ):
     return await business_service.generate_referral_link(

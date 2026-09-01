@@ -20,6 +20,7 @@ import { ProlineMarketsDatafeed } from '@/lib/charting/datafeed';
 import api from '@/lib/api/client';
 import toast from 'react-hot-toast';
 import { createBroker } from '@/lib/charting/broker';
+import { useViewOnly } from '@/stores/authStore';
 
 // The licensed library attaches `TradingView` to window once the script runs.
 // Use `any` for the widget/chart — the bundled .d.ts is huge and we only touch
@@ -136,6 +137,9 @@ type ChartDialog = {
 } | null;
 
 export default function ChartingLibraryChart() {
+  // Investor (read-only) sessions get the chart, but none of the on-chart
+  // actions — no ✕ close button, no draggable SL/TP.
+  const viewOnly = useViewOnly();
   const selectedSymbol = useTradingStore((s) => s.selectedSymbol);
   const positions = useTradingStore((s) => s.positions);
   const pendingOrders = useTradingStore((s) => s.pendingOrders);
@@ -723,6 +727,7 @@ export default function ChartingLibraryChart() {
   // next crosshair sample re-locks it. (2026-07-10)
   useEffect(() => {
     if (USE_NATIVE_BROKER) return; // native broker draws the ✕ close button
+    if (viewOnly) return;           // read-only session: no close / SL-TP handles
     const w = widgetRef.current;
     const overlay = overlayRef.current;
     if (!ready || !w?.activeChart || !overlay) return;
@@ -1129,7 +1134,7 @@ export default function ChartingLibraryChart() {
         for (const el of nodes) { try { overlay.removeChild(el); } catch { /* noop */ } }
       }
     };
-  }, [ready, selectedSymbol, positionsKey]);
+  }, [ready, selectedSymbol, positionsKey, viewOnly]);
 
   return (
     <div className="relative w-full h-full min-h-[320px]">

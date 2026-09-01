@@ -188,7 +188,7 @@ class DepositBankDetailsRequest(BaseModel):
 
 @router.post("/deposit/bank-details")
 async def get_deposit_bank_details(
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(forbid_investor),
     db: AsyncSession = Depends(get_db),
     body: DepositBankDetailsRequest | None = Body(default=None),
 ):

@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.common.src.database import get_db
-from packages.common.src.auth import get_current_user
+from packages.common.src.auth import get_current_user, forbid_investor
 from ..services import profile_service
 
 router = APIRouter()
@@ -42,7 +42,7 @@ async def get_profile(
 @router.put("")
 async def update_profile(
     req: UpdateProfileRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(forbid_investor),
     db: AsyncSession = Depends(get_db),
 ):
     return await profile_service.update_profile(
@@ -55,7 +55,7 @@ async def update_profile(
 @router.put("/password")
 async def change_password(
     req: ChangePasswordRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(forbid_investor),
     db: AsyncSession = Depends(get_db),
 ):
     return await profile_service.change_password(
@@ -79,7 +79,7 @@ async def list_sessions(
 @router.delete("/sessions/{session_id}")
 async def terminate_session(
     session_id: UUID,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(forbid_investor),
     db: AsyncSession = Depends(get_db),
 ):
     return await profile_service.terminate_session(
@@ -91,7 +91,7 @@ async def terminate_session(
 
 @router.post("/kyc/submit")
 async def submit_kyc(
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(forbid_investor),
     db: AsyncSession = Depends(get_db),
     document_type: str = Form(...),
     file: UploadFile = File(...),

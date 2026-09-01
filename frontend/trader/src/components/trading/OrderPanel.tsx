@@ -144,6 +144,9 @@ export default function OrderPanel() {
 
   const handleSubmit = async () => {
     unlockAudio();
+    // Investor (read-only) sessions never place orders — the entry form is not
+    // rendered for them, this only guards a stray call.
+    if (viewOnly) return;
     if (!activeAccount) return;
     if (orderTab === 'market' && !marketStatus.isOpen) {
       toast.error(marketStatus.reason || 'Market is closed');
@@ -209,16 +212,6 @@ export default function OrderPanel() {
   const obPad = isTradingTerminal ? 'py-2' : 'py-3';
   const volBtn = isTradingTerminal ? 'w-8 h-8' : 'w-10 h-10';
   const volIn = isTradingTerminal ? 'py-1.5 text-sm' : 'py-2.5 text-base';
-
-  if (viewOnly) {
-    return (
-      <div className="h-full min-h-0 flex flex-col items-center justify-center gap-2 bg-bg-base p-6 text-center">
-        <div className="w-10 h-10 rounded-full bg-accent/10 border border-accent/25 flex items-center justify-center text-accent text-lg">👁</div>
-        <div className="text-sm font-semibold text-text-primary">View-only access</div>
-        <div className="text-xs text-text-tertiary max-w-[220px]">Investor accounts can watch charts and positions but cannot place or modify trades.</div>
-      </div>
-    );
-  }
 
   return (
     <div className="h-full min-h-0 flex flex-col overflow-hidden bg-bg-base">
@@ -289,6 +282,7 @@ export default function OrderPanel() {
                 />
                 <span className="text-[9px] font-extrabold uppercase tracking-wider">Markets</span>
               </button>
+              {!viewOnly && (
               <button
                 type="button"
                 title={oneClickTrading ? 'One-click trading on' : 'One-click trading off'}
@@ -304,6 +298,7 @@ export default function OrderPanel() {
               >
                 <Zap size={15} strokeWidth={1.75} />
               </button>
+              )}
             </div>
           ) : null}
         </div>
@@ -341,6 +336,7 @@ export default function OrderPanel() {
         >
           <div className={pad}>
           {/* Market / Pending tabs */}
+          {!viewOnly && (
           <div className="flex rounded-md overflow-hidden bg-bg-secondary border border-border-primary">
             {(['market', 'pending'] as const).map((t) => (
               <button
@@ -361,13 +357,15 @@ export default function OrderPanel() {
               </button>
             ))}
           </div>
+          )}
 
-          {/* Sell / Buy buttons */}
+          {/* Sell / Buy buttons — for investors these stay as a bid/ask readout */}
           <div className={clsx('grid grid-cols-2', isTradingTerminal ? 'gap-1.5' : 'gap-2')}>
              <button
                 type="button"
-                onClick={() => setSide('sell')}
-                className={clsx(obPad, 'rounded-lg flex flex-col items-center justify-center transition-all duration-150 active:scale-[0.98]')}
+                onClick={() => { if (!viewOnly) setSide('sell'); }}
+                aria-disabled={viewOnly}
+                className={clsx(obPad, 'rounded-lg flex flex-col items-center justify-center transition-all duration-150', viewOnly ? 'cursor-default' : 'active:scale-[0.98]')}
                 style={{
                   background: side === 'sell' ? 'rgba(239,83,80,0.15)' : 'var(--bg-secondary)',
                   border: side === 'sell' ? '1px solid #ef5350' : '1px solid var(--border-primary)',
@@ -380,8 +378,9 @@ export default function OrderPanel() {
              </button>
              <button
                 type="button"
-                onClick={() => setSide('buy')}
-                className={clsx(obPad, 'rounded-lg flex flex-col items-center justify-center transition-all duration-150 active:scale-[0.98]')}
+                onClick={() => { if (!viewOnly) setSide('buy'); }}
+                aria-disabled={viewOnly}
+                className={clsx(obPad, 'rounded-lg flex flex-col items-center justify-center transition-all duration-150', viewOnly ? 'cursor-default' : 'active:scale-[0.98]')}
                 style={{
                   background: side === 'buy' ? 'rgba(34,197,94,0.15)' : 'var(--bg-secondary)',
                   border: side === 'buy' ? '1px solid #22c55e' : '1px solid var(--border-primary)',
@@ -403,6 +402,15 @@ export default function OrderPanel() {
              </div>
           )}
 
+          {viewOnly ? (
+            <div className="mt-3 rounded-lg border border-accent/25 bg-accent/[0.07] px-3 py-2.5 text-center">
+              <div className="text-[11px] font-semibold text-text-primary">View-only access</div>
+              <div className="mt-0.5 text-[10px] leading-snug text-text-tertiary">
+                You can watch markets, charts and positions. Placing or modifying trades is disabled.
+              </div>
+            </div>
+          ) : (
+          <>
           {/* SL / TP toggles */}
           <div className={clsx('flex items-center', isTradingTerminal ? 'gap-3 pt-1' : 'gap-5 pt-2')}>
             <label className="flex items-center gap-2 cursor-pointer">
@@ -547,10 +555,12 @@ export default function OrderPanel() {
               )}
             </>
           ) : null}
+          </>
+          )}
           </div>
         </div>
 
-        {isTradingTerminal ? (
+        {isTradingTerminal && !viewOnly ? (
           <div className="shrink-0 border-t border-border-primary bg-bg-secondary px-2 pt-2 pb-2 space-y-1.5">
             <div className="flex items-center justify-between py-1.5 px-2 rounded-md bg-card border border-border-primary">
               <span className="text-[10px] text-text-tertiary">Exec. Price</span>

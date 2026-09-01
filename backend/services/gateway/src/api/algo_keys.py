@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
 
 from packages.common.src.database import get_db
-from packages.common.src.auth import get_current_user
+from packages.common.src.auth import get_current_user, forbid_investor
 from packages.common.src.models import AlgoApiKey, TradingAccount, MasterAccount, InvestorAllocation
 
 logger = logging.getLogger("algo_keys")
@@ -156,7 +156,7 @@ async def list_accounts_with_keys(
 @router.post("/generate")
 async def generate_key(
     body: GenerateKeyRequest,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(forbid_investor),
     db: AsyncSession = Depends(get_db),
 ):
     """Generate a new API key + secret for a trading account. Returns secret ONCE."""
@@ -214,7 +214,7 @@ async def generate_key(
 @router.post("/revoke")
 async def revoke_key(
     body: RevokeKeyRequest,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(forbid_investor),
     db: AsyncSession = Depends(get_db),
 ):
     """Revoke an algo API key."""

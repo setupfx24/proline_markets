@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.common.src.database import get_db
-from packages.common.src.auth import get_current_user
+from packages.common.src.auth import get_current_user, forbid_investor
 from ..services import share_service
 
 router = APIRouter()
@@ -23,7 +23,7 @@ class CreateShareRequest(BaseModel):
 async def create_share(
     position_id: UUID,
     body: CreateShareRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(forbid_investor),
     db: AsyncSession = Depends(get_db),
 ):
     return await share_service.create_share_link(

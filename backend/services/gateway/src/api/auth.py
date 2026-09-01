@@ -10,7 +10,7 @@ from packages.common.src.schemas import (
     ForgotPasswordRequest, ResetPasswordRequest, MessageResponse, BootstrapSessionRequest,
     VerifyEmailRequest, ResendVerificationRequest,
 )
-from packages.common.src.auth import get_current_user
+from packages.common.src.auth import get_current_user, forbid_investor
 from ..services.auth_service import (
     AuthServiceError,
     register_user, login_user, demo_login as _demo_login,
@@ -174,7 +174,7 @@ async def get_me(current_user: dict = Depends(get_current_user), db: AsyncSessio
 
 
 @router.post("/2fa/setup")
-async def setup_2fa(current_user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def setup_2fa(current_user: dict = Depends(forbid_investor), db: AsyncSession = Depends(get_db)):
     try:
         return await _setup_2fa(user_id=current_user["user_id"], db=db)
     except AuthServiceError as e:
@@ -182,7 +182,7 @@ async def setup_2fa(current_user: dict = Depends(get_current_user), db: AsyncSes
 
 
 @router.post("/2fa/verify")
-async def verify_2fa(code: str, current_user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def verify_2fa(code: str, current_user: dict = Depends(forbid_investor), db: AsyncSession = Depends(get_db)):
     try:
         return await _verify_2fa(user_id=current_user["user_id"], code=code, db=db)
     except AuthServiceError as e:
@@ -192,7 +192,7 @@ async def verify_2fa(code: str, current_user: dict = Depends(get_current_user), 
 @router.post("/password/change")
 async def change_password(
     old_password: str, new_password: str,
-    current_user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(forbid_investor), db: AsyncSession = Depends(get_db),
 ):
     try:
         return await _change_password(

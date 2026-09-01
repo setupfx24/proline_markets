@@ -6,7 +6,7 @@ from fastapi import APIRouter, Body, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.common.src.database import get_db
-from packages.common.src.auth import get_current_user
+from packages.common.src.auth import get_current_user, forbid_investor
 from ..services import social_service
 
 router = APIRouter()
@@ -43,7 +43,7 @@ async def start_copy(
     amount: Decimal = Query(..., gt=0),
     max_drawdown_pct: Decimal = Query(None),
     max_lot_override: Decimal = Query(None),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(forbid_investor),
     db: AsyncSession = Depends(get_db),
 ):
     return await social_service.start_copy(
@@ -76,7 +76,7 @@ async def follow_requests(
 async def approve_follow_request(
     allocation_id: UUID,
     action: str = Query(..., pattern="^(approve|reject)$"),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(forbid_investor),
     db: AsyncSession = Depends(get_db),
 ):
     """Master approves or rejects a pending follow request."""
@@ -89,7 +89,7 @@ async def approve_follow_request(
 @router.delete("/copy/{allocation_id}")
 async def stop_copy(
     allocation_id: UUID,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(forbid_investor),
     db: AsyncSession = Depends(get_db),
 ):
     return await social_service.stop_copy(
@@ -106,7 +106,7 @@ async def become_provider(
     min_investment: Decimal = Query(Decimal("100"), gt=0),
     max_investors: int = Query(100, ge=1, le=1000),
     strategy_info: dict | None = Body(None),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(forbid_investor),
     db: AsyncSession = Depends(get_db),
 ):
     # account_id removed — server auto-creates a dedicated master trading
@@ -155,7 +155,7 @@ async def invest_managed_account(
         le=Decimal("500"),
         description="MAM only: multiplier on proportional share (100 = same as PAMM share)",
     ),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(forbid_investor),
     db: AsyncSession = Depends(get_db),
 ):
     return await social_service.invest_managed_account(
@@ -168,7 +168,7 @@ async def invest_managed_account(
 @router.delete("/mamm-pamm/{allocation_id}/withdraw")
 async def withdraw_managed_account(
     allocation_id: UUID,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(forbid_investor),
     db: AsyncSession = Depends(get_db),
 ):
     return await social_service.withdraw_managed_account(
@@ -202,7 +202,7 @@ async def get_account_risk(
 async def update_account_risk(
     investor_account_id: UUID,
     max_drawdown_pct: Decimal | None = Body(None, embed=True),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(forbid_investor),
     db: AsyncSession = Depends(get_db),
 ):
     return await social_service.update_account_risk(
@@ -215,7 +215,7 @@ async def update_account_risk(
 @router.post("/account-risk/{investor_account_id}/reset")
 async def reset_account_risk(
     investor_account_id: UUID,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(forbid_investor),
     db: AsyncSession = Depends(get_db),
 ):
     return await social_service.reset_account_risk(

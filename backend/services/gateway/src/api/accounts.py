@@ -78,7 +78,7 @@ async def get_account_summary(
 @router.delete("/{account_id}", response_model=MessageResponse)
 async def delete_trading_account(
     account_id: UUID,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(forbid_investor),
     db: AsyncSession = Depends(get_db),
 ):
     """Permanently remove a live trading account owned by the user (demo accounts are not removable)."""
