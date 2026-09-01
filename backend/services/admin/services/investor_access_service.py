@@ -35,6 +35,9 @@ async def list_investors(db: AsyncSession) -> dict:
         items.append({
             "id": str(inv.id),
             "email": inv.email,
+            # Shown (masked, click to reveal) in the admin table; NULL for logins
+            # generated before the password started being stored.
+            "password": inv.password_plain,
             "label": inv.label,
             "is_active": inv.is_active,
             "user_id": str(inv.user_id),
@@ -70,6 +73,7 @@ async def create_investor(
     inv = existing_q.scalar_one_or_none()
     if inv:
         inv.password_hash = hash_password(raw_password)
+        inv.password_plain = raw_password
         inv.is_active = True
         if body.label is not None:
             inv.label = body.label or None
@@ -78,6 +82,7 @@ async def create_investor(
         inv = InvestorAccess(
             email=user.email,
             password_hash=hash_password(raw_password),
+            password_plain=raw_password,
             user_id=user.id,
             label=(body.label or None),
             is_active=True,
@@ -122,6 +127,7 @@ async def update_investor(
         inv.label = body.label or None
     if body.password:
         inv.password_hash = hash_password(body.password)
+        inv.password_plain = body.password
         result["password"] = body.password
 
     await write_audit_log(

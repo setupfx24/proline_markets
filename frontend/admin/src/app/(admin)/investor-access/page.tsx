@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { adminApi } from '@/lib/api';
 import { cn } from '@/lib/utils';
-import { Loader2, RefreshCw, Eye, KeyRound, Copy, Check, Search, Trash2 } from 'lucide-react';
+import { Loader2, RefreshCw, Eye, EyeOff, KeyRound, Copy, Check, Search, Trash2, AlertTriangle } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 interface PlatformUser {
@@ -17,6 +17,7 @@ interface PlatformUser {
 interface Investor {
   id: string;
   email: string;
+  password?: string | null;
   user_id: string;
   is_active: boolean;
   last_login_at?: string | null;
@@ -31,6 +32,10 @@ export default function InvestorAccessPage() {
   const [pages, setPages] = useState(1);
   const [busyUser, setBusyUser] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [revealed, setRevealed] = useState<Record<string, boolean>>({});
+  // Regenerating invalidates the password the investor already has, so the
+  // second time round it goes through a confirmation step.
+  const [confirmUser, setConfirmUser] = useState<PlatformUser | null>(null);
   const [creds, setCreds] = useState<{ email: string; password: string; name?: string; regenerated?: boolean } | null>(null);
 
   // Investor login lives on the trader app (apex domain), not the admin subdomain.
@@ -71,6 +76,7 @@ export default function InvestorAccessPage() {
   const onSearch = (e: React.FormEvent) => { e.preventDefault(); setPage(1); fetchUsers(1, search); };
 
   const generate = async (u: PlatformUser) => {
+    setConfirmUser(null);
     setBusyUser(u.id);
     try {
       const res = await adminApi.post<{ email: string; password: string; user_name?: string; regenerated?: boolean }>(
@@ -167,10 +173,10 @@ export default function InvestorAccessPage() {
             <div className="text-center text-xs text-text-tertiary py-12">No users found</div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[820px]">
+              <table className="w-full min-w-[1080px]">
                 <thead>
                   <tr className="border-b border-border-primary bg-bg-tertiary/40">
-                    {['User', 'Email', 'Status', 'Investor Login', 'Last Login', 'Actions'].map((col) => (
+                    {['User', 'Email', 'Status', 'Investor Login', 'Investor Email', 'Password', 'Last Login', 'Actions'].map((col) => (
                       <th key={col} className={cn('text-left px-4 py-2.5 text-xxs font-medium text-text-tertiary uppercase tracking-wide', col === 'Actions' && 'text-right')}>{col}</th>
                     ))}
                   </tr>
@@ -194,11 +200,46 @@ export default function InvestorAccessPage() {
                             <span className="text-xxs text-text-tertiary">—</span>
                           )}
                         </td>
+                        <td className="px-4 py-2.5 text-xs">
+                          {inv ? (
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <span className="font-mono text-text-secondary truncate max-w-[180px]" title={inv.email}>{inv.email}</span>
+                              <button onClick={() => copyValue(inv.email, 'Email')} className="shrink-0 p-1 rounded border border-border-primary text-text-tertiary hover:text-text-primary hover:bg-bg-hover transition-fast" title="Copy email">
+                                <Copy size={11} />
+                              </button>
+                            </div>
+                          ) : (
+                            <span className="text-xxs text-text-tertiary">—</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-2.5 text-xs">
+                          {inv?.password ? (
+                            <div className="flex items-center gap-1.5">
+                              <span className={cn('font-mono', revealed[inv.id] ? 'text-accent' : 'text-text-tertiary tracking-widest')}>
+                                {revealed[inv.id] ? inv.password : '•'.repeat(10)}
+                              </span>
+                              <button
+                                onClick={() => setRevealed((r) => ({ ...r, [inv.id]: !r[inv.id] }))}
+                                className="shrink-0 p-1 rounded border border-border-primary text-text-tertiary hover:text-text-primary hover:bg-bg-hover transition-fast"
+                                title={revealed[inv.id] ? 'Hide password' : 'Show password'}
+                              >
+                                {revealed[inv.id] ? <EyeOff size={11} /> : <Eye size={11} />}
+                              </button>
+                              <button onClick={() => copyValue(inv.password!, 'Password')} className="shrink-0 p-1 rounded border border-border-primary text-text-tertiary hover:text-text-primary hover:bg-bg-hover transition-fast" title="Copy password">
+                                <Copy size={11} />
+                              </button>
+                            </div>
+                          ) : (
+                            <span className="text-xxs text-text-tertiary" title={inv ? 'Created before passwords were stored — click Regenerate to get a visible one' : undefined}>
+                              {inv ? 'Regenerate to view' : '—'}
+                            </span>
+                          )}
+                        </td>
                         <td className="px-4 py-2.5 text-xs text-text-tertiary font-mono tabular-nums">{inv?.last_login_at ? new Date(inv.last_login_at).toLocaleString() : '—'}</td>
                         <td className="px-4 py-2.5 text-right">
                           <div className="flex items-center justify-end gap-1.5">
                             <button
-                              onClick={() => generate(u)}
+                              onClick={() => (inv ? setConfirmUser(u) : generate(u))}
                               disabled={busyUser === u.id}
                               className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xxs font-semibold text-accent border border-accent/30 hover:bg-accent/15 transition-fast disabled:opacity-50"
                               title={inv ? 'Regenerate password' : 'Generate investor login'}
@@ -232,13 +273,40 @@ export default function InvestorAccessPage() {
         )}
       </div>
 
+      {/* Regenerate confirmation */}
+      {confirmUser && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={() => setConfirmUser(null)}>
+          <div className="bg-bg-secondary border border-border-primary rounded-md shadow-modal w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+            <div className="px-5 py-4 border-b border-border-primary flex items-start gap-2.5">
+              <AlertTriangle size={16} className="text-warning shrink-0 mt-0.5" />
+              <div>
+                <h3 className="text-sm font-semibold text-text-primary">Regenerate investor password?</h3>
+                <p className="text-xxs text-text-tertiary mt-0.5">
+                  A new password will be generated for <span className="text-text-secondary">{confirmUser.name}</span> ({confirmUser.email}).
+                  The current password stops working immediately — anyone already using it will be locked out until you share the new one.
+                </p>
+              </div>
+            </div>
+            <div className="px-5 py-3 border-t border-border-primary flex justify-end gap-2">
+              <button onClick={() => setConfirmUser(null)} className="px-3 py-1.5 rounded-md text-xs text-text-secondary border border-border-primary hover:bg-bg-hover transition-fast">Cancel</button>
+              <button
+                onClick={() => generate(confirmUser)}
+                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-semibold bg-accent/15 text-accent border border-accent/30 hover:bg-accent/25 transition-fast"
+              >
+                <KeyRound size={12} /> Regenerate
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Credentials popup */}
       {creds && (
         <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={() => setCreds(null)}>
           <div className="bg-bg-secondary border border-border-primary rounded-md shadow-modal w-full max-w-md" onClick={(e) => e.stopPropagation()}>
             <div className="px-5 py-4 border-b border-border-primary">
               <h3 className="text-sm font-semibold text-text-primary">{creds.regenerated ? 'Password Regenerated' : 'Investor Login Created'}</h3>
-              <p className="text-xxs text-text-tertiary mt-0.5">Read-only access for {creds.name || creds.email}. Share these once — the password is not stored in plain text.</p>
+              <p className="text-xxs text-text-tertiary mt-0.5">Read-only access for {creds.name || creds.email}. These stay visible in the Password column below.</p>
             </div>
             <div className="px-5 py-4 space-y-2 text-xs">
               {[

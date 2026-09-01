@@ -146,6 +146,9 @@ async def _apply_startup_ddl():
                 "ALTER TABLE positions ADD COLUMN IF NOT EXISTS mt5_out_ticket VARCHAR(40)",
                 "ALTER TABLE positions ADD COLUMN IF NOT EXISTS mt5_out_state VARCHAR(16)",
                 "ALTER TABLE positions ADD COLUMN IF NOT EXISTS mt5_out_error TEXT",
+                # Investor Access shows the generated password in its table
+                # (migration 0024 owns it); without the column every list 500s.
+                "ALTER TABLE investor_access ADD COLUMN IF NOT EXISTS password_plain VARCHAR(255)",
                 "CREATE INDEX IF NOT EXISTS idx_positions_mt5_out "
                 "ON positions(mt5_out_ticket) WHERE mt5_out_ticket IS NOT NULL",
                 # 'two_way' silently behaved as mirror and disabled reverse.

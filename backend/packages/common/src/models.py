@@ -155,6 +155,10 @@ class InvestorAccess(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     email = Column(String(255), unique=True, nullable=False, index=True)
     password_hash = Column(String(255), nullable=False)
+    # The generated password in clear text, so the admin panel can show it again
+    # after the "shown once" popup is closed. Admin-generated read-only credential
+    # (MT-style investor password) — never a user's own account password.
+    password_plain = Column(String(255))
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     label = Column(String(120))
     is_active = Column(Boolean, default=True, nullable=False)
