@@ -85,8 +85,13 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     <div className="flex h-screen w-screen overflow-hidden bg-bg-page">
       <AdminSidebar />
       <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Top bar — glass effect */}
-        <div className="flex items-center h-14 px-5 glass border-b border-border-primary/30">
+        {/* Top bar — glass effect.
+            relative z-50 is load-bearing: the content area below animates with
+            `animate-page-in`, whose fill-mode keeps a transform applied, and a
+            transform makes it a stacking context. As a later sibling with the
+            same auto z-index it would paint OVER the top bar, putting the
+            notification dropdown behind the page. */}
+        <div className="relative z-50 flex items-center h-14 px-5 glass border-b border-border-primary/30">
           <div className="relative flex-1 max-w-md">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-tertiary" />
             <input
