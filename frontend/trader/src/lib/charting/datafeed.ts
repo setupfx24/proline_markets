@@ -276,7 +276,11 @@ export const ProlineMarketsDatafeed: IBasicDataFeed = {
       has_daily: true,
       has_weekly_and_monthly: false,
       supported_resolutions: SUPPORTED_RESOLUTIONS,
-      volume_precision: 2,
+      // There is no real traded volume on this feed — the tick stream carries
+      // no size, so the bar aggregator only counts ticks. Reporting that as
+      // "Volume" drew a meaningless bar on the chart, so the symbol is declared
+      // OHLC-only and the library stops plotting volume at all.
+      visible_plots_set: "ohlc",
       data_status: "streaming",
     };
     setTimeout(() => onResolve(info), 0);

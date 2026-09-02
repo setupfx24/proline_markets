@@ -295,9 +295,12 @@ export default function ChartingLibraryChart() {
         // Hide TradingView's own account-manager panel when the native broker is
         // on — the app already has its right-side order panel + bottom positions
         // table; we only want the on-chart position LINES from the broker.
+        // create_volume_indicator_by_default: the feed has no traded volume
+        // (see has_no_volume in datafeed.ts), so the default study only drew a
+        // tick counter on the price pane.
         disabled_features: USE_NATIVE_BROKER
-          ? ['header_symbol_search', 'trading_account_manager']
-          : ['header_symbol_search'],
+          ? ['header_symbol_search', 'trading_account_manager', 'create_volume_indicator_by_default']
+          : ['header_symbol_search', 'create_volume_indicator_by_default'],
         // NOTE: do NOT enable 'study_templates' — it needs a server
         // charts_storage_url/client_id/user_id, which we don't run, so the
         // library fired GET .../undefined/undefined/study_templates → 404 spam
@@ -343,6 +346,15 @@ export default function ChartingLibraryChart() {
           try { (w as any).applyOverrides?.(themeOverrides); } catch { /* noop */ }
           // Ensure the bid LTP line is on even if a saved layout turned it off.
           try { (w as any).applyOverrides?.(LTP_LINE_OVERRIDES); } catch { /* noop */ }
+          // Drop a Volume study carried over from a saved layout. New charts no
+          // longer create one (create_volume_indicator_by_default is off and the
+          // symbol is OHLC-only), but saved_data from before that still holds it.
+          try {
+            const chart = w.activeChart?.();
+            chart?.getAllStudies?.()
+              .filter((st: { name: string }) => st.name === 'Volume')
+              .forEach((st: { id: string }) => { try { chart.removeEntity(st.id); } catch { /* noop */ } });
+          } catch { /* noop */ }
           // Persist the FULL layout (drawings + studies + settings + interval)
           // on every change so it survives a refresh. save() serialises the
           // whole widget state; we stash it in localStorage. subscribe/save are
