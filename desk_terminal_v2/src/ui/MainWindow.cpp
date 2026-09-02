@@ -45,6 +45,24 @@
 
 static const char* MASK = "••••••";
 
+// Shown on hover (tooltips) and raised as a toast when a read-only session
+// presses something that would trade or move money. One wording everywhere:
+// the investor should recognise the same sentence wherever it appears.
+QString MainWindow::kInvestorHint() {
+    return tr("Investor mode — read-only. Trading and deposits are disabled.");
+}
+
+// Returns true (and warns) when this session may not perform `what`.
+bool MainWindow::warnIfReadOnly(const QString& what) {
+    if (!m_cfg.readOnly) return false;
+    Toast::error(this, tr("Investor mode"),
+                 what.isEmpty()
+                     ? tr("This is a read-only investor login — you cannot trade "
+                          "or move funds on this account.")
+                     : tr("%1 is not available on a read-only investor login.").arg(what));
+    return true;
+}
+
 MainWindow::MainWindow(const Config& cfg, QWidget* parent)
     : QMainWindow(parent), m_cfg(cfg) {
     setWindowTitle(m_cfg.readOnly
@@ -69,22 +87,20 @@ MainWindow::MainWindow(const Config& cfg, QWidget* parent)
     m_account->setPrivacy(m_cfg.privacy);
     m_positions->setPrivacy(m_cfg.privacy);
 
-    // Read-only investor session: the account, charts and blotter stay, every
-    // way of placing or changing a trade goes. ApiClient refuses these calls
-    // too, and so does the gateway — this is the layer that stops a viewer
-    // being shown buttons that could only ever fail.
+    // Read-only investor session. The terminal is NOT stripped down: every
+    // control stays visible and clickable, because a viewer who is shown a
+    // half-empty window cannot tell a restriction from a broken build. What
+    // changes is the answer — hovering says why, and pressing raises a warning
+    // instead of sending anything. ApiClient refuses the call as well, and the
+    // gateway 403s it regardless.
     if (m_cfg.readOnly) {
-        m_ticket->hide();               // the one-click BUY/SELL strip
+        m_ticket->setReadOnly(true);
         m_positions->setReadOnly(true);
     }
 
     // The one-click strip floats in the chart's toolbar band, in the gap
     // between TradingView's Indicators/undo controls and its icon cluster.
-    //
-    // Never installed for a read-only investor: WebChartWidget::setOverlayWidget()
-    // calls show() on whatever it is handed, so hiding the ticket beforehand is
-    // undone here — and again on every pane switch, which re-installs it.
-    if (!m_cfg.readOnly) m_charts->setOverlayWidget(m_ticket);
+    m_charts->setOverlayWidget(m_ticket);
 
     // ── blotter + the account line beneath it ──
     auto* bottom = new QWidget;
@@ -212,11 +228,10 @@ void MainWindow::buildMenuBar() {
     QMenu* trade = bar->addMenu(tr("&Trade"));
     QAction* order = trade->addAction(tr("&New order…"));
     if (m_cfg.readOnly) {
-        // Disabled rather than removed, with the reason on the tooltip: a
-        // viewer looking for the order window should be told why it is gone,
-        // not left hunting for a menu that vanished.
-        order->setEnabled(false);
-        order->setToolTip(tr("Investor access is read-only"));
+        // Left enabled on purpose — openOrderWindow() warns instead. Menus do
+        // not show tooltips unless asked to.
+        order->setToolTip(kInvestorHint());
+        trade->setToolTipsVisible(true);
     }
     // F9 is the order-window key in MT4/MT5; traders coming from either reach
     // for it before they look at the menu bar. Ctrl+P stays as the shortcut
@@ -304,6 +319,7 @@ void MainWindow::buildMenuBar() {
     m_webChip = new QPushButton(tr("Web Terminal"));
     m_webChip->setCursor(Qt::PointingHandCursor);
     m_webChip->setFocusPolicy(Qt::NoFocus);   // a menu-row control, not a form field
+    if (m_cfg.readOnly) m_webChip->setToolTip(kInvestorHint());
     connect(m_webChip, &QPushButton::clicked, this, &MainWindow::openWebTerminal);
     cw->addWidget(m_webChip);
 
@@ -358,12 +374,13 @@ void MainWindow::rebuildAccountsMenu() {
     }
     m_accountsMenu->addSeparator();
     QAction* walletAct = m_accountsMenu->addAction(tr("&Wallet…"));
-    // Transfers move money — /api/v1/wallet is closed to this role.
     if (m_cfg.readOnly) {
-        walletAct->setEnabled(false);
-        walletAct->setToolTip(tr("Investor access is read-only"));
+        walletAct->setToolTip(kInvestorHint());
+        m_accountsMenu->setToolTipsVisible(true);
     }
     connect(walletAct, &QAction::triggered, this, [this]() {
+        // The dialog opens for an investor too — balances and history are
+        // theirs to read. WalletDialog refuses the transfer itself.
         WalletDialog dlg(m_cfg, this);
         // The dialog raises its own toast while it is open. Repeat the result
         // here once it closes: the balances on screen have just jumped and the
@@ -456,6 +473,11 @@ void MainWindow::updateMenuChips() {
 // before its first await. With no token there is nothing to hand over, so the
 // plain terminal URL is used and the web login page does its job.
 void MainWindow::openWebTerminal() {
+    // The hand-off carries this session's token into the browser, and an
+    // investor token would open the web platform as the account owner's
+    // read-only view — which is not what "Web Terminal" promises. Say so
+    // instead of opening it.
+    if (warnIfReadOnly(tr("The web terminal"))) return;
     QString base = m_cfg.webBase.trimmed();
     if (base.isEmpty()) base = QStringLiteral("https://trade.prolinemarket.com");
     while (base.endsWith('/')) base.chop(1);
@@ -600,6 +622,10 @@ void MainWindow::connectServices() {
     // so no bars/tick wiring is needed here for it.
 
     // One-click strip -> trade endpoints
+    connect(m_api, &ApiClient::readOnlyBlocked, this, [this](const QString& ctx) {
+        warnIfReadOnly(ctx);
+    });
+
     connect(m_ticket, &OrderTicket::buy, this,
             [this](const QString& s, double v, double sl, double tp) {
         m_api->placeOrder("BUY", s, v, sl, tp, "terminal");
@@ -665,6 +691,7 @@ void MainWindow::connectServices() {
     // than the trader pointed at.
     connect(m_positions, &PositionsPanel::closePosition, this,
             [this](const OpenPosition& pos) {
+        if (warnIfReadOnly(tr("Closing a position"))) return;
         const QString sym = pos.symbol;
         // Never silently falls back to the symbol-wide close — that was the
         // bug this replaced.
@@ -684,6 +711,7 @@ void MainWindow::connectServices() {
     // exactly where it gets truncated.
     connect(m_positions, &PositionsPanel::sharePosition, this,
             [this](const OpenPosition& pos) {
+        if (warnIfReadOnly(tr("Sharing a trade"))) return;
         if (!requireSession(tr("Sharing a trade"))) return;
         setStatus(tr("Preparing share link…"));
         m_api->shareTrade(pos.id);
@@ -720,6 +748,7 @@ void MainWindow::connectServices() {
     connect(m_positions, &PositionsPanel::closeBatch, this,
             [this](const QVector<OpenPosition>& batch, const QString& what) {
         if (batch.isEmpty()) return;
+        if (warnIfReadOnly(tr("Closing positions"))) return;
         if (!requireSession(tr("Closing positions"))) return;
 
         double pnl = 0;
@@ -750,6 +779,7 @@ void MainWindow::connectServices() {
     // "S/L and T/P not changing" report was about.
     connect(m_positions, &PositionsPanel::modifyBrackets, this,
             [this](const OpenPosition& pos) {
+        if (warnIfReadOnly(tr("Modifying stop loss / take profit"))) return;
         if (!requireSession(tr("Modifying stop loss / take profit"))) return;
         const SymbolSpec spec = m_specs.value(pos.symbol);
         ModifyBracketsDialog dlg(pos, spec.digits > 0 ? spec.digits : 5, this);
@@ -765,6 +795,10 @@ void MainWindow::connectServices() {
     // the dialog, and it is one call for the one leg that changed.
     connect(m_positions, &PositionsPanel::bracketEdited, this,
             [this](const QString& id, const QString& kind, double level) {
+        if (warnIfReadOnly(tr("Modifying stop loss / take profit"))) {
+            m_api->fetchPositions();   // snap the typed cell back
+            return;
+        }
         if (!requireSession(tr("Modifying stop loss / take profit"))) {
             m_api->fetchPositions();   // put the cell back to the server's value
             return;
@@ -783,6 +817,7 @@ void MainWindow::connectServices() {
 
     connect(m_positions, &PositionsPanel::cancelOrder, this,
             [this](const PendingOrder& o) {
+        if (warnIfReadOnly(tr("Cancelling a pending order"))) return;
         if (!requireSession(tr("Cancelling a pending order"))) return;
         if (QMessageBox::question(this, tr("Cancel order"),
                 tr("Cancel this pending %1 order (%2 lots at %3)?")
@@ -794,6 +829,7 @@ void MainWindow::connectServices() {
 
     connect(m_positions, &PositionsPanel::modifyOrder, this,
             [this](const PendingOrder& o) {
+        if (warnIfReadOnly(tr("Modifying a pending order"))) return;
         if (!requireSession(tr("Modifying a pending order"))) return;
         const SymbolSpec spec = m_specs.value(o.symbol);
         const Quote q = m_lastQuotes.value(o.symbol);
@@ -1212,6 +1248,7 @@ void MainWindow::openOrderWindow() {
     // people did not find. The blotter listed pending orders the UI had no
     // obvious way to create; "we can't find the pending order window" was
     // literally true.
+    if (warnIfReadOnly(tr("Placing an order"))) return;
     if (!requireSession(tr("Placing an order"))) return;
     if (m_currentSymbol.isEmpty()) {
         setStatus(tr("Pick a symbol in Market Watch first."), true);

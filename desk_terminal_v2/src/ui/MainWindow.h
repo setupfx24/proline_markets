@@ -42,6 +42,11 @@ private slots:
     void onSymbolActivated(const QString& symbol);
     void onTradeResult(const TradeResult& r);
     void onApiError(const QString& context, const QString& message, int httpStatus);
+
+    // Read-only investor session: one hint string for every tooltip, and one
+    // gate that raises the warning toast and reports whether to stop.
+    static QString kInvestorHint();
+    bool warnIfReadOnly(const QString& what = QString());
     void openSettings();
     void openOrderWindow();    // Market + Pending order ticket (F9)
     void onActiveChartChanged(int index);  // strip follows the active pane

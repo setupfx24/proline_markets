@@ -76,6 +76,12 @@ static QTableWidget* makeTable(const QStringList& headers) {
     return t;
 }
 
+// Hover text for a read-only investor session — the same sentence the toast
+// and the order strip use.
+static QString investorHint() {
+    return QObject::tr("Investor mode — read-only. Trading and deposits are disabled.");
+}
+
 static QTableWidgetItem* cell(const QString& text, Qt::Alignment a = Qt::AlignLeft | Qt::AlignVCenter) {
     auto* it = new QTableWidgetItem(text);
     it->setTextAlignment(a);
@@ -552,11 +558,13 @@ void PositionsPanel::applyTheme() {
 
 void PositionsPanel::setReadOnly(bool on) {
     m_readOnly = on;
-    // The batch-close strip has nothing to offer a viewer.
-    if (m_closeAll)    m_closeAll->setVisible(!on);
-    if (m_closeProfit) m_closeProfit->setVisible(!on);
-    if (m_closeLoss)   m_closeLoss->setVisible(!on);
-    applyTheme();   // re-renders every table, dropping the row buttons with it
+    // Nothing is removed: the blotter keeps every button so the investor sees
+    // the same terminal a trader does. They explain themselves on hover, and
+    // MainWindow answers a press with a warning.
+    const QString hint = tr("Investor mode — read-only. Trading and deposits are disabled.");
+    for (QPushButton* b : { m_closeAll, m_closeProfit, m_closeLoss })
+        if (b) b->setToolTip(on ? hint : b->toolTip());
+    applyTheme();   // re-render so the row buttons pick the tooltip up too
 }
 
 void PositionsPanel::setPrivacy(bool on) {
@@ -697,15 +705,8 @@ void PositionsPanel::setPositions(const QVector<OpenPosition>& positions) {
         // instrument's real precision) look like they were truncating.
         const int d = digitsFor(p.symbol);
         m_posTable->setItem(r, 5, cell(fmt(p.openPrice, d), R));
-        // bracketCell() is typed into to move a level; a viewer gets a plain,
-        // uneditable cell showing the same number.
-        if (m_readOnly) {
-            m_posTable->setItem(r, 6, cell(p.sl > 0 ? fmt(p.sl, d) : QString(), R));
-            m_posTable->setItem(r, 7, cell(p.tp > 0 ? fmt(p.tp, d) : QString(), R));
-        } else {
-            m_posTable->setItem(r, 6, bracketCell(p.sl, p.id, d));
-            m_posTable->setItem(r, 7, bracketCell(p.tp, p.id, d));
-        }
+        m_posTable->setItem(r, 6, bracketCell(p.sl, p.id, d));
+        m_posTable->setItem(r, 7, bracketCell(p.tp, p.id, d));
         m_posTable->setItem(r, 8, cell(p.currentPrice > 0 ? fmt(p.currentPrice, d) : QString(), R));
         m_posTable->setItem(r, 9, cell(cash(p.swap), R));
         auto* pnl = cell(cash(p.profit), R);
@@ -713,20 +714,13 @@ void PositionsPanel::setPositions(const QVector<OpenPosition>& positions) {
         QFont bf = pnl->font(); bf.setBold(true); pnl->setFont(bf);
         m_posTable->setItem(r, 10, pnl);
 
-        if (m_readOnly) {
-            // Nothing in the action column: no close, no bracket edit, and no
-            // share either — publishing a card is a write the gateway refuses.
-            m_posTable->setCellWidget(r, 11, nullptr);
-            ++r;
-            continue;
-        }
-
         // A real ✕ icon rather than the glyph: several UI fonts render "✕" as a
         // hairline that all but disappears at this size.
         auto* closeBtn = new QPushButton;
         closeBtn->setFixedSize(24, 20);
         closeBtn->setCursor(Qt::PointingHandCursor);
-        closeBtn->setToolTip(tr("Close this %1 position (%2 lots)").arg(p.symbol).arg(fmt(p.lots)));
+        closeBtn->setToolTip(m_readOnly ? investorHint()
+                                        : tr("Close this %1 position (%2 lots)").arg(p.symbol).arg(fmt(p.lots)));
         closeBtn->setIcon(Icons::close(QColor(c.down), 14));
         closeBtn->setIconSize(QSize(14, 14));
         closeBtn->setStyleSheet(QString(
@@ -748,7 +742,7 @@ void PositionsPanel::setPositions(const QVector<OpenPosition>& positions) {
         auto* editBtn = new QPushButton;
         editBtn->setFixedSize(24, 20);
         editBtn->setCursor(Qt::PointingHandCursor);
-        editBtn->setToolTip(tr("Modify stop loss / take profit"));
+        editBtn->setToolTip(m_readOnly ? investorHint() : tr("Modify stop loss / take profit"));
         // accent, not muted: a 2px-stroke glyph drawn in the muted grey at 12px
         // was near-invisible on the light theme's row background. It also reads
         // as a pair with the red ✕ beside it — blue edits, red closes.
@@ -769,7 +763,8 @@ void PositionsPanel::setPositions(const QVector<OpenPosition>& positions) {
         auto* shareBtn = new QPushButton;
         shareBtn->setFixedSize(24, 20);
         shareBtn->setCursor(Qt::PointingHandCursor);
-        shareBtn->setToolTip(tr("Share this trade — copies a public link"));
+        shareBtn->setToolTip(m_readOnly ? investorHint()
+                                        : tr("Share this trade — copies a public link"));
         shareBtn->setIcon(Icons::share(QColor(c.muted), 13));
         shareBtn->setIconSize(QSize(13, 13));
         shareBtn->setStyleSheet(QString(
@@ -821,16 +816,10 @@ void PositionsPanel::setOrders(const QVector<PendingOrder>& orders) {
         m_orderTable->setItem(r, 6, cell(o.sl > 0 ? fmt(o.sl, d) : QString(), R));
         m_orderTable->setItem(r, 7, cell(o.tp > 0 ? fmt(o.tp, d) : QString(), R));
 
-        if (m_readOnly) {
-            m_orderTable->setCellWidget(r, 8, nullptr);
-            ++r;
-            continue;
-        }
-
         auto* cancelBtn = new QPushButton;
         cancelBtn->setFixedSize(24, 20);   // matches the Trade tab's action pair
         cancelBtn->setCursor(Qt::PointingHandCursor);
-        cancelBtn->setToolTip(tr("Cancel this pending order"));
+        cancelBtn->setToolTip(m_readOnly ? investorHint() : tr("Cancel this pending order"));
         cancelBtn->setIcon(Icons::close(QColor(c.down), 14));
         cancelBtn->setIconSize(QSize(14, 14));
         cancelBtn->setStyleSheet(QString(
@@ -850,7 +839,7 @@ void PositionsPanel::setOrders(const QVector<PendingOrder>& orders) {
         auto* editBtn = new QPushButton;
         editBtn->setFixedSize(24, 20);
         editBtn->setCursor(Qt::PointingHandCursor);
-        editBtn->setToolTip(tr("Modify this pending order"));
+        editBtn->setToolTip(m_readOnly ? investorHint() : tr("Modify this pending order"));
         editBtn->setIcon(Icons::pencil(QColor(c.accent), 14));
         editBtn->setIconSize(QSize(14, 14));
         editBtn->setStyleSheet(QString(

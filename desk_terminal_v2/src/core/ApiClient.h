@@ -78,6 +78,11 @@ public:
     void shareTrade(const QString& positionId);
 
 signals:
+    // A write was refused because this is a read-only investor session.
+    // Deliberately NOT errorOccurred(…, 403): that path reads 403 as an expired
+    // session and tries to re-authenticate, which would log the investor out
+    // every time they pressed BUY.
+    void readOnlyBlocked(const QString& context);
     // A fresh market-data key pair. Both must be persisted: the secret is
     // returned exactly once, and the old pair is dead the moment this fires.
     void algoKeyRenewed(bool ok, const QString& apiKey, const QString& apiSecret,

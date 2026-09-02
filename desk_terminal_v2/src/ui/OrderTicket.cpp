@@ -263,6 +263,19 @@ void OrderTicket::applyTheme() {
              Theme::isDark() ? "rgba(224,27,36,0.16)" : "rgba(192,28,40,0.10)", c.down));
 }
 
+void OrderTicket::setReadOnly(bool on) {
+    m_readOnly = on;
+    if (!on) return;
+    // Same wording MainWindow puts in its toast, so the hover and the press
+    // say the same thing.
+    const QString hint = tr("Investor mode — read-only. Trading and deposits are disabled.");
+    for (QWidget* w : { static_cast<QWidget*>(m_sell.btn), static_cast<QWidget*>(m_buy.btn),
+                        static_cast<QWidget*>(m_closeBtn), static_cast<QWidget*>(m_volume),
+                        static_cast<QWidget*>(m_sl), static_cast<QWidget*>(m_tp) }) {
+        if (w) w->setToolTip(hint);
+    }
+}
+
 void OrderTicket::setSymbolSpec(const SymbolSpec& spec) {
     m_spec   = spec;
     m_digits = spec.digits;

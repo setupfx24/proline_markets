@@ -308,7 +308,7 @@ QString ApiClient::kReadOnlyMsg() {
 
 bool ApiClient::rejectReadOnly(const QString& context) {
     if (!m_cfg.readOnly) return false;
-    emit errorOccurred(context, kReadOnlyMsg(), 403);
+    emit readOnlyBlocked(context);
     return true;
 }
 

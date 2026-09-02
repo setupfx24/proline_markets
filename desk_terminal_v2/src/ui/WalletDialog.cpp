@@ -245,6 +245,18 @@ void WalletDialog::onDirectionChanged() {
 void WalletDialog::onAccountChanged() { onDirectionChanged(); }
 
 void WalletDialog::doTransfer() {
+    // Read-only investor session: the wallet opens and its balances read fine,
+    // but nothing may leave it. Warned here rather than by hiding the dialog —
+    // the investor should see the account's funds and be told why the button
+    // will not move them.
+    if (m_cfg.readOnly) {
+        setStatus(tr("Investor mode — read-only. Deposits, withdrawals and "
+                     "transfers are disabled on this login."), true, /*sticky=*/true);
+        Toast::error(this, tr("Investor mode"),
+                     tr("This is a read-only investor login — you cannot move funds "
+                        "on this account."));
+        return;
+    }
     if (m_account->currentIndex() < 0) {
         setStatus(tr("Select a trading account."), true);
         return;

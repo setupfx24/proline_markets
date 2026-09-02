@@ -29,6 +29,12 @@ public:
 
     void setSymbolSpec(const SymbolSpec& spec);
 
+    // Read-only investor session: the strip stays exactly as it is — same
+    // tiles, same prices, still clickable — but every control explains on
+    // hover why pressing it will not place anything. MainWindow raises the
+    // warning when it is pressed.
+    void setReadOnly(bool on);
+
 public slots:
     void updateQuote(const Quote& q);   // only applied if it matches current symbol
     void applyTheme();
@@ -64,6 +70,7 @@ private:
 
     SymbolSpec m_spec;
     int    m_digits = 5;
+    bool   m_readOnly = false;
 
     QLabel*         m_spreadLabel;
     Tile            m_sell;
