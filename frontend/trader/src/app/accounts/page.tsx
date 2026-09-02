@@ -1380,6 +1380,8 @@ function AccountCard({
   const idLabel = row.is_demo ? `#D#${row.account_number}` : `#L#${row.account_number}`;
 
   const confirmCloseAccount = async () => {
+    // Closing an account is a write; an investor may only look.
+    if (viewOnly) return;
     setDeleting(true);
     try {
       await api.delete(`/accounts/${row.id}`);

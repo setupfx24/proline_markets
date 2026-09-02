@@ -149,6 +149,9 @@ export default function TradesSection() {
   const loadGen = useRef(0);
 
   const closePosition = async (posId: string, symbol: string) => {
+    // Read-only investor session — the gateway refuses these; stop before the
+    // spinner and the success toast make it look like they went through.
+    if (viewOnly) return;
     setClosingId(posId);
     try {
       await api.post(`/positions/${posId}/close`, {});
@@ -162,6 +165,9 @@ export default function TradesSection() {
   };
 
   const cancelOrder = async (orderId: string, symbol: string) => {
+    // Read-only investor session — the gateway refuses these; stop before the
+    // spinner and the success toast make it look like they went through.
+    if (viewOnly) return;
     setClosingId(orderId);
     try {
       await api.delete(`/orders/${orderId}`);
