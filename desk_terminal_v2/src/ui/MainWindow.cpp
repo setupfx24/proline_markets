@@ -47,7 +47,9 @@ static const char* MASK = "••••••";
 
 MainWindow::MainWindow(const Config& cfg, QWidget* parent)
     : QMainWindow(parent), m_cfg(cfg) {
-    setWindowTitle(tr("Proline Markets Terminal"));
+    setWindowTitle(m_cfg.readOnly
+                   ? tr("Proline Markets Terminal — Investor (read-only)")
+                   : tr("Proline Markets Terminal"));
     setMinimumSize(980, 600);
     resize(1360, 840);
 
@@ -66,6 +68,15 @@ MainWindow::MainWindow(const Config& cfg, QWidget* parent)
 
     m_account->setPrivacy(m_cfg.privacy);
     m_positions->setPrivacy(m_cfg.privacy);
+
+    // Read-only investor session: the account, charts and blotter stay, every
+    // way of placing or changing a trade goes. ApiClient refuses these calls
+    // too, and so does the gateway — this is the layer that stops a viewer
+    // being shown buttons that could only ever fail.
+    if (m_cfg.readOnly) {
+        m_ticket->hide();               // the one-click BUY/SELL strip
+        m_positions->setReadOnly(true);
+    }
 
     // The one-click strip floats in the chart's toolbar band, in the gap
     // between TradingView's Indicators/undo controls and its icon cluster.
@@ -196,6 +207,13 @@ void MainWindow::buildMenuBar() {
     // ── Trade ──
     QMenu* trade = bar->addMenu(tr("&Trade"));
     QAction* order = trade->addAction(tr("&New order…"));
+    if (m_cfg.readOnly) {
+        // Disabled rather than removed, with the reason on the tooltip: a
+        // viewer looking for the order window should be told why it is gone,
+        // not left hunting for a menu that vanished.
+        order->setEnabled(false);
+        order->setToolTip(tr("Investor access is read-only"));
+    }
     // F9 is the order-window key in MT4/MT5; traders coming from either reach
     // for it before they look at the menu bar. Ctrl+P stays as the shortcut
     // that used to open the pending-only dialog, so existing muscle memory
@@ -335,7 +353,13 @@ void MainWindow::rebuildAccountsMenu() {
         }
     }
     m_accountsMenu->addSeparator();
-    connect(m_accountsMenu->addAction(tr("&Wallet…")), &QAction::triggered, this, [this]() {
+    QAction* walletAct = m_accountsMenu->addAction(tr("&Wallet…"));
+    // Transfers move money — /api/v1/wallet is closed to this role.
+    if (m_cfg.readOnly) {
+        walletAct->setEnabled(false);
+        walletAct->setToolTip(tr("Investor access is read-only"));
+    }
+    connect(walletAct, &QAction::triggered, this, [this]() {
         WalletDialog dlg(m_cfg, this);
         // The dialog raises its own toast while it is open. Repeat the result
         // here once it closes: the balances on screen have just jumped and the

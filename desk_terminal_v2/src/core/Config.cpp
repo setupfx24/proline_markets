@@ -39,6 +39,7 @@ Config Config::load() {
     if (o.contains("accountId")) c.accountId = o.value("accountId").toString();
     if (o.contains("userName"))  c.userName  = o.value("userName").toString();
     if (o.contains("email"))     c.email     = o.value("email").toString();
+    if (o.contains("readOnly"))  c.readOnly  = o.value("readOnly").toBool();
     if (o.contains("theme"))     c.theme     = o.value("theme").toString("dark");
     if (o.contains("privacy"))   c.privacy   = o.value("privacy").toBool();
     if (o.contains("accountsJson")) c.accountsJson = o.value("accountsJson").toString();
@@ -74,6 +75,7 @@ bool Config::save() const {
     o["accountId"]    = accountId;
     o["userName"]     = userName;
     o["email"]        = email;
+    o["readOnly"]     = readOnly;
     o["theme"]        = theme;
     o["privacy"]      = privacy;
     o["accountsJson"] = accountsJson;

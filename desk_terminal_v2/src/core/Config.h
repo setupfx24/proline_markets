@@ -23,6 +23,17 @@ public:
     QString email;         // the address signed in with (prefills the login form)
     QString accountsJson = "[]";   // [{account_id, account_number, is_demo, currency}]
 
+    // Read-only "Investor Access" session (admin-generated credential, signed in
+    // via /api/v1/auth/investor/login). The JWT carries role=investor, so the
+    // gateway rejects every write anyway; this flag is what lets the terminal
+    // hide the trading UI instead of showing buttons that always 403.
+    //
+    // It also changes where the DATA comes from: an investor has no algo API
+    // key and cannot mint one, and /api/algo accepts nothing but a key pair —
+    // so symbols, account, prices and bars come off /api/v1 instead, and the
+    // tick stream off /ws/prices?token= rather than /ws/algo/prices.
+    bool    readOnly = false;
+
     // UI preferences
     QString theme   = "light"; // "dark" | "light" — light mirrors the MT5 layout
     bool    privacy = false;   // mask balances / account numbers on screen

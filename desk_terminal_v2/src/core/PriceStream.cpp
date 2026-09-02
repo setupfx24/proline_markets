@@ -2,6 +2,22 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QAbstractSocket>
+#include <QUrlQuery>
+
+// Investor sessions have no algo key pair, and /ws/algo/prices accepts nothing
+// else — it closes a token-only handshake with 4002. The platform stream takes
+// the JWT in the query string instead, so swap the endpoint for that mode.
+static QUrl streamUrl(const Config& cfg) {
+    if (!cfg.readOnly) return QUrl(cfg.wsUrl);
+    QString base = cfg.wsUrl;
+    base.replace("/ws/algo/prices", "/ws/prices");
+    QUrl u(base);
+    QUrlQuery q(u.query());
+    q.removeAllQueryItems("token");
+    q.addQueryItem("token", cfg.token);
+    u.setQuery(q);
+    return u;
+}
 
 PriceStream::PriceStream(const Config& cfg, QObject* parent)
     : QObject(parent), m_cfg(cfg) {
@@ -15,7 +31,7 @@ PriceStream::PriceStream(const Config& cfg, QObject* parent)
     connect(&m_reconnectTimer, &QTimer::timeout, this, [this]() {
         if (m_wantRun) {
             emit statusChanged(tr("Reconnecting…"));
-            m_ws.open(QUrl(m_cfg.wsUrl));
+            m_ws.open(streamUrl(m_cfg));
         }
     });
 }
@@ -24,7 +40,7 @@ void PriceStream::start() {
     m_wantRun = true;
     m_retryMs = kRetryFloorMs;   // a deliberate (re)start earns a fresh budget
     emit statusChanged(tr("Connecting…"));
-    m_ws.open(QUrl(m_cfg.wsUrl));
+    m_ws.open(streamUrl(m_cfg));
 }
 
 void PriceStream::stop() {
@@ -35,6 +51,16 @@ void PriceStream::stop() {
 
 void PriceStream::onConnected() {
     m_authed = false;
+    if (m_cfg.readOnly) {
+        // /ws/prices authenticated in the URL — it sends ticks straight away
+        // and never answers a handshake, so waiting for one would leave the
+        // status bar stuck on "Authenticating…" forever.
+        m_authed  = true;
+        m_retryMs = kRetryFloorMs;
+        emit statusChanged(tr("Live • investor (read-only)"));
+        emit authenticated(QString());
+        return;
+    }
     emit statusChanged(tr("Authenticating…"));
     QJsonObject auth;
     auth["action"] = "auth";
@@ -109,8 +135,11 @@ void PriceStream::onTextMessage(const QString& msg) {
         return;
     }
 
+    // /ws/algo/prices tags each tick with type:"tick"; /ws/prices relays the raw
+    // pub/sub payload, which has a symbol and prices but no type at all.
     const QString type = o.value("type").toString();
-    if (type == "tick") {
+    const bool untaggedTick = type.isEmpty() && o.contains("symbol") && o.contains("bid");
+    if (type == "tick" || untaggedTick) {
         Quote q;
         q.symbol = o.value("symbol").toString();
         q.bid    = o.value("bid").toDouble();

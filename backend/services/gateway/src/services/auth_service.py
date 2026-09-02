@@ -195,6 +195,8 @@ async def issue_auth_json_response(
             token_hash=hash_token(raw_refresh),
             expires_at=ref_exp,
             revoked=False,
+            # Carried so the refresh below re-issues the SAME kind of session.
+            role_override=role_override,
         )
     )
     if user_audit_action:
@@ -543,7 +545,12 @@ async def refresh_token(request: Request, db: AsyncSession) -> JSONResponse:
         raise AuthServiceError("Not authenticated", 401)
     row.revoked = True
     await db.flush()
-    return await issue_auth_json_response(user, request, db)
+    # A read-only investor session must stay read-only for its whole life. The
+    # refresh token remembers what it was issued as; re-deriving the role from
+    # the user here would silently promote an investor to the account owner.
+    return await issue_auth_json_response(
+        user, request, db, role_override=row.role_override,
+    )
 
 
 # ─── Bootstrap session ────────────────────────────────────────────────────

@@ -550,6 +550,15 @@ void PositionsPanel::applyTheme() {
     setTransactions(m_lastTxns);
 }
 
+void PositionsPanel::setReadOnly(bool on) {
+    m_readOnly = on;
+    // The batch-close strip has nothing to offer a viewer.
+    if (m_closeAll)    m_closeAll->setVisible(!on);
+    if (m_closeProfit) m_closeProfit->setVisible(!on);
+    if (m_closeLoss)   m_closeLoss->setVisible(!on);
+    applyTheme();   // re-renders every table, dropping the row buttons with it
+}
+
 void PositionsPanel::setPrivacy(bool on) {
     m_privacy = on;
     applyTheme();   // same path: re-render every table
@@ -688,14 +697,29 @@ void PositionsPanel::setPositions(const QVector<OpenPosition>& positions) {
         // instrument's real precision) look like they were truncating.
         const int d = digitsFor(p.symbol);
         m_posTable->setItem(r, 5, cell(fmt(p.openPrice, d), R));
-        m_posTable->setItem(r, 6, bracketCell(p.sl, p.id, d));
-        m_posTable->setItem(r, 7, bracketCell(p.tp, p.id, d));
+        // bracketCell() is typed into to move a level; a viewer gets a plain,
+        // uneditable cell showing the same number.
+        if (m_readOnly) {
+            m_posTable->setItem(r, 6, cell(p.sl > 0 ? fmt(p.sl, d) : QString(), R));
+            m_posTable->setItem(r, 7, cell(p.tp > 0 ? fmt(p.tp, d) : QString(), R));
+        } else {
+            m_posTable->setItem(r, 6, bracketCell(p.sl, p.id, d));
+            m_posTable->setItem(r, 7, bracketCell(p.tp, p.id, d));
+        }
         m_posTable->setItem(r, 8, cell(p.currentPrice > 0 ? fmt(p.currentPrice, d) : QString(), R));
         m_posTable->setItem(r, 9, cell(cash(p.swap), R));
         auto* pnl = cell(cash(p.profit), R);
         pnl->setForeground(p.profit >= 0 ? QColor(c.up) : QColor(c.down));
         QFont bf = pnl->font(); bf.setBold(true); pnl->setFont(bf);
         m_posTable->setItem(r, 10, pnl);
+
+        if (m_readOnly) {
+            // Nothing in the action column: no close, no bracket edit, and no
+            // share either — publishing a card is a write the gateway refuses.
+            m_posTable->setCellWidget(r, 11, nullptr);
+            ++r;
+            continue;
+        }
 
         // A real ✕ icon rather than the glyph: several UI fonts render "✕" as a
         // hairline that all but disappears at this size.
@@ -796,6 +820,12 @@ void PositionsPanel::setOrders(const QVector<PendingOrder>& orders) {
         m_orderTable->setItem(r, 5, cell(o.price > 0 ? fmt(o.price, d) : QString(), R));
         m_orderTable->setItem(r, 6, cell(o.sl > 0 ? fmt(o.sl, d) : QString(), R));
         m_orderTable->setItem(r, 7, cell(o.tp > 0 ? fmt(o.tp, d) : QString(), R));
+
+        if (m_readOnly) {
+            m_orderTable->setCellWidget(r, 8, nullptr);
+            ++r;
+            continue;
+        }
 
         auto* cancelBtn = new QPushButton;
         cancelBtn->setFixedSize(24, 20);   // matches the Trade tab's action pair

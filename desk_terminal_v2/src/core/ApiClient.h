@@ -108,6 +108,11 @@ signals:
     void errorOccurred(const QString& context, const QString& message, int httpStatus);
 
 private:
+    // True (and reports the refusal) when this is a read-only investor session
+    // and the caller was about to mutate something.
+    bool rejectReadOnly(const QString& context);
+    static QString kReadOnlyMsg();
+
     QNetworkRequest makeRequest(const QString& path) const;   // adds auth headers (algo API)
     QNetworkRequest v1Request(const QString& path) const;     // adds Bearer auth (/api/v1)
     void handleReply(QNetworkReply* reply, const QString& kind, const QString& context);

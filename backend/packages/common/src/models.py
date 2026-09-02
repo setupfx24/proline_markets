@@ -138,6 +138,11 @@ class UserRefreshToken(Base):
     token_hash = Column(String(255), nullable=False)
     expires_at = Column(DateTime(timezone=True), nullable=False)
     revoked = Column(Boolean, default=False)
+    # The role the session was ISSUED with, when that is not the user's own.
+    # Only "investor" today. Without it a refresh re-reads user.role and hands
+    # a read-only investor a full trading token 45 minutes in — the sub is the
+    # account owner, so nothing downstream would notice the promotion.
+    role_override = Column(String(20))
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
     user = relationship("User", back_populates="refresh_tokens")

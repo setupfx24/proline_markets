@@ -384,6 +384,13 @@ QWidget* LoginDialog::buildFormPanel() {
     // one. The mode still works if this is shown again.
     m_modeBtn->hide();
     v->addWidget(m_modeBtn, 0, Qt::AlignLeft);
+
+    m_investorBtn = new QPushButton(tr("👁  Investor sign-in (read-only)"));
+    m_investorBtn->setObjectName("link");
+    m_investorBtn->setCursor(Qt::PointingHandCursor);
+    m_investorBtn->setAutoDefault(false);
+    connect(m_investorBtn, &QPushButton::clicked, this, &LoginDialog::toggleInvestorMode);
+    v->addWidget(m_investorBtn, 0, Qt::AlignLeft);
     v->addSpacing(4);
     connect(m_apiSecret, &QLineEdit::returnPressed, this, &LoginDialog::doLogin);
     connect(m_apiKey,    &QLineEdit::returnPressed, this, &LoginDialog::doLogin);
@@ -546,9 +553,49 @@ void LoginDialog::toggleAuthMode() {
     adjustSize();
 }
 
+// Read-only sign-in. Same two fields, different route and a different kind of
+// credential: the email is the account owner's, the password is the one an
+// admin generated under Investor Access.
+void LoginDialog::toggleInvestorMode() {
+    m_investorMode = !m_investorMode;
+    m_status->clear();
+    // The API-key path is a trader-only thing; an investor has no key. (The
+    // button is hidden by default — this only matters if it is turned back on.)
+    if (m_investorMode && m_keyMode) toggleAuthMode();
+    if (m_investorMode) m_modeBtn->hide();
+
+    m_stepTitle->setText(m_investorMode ? tr("Investor access") : tr("Welcome back"));
+    m_stepSub->setText(m_investorMode
+        ? tr("Sign in with the read-only credentials your account manager gave you. "
+             "You can watch the account, its charts and its positions — you cannot trade.")
+        : tr("Sign in with your Proline Markets account — the same email and "
+             "password as the website."));
+    m_investorBtn->setText(m_investorMode ? tr("←  Back to trader sign-in")
+                                          : tr("👁  Investor sign-in (read-only)"));
+    m_loginBtn->setText(tr("Sign in"));
+    adjustSize();
+}
+
 void LoginDialog::doLogin() {
+    if (m_investorMode) { doInvestorLogin(); return; }
     if (m_keyMode) { doKeyLogin(); return; }
     doPasswordLogin();
+}
+
+// POST /api/v1/auth/investor/login. No fallback to the legacy algo route: that
+// gateway has no investor concept, so a 404 there would only confuse.
+void LoginDialog::doInvestorLogin() {
+    const QString email = m_email->text().trimmed();
+    const QString pass  = m_password->text();
+    if (email.isEmpty() || pass.isEmpty()) {
+        setStatus(tr("Enter the investor email and password."), true);
+        return;
+    }
+    m_status->clear();
+    setBusy(true);
+    m_cfg.restBase = m_rest->text().trimmed();
+    m_cfg.wsUrl    = m_ws->text().trimmed();
+    postLogin(v1Base() + "/auth/investor/login", email, pass, /*allowFallback=*/false);
 }
 
 // API key + secret: there is no login call to make — the credentials ARE the
@@ -598,6 +645,9 @@ void LoginDialog::doKeyLogin() {
         m_cfg.accountsJson = "[]";
         m_cfg.restBase     = m_rest->text().trimmed();
         m_cfg.wsUrl        = m_ws->text().trimmed();
+        // An API key is a trading credential; whatever this install was last
+        // time, it is not a read-only session now.
+        m_cfg.readOnly     = false;
         m_cfg.save();
         accept();
     });
@@ -785,6 +835,20 @@ void LoginDialog::onConnect() {
     m_cfg.accountsJson = m_accountsJson;
     m_cfg.restBase     = m_rest->text().trimmed();
     m_cfg.wsUrl        = m_ws->text().trimmed();
+    m_cfg.readOnly     = m_investorMode;
+
+    if (m_investorMode) {
+        // No algo key to mint: /api/v1/algo/generate is blocked for this role,
+        // and nothing here needs one — ApiClient reads off /api/v1 and the tick
+        // stream off /ws/prices, both on the JWT. Clear any key left behind by
+        // a previous trader session on this machine, or ApiClient would keep
+        // preferring it and every read would 401 against someone else's account.
+        m_cfg.apiKey.clear();
+        m_cfg.apiSecret.clear();
+        m_cfg.save();
+        accept();
+        return;
+    }
 
     // The JWT alone is not enough. Market data, bars, /trade and the tick
     // WebSocket all live behind /api/algo, which authenticates ONLY with

@@ -8,6 +8,8 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QDateTime>
+#include <QHash>
 
 ApiClient::ApiClient(const Config& cfg, QObject* parent)
     : QObject(parent), m_cfg(cfg), m_net(new QNetworkAccessManager(this)) {}
@@ -32,6 +34,10 @@ QNetworkRequest ApiClient::makeRequest(const QString& path) const {
 }
 
 void ApiClient::renewAlgoKey() {
+    // An investor cannot hold an algo key — /api/v1/algo/generate is one of the
+    // routes forbid_investor blocks — and does not need one: in this mode the
+    // reads and the tick stream both run off the session JWT.
+    if (m_cfg.readOnly) return;
     if (m_cfg.token.trimmed().isEmpty() || m_cfg.accountId.trimmed().isEmpty()) {
         emit algoKeyRenewed(false, QString(), QString(),
                             tr("Sign in again to restore market data."));
@@ -62,6 +68,10 @@ void ApiClient::renewAlgoKey() {
 }
 
 void ApiClient::shareTrade(const QString& positionId) {
+    if (rejectReadOnly(tr("Sharing trade"))) {
+        emit shareLinkReady(positionId, false, QString(), kReadOnlyMsg());
+        return;
+    }
     // The server reuses a live card for the same position rather than minting a
     // second one, so pressing Share twice yields the same link.
     QJsonObject body;
@@ -96,6 +106,67 @@ QNetworkRequest ApiClient::v1Request(const QString& path) const {
 }
 
 // --- parsing helpers -------------------------------------------------------
+
+// /api/v1 renders Decimal columns as JSON STRINGS ("0.0100"), while /api/algo
+// sends plain numbers. QJsonValue::toDouble() returns 0 for a string, which
+// silently gave every instrument a 0 lot step, so read both forms.
+static double numField(const QJsonObject& o, const char* key, double fallback = 0.0) {
+    const QJsonValue v = o.value(QString::fromLatin1(key));
+    if (v.isDouble()) return v.toDouble();
+    if (v.isString()) {
+        bool ok = false;
+        const double d = v.toString().toDouble(&ok);
+        if (ok) return d;
+    }
+    return fallback;
+}
+
+// GET /api/v1/instruments/ — same instrument, different field names.
+static SymbolSpec parseSymbolV1(const QJsonObject& o) {
+    SymbolSpec s;
+    s.symbol       = o.value("symbol").toString();
+    s.displayName  = o.value("display_name").toString(s.symbol);
+    s.category     = o.value("segment").toString();   // algo calls this "category"
+    s.digits       = o.value("digits").toInt(5);
+    s.minLot       = numField(o, "min_lot", 0.01);
+    s.maxLot       = numField(o, "max_lot", 100.0);
+    s.lotStep      = numField(o, "lot_step", 0.01);
+    s.contractSize = numField(o, "contract_size", 100000.0);
+    return s;
+}
+
+// One entry of GET /api/v1/accounts. The algo gateway's /account calls the
+// number "account" and returns only the selected one.
+static AccountInfo parseAccountV1(const QJsonObject& o) {
+    AccountInfo a;
+    a.account       = o.value("account_number").toString();
+    a.currency      = o.value("currency").toString("USD");
+    a.leverage      = o.value("leverage").toInt(100);
+    a.balance       = numField(o, "balance");
+    a.credit        = numField(o, "credit");
+    a.equity        = numField(o, "equity");
+    a.marginUsed    = numField(o, "margin_used");
+    a.freeMargin    = numField(o, "free_margin");
+    a.marginLevel   = numField(o, "margin_level");
+    a.isDemo        = o.value("is_demo").toBool();
+    a.openPositions = o.value("open_positions").toInt();
+    a.valid         = !a.account.isEmpty();
+    return a;
+}
+
+// GET /api/v1/instruments/{symbol}/bars — TradingView shape: `time` is epoch
+// SECONDS, not the ISO string the algo gateway sends.
+static Bar parseBarV1(const QJsonObject& o) {
+    Bar b;
+    b.time   = QDateTime::fromSecsSinceEpoch(
+                   static_cast<qint64>(o.value("time").toDouble()), Qt::UTC);
+    b.open   = numField(o, "open");
+    b.high   = numField(o, "high");
+    b.low    = numField(o, "low");
+    b.close  = numField(o, "close");
+    b.volume = numField(o, "volume");
+    return b;
+}
 
 static SymbolSpec parseSymbol(const QJsonObject& o) {
     SymbolSpec s;
@@ -226,19 +297,74 @@ static HistoryTrade parseHistory(const QJsonObject& o) {
     return h;
 }
 
+// --- read-only (investor) guard --------------------------------------------
+
+// Investor sessions carry role=investor, and the gateway 403s every write. The
+// UI hides these actions, but a keyboard shortcut, a dragged chart line or a
+// stale dialog can still reach the client — so nothing mutating leaves here.
+QString ApiClient::kReadOnlyMsg() {
+    return tr("Investor access is read-only — trading is disabled.");
+}
+
+bool ApiClient::rejectReadOnly(const QString& context) {
+    if (!m_cfg.readOnly) return false;
+    emit errorOccurred(context, kReadOnlyMsg(), 403);
+    return true;
+}
+
 // --- requests --------------------------------------------------------------
 
+// The terminal's timeframe strings ("5m", "1h", …) in the resolution spelling
+// GET /api/v1/instruments/{symbol}/bars expects, plus the bar length in
+// seconds so the request can ask for a bounded window instead of everything.
+static QString v1Resolution(const QString& tf) {
+    static const QHash<QString, QString> map{
+        {"1m", "1"}, {"5m", "5"}, {"15m", "15"}, {"30m", "30"},
+        {"1h", "60"}, {"4h", "240"}, {"1d", "1D"},
+    };
+    return map.value(tf.toLower(), "5");
+}
+static qint64 v1BarSeconds(const QString& tf) {
+    static const QHash<QString, qint64> map{
+        {"1m", 60}, {"5m", 300}, {"15m", 900}, {"30m", 1800},
+        {"1h", 3600}, {"4h", 14400}, {"1d", 86400},
+    };
+    return map.value(tf.toLower(), 300);
+}
+
 void ApiClient::fetchSymbols() {
+    if (m_cfg.readOnly) {
+        // Public endpoint, but go through v1Request so the session header is
+        // attached like every other read in this mode.
+        QNetworkReply* r = m_net->get(v1Request("/instruments/"));
+        handleReply(r, "symbols_v1", tr("Loading symbols"));
+        return;
+    }
     QNetworkReply* r = m_net->get(makeRequest("/symbols"));
     handleReply(r, "symbols", tr("Loading symbols"));
 }
 
 void ApiClient::fetchAccount() {
+    if (m_cfg.readOnly) {
+        // /api/v1/accounts returns the list; for an investor token the gateway
+        // already scopes it to what the credential may see. The selected one is
+        // picked out in handleReply.
+        QNetworkReply* r = m_net->get(v1Request("/accounts"));
+        handleReply(r, "account_v1", tr("Loading account"));
+        return;
+    }
     QNetworkReply* r = m_net->get(makeRequest("/account"));
     handleReply(r, "account", tr("Loading account"));
 }
 
 void ApiClient::fetchPrices(const QStringList& symbols) {
+    if (m_cfg.readOnly) {
+        // No per-symbol filter on this one — it returns every live tick, which
+        // is what the watchlist wants anyway.
+        QNetworkReply* r = m_net->get(v1Request("/instruments/prices/all"));
+        handleReply(r, "prices_v1", tr("Loading prices"));
+        return;
+    }
     QString path = "/prices";
     if (!symbols.isEmpty()) {
         QUrlQuery q;
@@ -250,6 +376,22 @@ void ApiClient::fetchPrices(const QStringList& symbols) {
 }
 
 void ApiClient::fetchBars(const QString& symbol, const QString& timeframe, int limit) {
+    if (m_cfg.readOnly) {
+        const qint64 now  = QDateTime::currentSecsSinceEpoch();
+        const qint64 span = v1BarSeconds(timeframe) * qMax(1, limit);
+        QUrlQuery q;
+        q.addQueryItem("resolution", v1Resolution(timeframe));
+        q.addQueryItem("from", QString::number(now - span));
+        q.addQueryItem("to",   QString::number(now));
+        QNetworkReply* r = m_net->get(
+            v1Request("/instruments/" + symbol.toUpper() + "/bars?" + q.toString()));
+        // The v1 response carries neither symbol nor timeframe, but
+        // barsReceived() must report both — the chart routes on them.
+        r->setProperty("pm_symbol", symbol);
+        r->setProperty("pm_timeframe", timeframe);
+        handleReply(r, "bars_v1", tr("Loading chart for %1").arg(symbol));
+        return;
+    }
     QUrlQuery q;
     q.addQueryItem("symbol", symbol);
     q.addQueryItem("timeframe", timeframe);
@@ -302,6 +444,14 @@ void ApiClient::fetchHistory(int limit) {
 
 void ApiClient::placeOrder(const QString& action, const QString& symbol, double volume,
                            double sl, double tp, const QString& comment) {
+    if (rejectReadOnly(tr("Placing %1 %2").arg(action, symbol))) {
+        TradeResult tr_;
+        tr_.ok = false;
+        tr_.status = "error";
+        tr_.message = kReadOnlyMsg();
+        emit tradeResult(tr_);
+        return;
+    }
     QJsonObject body;
     body["action"] = action.toUpper();
     body["symbol"] = symbol;
@@ -316,6 +466,14 @@ void ApiClient::placeOrder(const QString& action, const QString& symbol, double 
 }
 
 void ApiClient::closePositions(const QString& symbol) {
+    if (rejectReadOnly(tr("Closing %1").arg(symbol))) {
+        TradeResult tr_;
+        tr_.ok = false;
+        tr_.status = "error";
+        tr_.message = kReadOnlyMsg();
+        emit tradeResult(tr_);
+        return;
+    }
     QJsonObject body;
     body["action"] = "CLOSE";
     body["symbol"] = symbol;
@@ -365,6 +523,10 @@ static void handleOrderOp(ApiClient* self, QNetworkReply* reply, const QString& 
 void ApiClient::placePendingOrder(const QString& symbol, const QString& side,
                                   const QString& type, double lots, double price,
                                   double sl, double tp, const QString& comment) {
+    if (rejectReadOnly(tr("Placing order"))) {
+        emit orderOpResult("place", false, kReadOnlyMsg());
+        return;
+    }
     QJsonObject body;
     body["account_id"] = m_cfg.accountId;
     body["symbol"]     = symbol;
@@ -383,6 +545,10 @@ void ApiClient::placePendingOrder(const QString& symbol, const QString& side,
 
 void ApiClient::modifyPendingOrder(const QString& orderId, double price, double lots,
                                    double sl, double tp) {
+    if (rejectReadOnly(tr("Modifying order"))) {
+        emit orderOpResult("modify", false, kReadOnlyMsg());
+        return;
+    }
     QJsonObject body;
     if (price >= 0.0) body["price"] = price;
     if (lots  >  0.0) body["lots"]  = lots;
@@ -398,11 +564,19 @@ void ApiClient::modifyPendingOrder(const QString& orderId, double price, double 
 }
 
 void ApiClient::cancelOrder(const QString& orderId) {
+    if (rejectReadOnly(tr("Cancelling order"))) {
+        emit orderOpResult("cancel", false, kReadOnlyMsg());
+        return;
+    }
     QNetworkReply* r = m_net->deleteResource(v1Request("/orders/" + orderId));
     handleOrderOp(this, r, "cancel");
 }
 
 void ApiClient::modifyBracket(const QString& positionId, const QString& kind, double level) {
+    if (rejectReadOnly(tr("Modifying SL/TP"))) {
+        emit positionOpResult(positionId, kind, false, kReadOnlyMsg());
+        return;
+    }
     const QString field = (kind == "tp") ? "take_profit" : "stop_loss";
 
     // level <= 0 means "remove this bracket", sent as an explicit JSON null.
@@ -464,6 +638,10 @@ void ApiClient::refreshSession() {
 }
 
 void ApiClient::closePositionById(const QString& positionId, double lots) {
+    if (rejectReadOnly(tr("Closing position"))) {
+        emit positionOpResult(positionId, "close", false, kReadOnlyMsg());
+        return;
+    }
     // The endpoint takes an optional "lots". Omitting it means close the whole
     // position, so a full close sends {} rather than the size — the server then
     // uses its own record of the position instead of trusting a number this
@@ -503,7 +681,38 @@ void ApiClient::handleReply(QNetworkReply* reply, const QString& kind, const QSt
             return;
         }
 
-        if (kind == "symbols") {
+        if (kind == "symbols_v1") {
+            // A bare array, not {symbols:[…]}.
+            QVector<SymbolSpec> out;
+            for (const QJsonValue& v : (doc.isArray() ? doc.array()
+                                                      : obj.value("instruments").toArray()))
+                out.push_back(parseSymbolV1(v.toObject()));
+            emit symbolsReceived(out);
+        } else if (kind == "account_v1") {
+            const QJsonArray arr = doc.isArray() ? doc.array()
+                                                 : obj.value("accounts").toArray();
+            // Match the selected account; fall back to the only/first one so a
+            // session whose accountId is stale still shows something.
+            QJsonObject picked;
+            for (const QJsonValue& v : arr) {
+                const QJsonObject a = v.toObject();
+                if (a.value("id").toString() == m_cfg.accountId) { picked = a; break; }
+            }
+            if (picked.isEmpty() && !arr.isEmpty()) picked = arr.first().toObject();
+            if (!picked.isEmpty()) emit accountReceived(parseAccountV1(picked));
+        } else if (kind == "prices_v1") {
+            QVector<Quote> out;
+            for (const QJsonValue& v : (doc.isArray() ? doc.array()
+                                                      : obj.value("prices").toArray()))
+                out.push_back(parseQuote(v.toObject()));
+            emit pricesReceived(out);
+        } else if (kind == "bars_v1") {
+            QVector<Bar> out;
+            for (const QJsonValue& v : obj.value("bars").toArray())
+                out.push_back(parseBarV1(v.toObject()));
+            emit barsReceived(reply->property("pm_symbol").toString(),
+                              reply->property("pm_timeframe").toString(), out);
+        } else if (kind == "symbols") {
             QVector<SymbolSpec> out;
             for (const QJsonValue& v : obj.value("symbols").toArray())
                 out.push_back(parseSymbol(v.toObject()));

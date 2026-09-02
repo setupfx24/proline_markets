@@ -56,6 +56,10 @@ public slots:
     bool isCollapsed() const { return m_collapsed; }
     void setPrivacy(bool on);                    // mask the money columns
     void applyTheme();
+    // Read-only investor session: strip every action the blotter offers —
+    // the per-row close / edit / share buttons, the Close all|profit|loss
+    // strip, and typing straight into an S/L or T/P cell.
+    void setReadOnly(bool on);
 
 signals:
     // One specific position. The whole row is carried, not just its id: the
@@ -131,6 +135,7 @@ private:
     // from a real edit on its own, and setPositions() runs every four seconds.
     bool m_populating = false;
     bool m_collapsed = false;
+    bool m_readOnly = false;
     bool m_privacy = false;
 
     // Last snapshots, so a privacy/theme/filter change can re-render without a

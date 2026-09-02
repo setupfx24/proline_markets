@@ -40,10 +40,12 @@ private slots:
     void doLogin();          // dispatches to the active sign-in mode
     void onConnect();
     void toggleAuthMode();   // email/password <-> API key
+    void toggleInvestorMode();  // trader sign-in <-> read-only investor sign-in
 
 private:
     void doPasswordLogin();
     void doKeyLogin();
+    void doInvestorLogin();  // read-only credential -> /auth/investor/login
     QString v1Base() const;               // restBase with /api/algo -> /api/v1
     void postLogin(const QString& url, const QString& email,
                    const QString& pass, bool allowFallback);
@@ -71,6 +73,12 @@ private:
     QWidget*     m_keyRows;               // API key/secret block
     QPushButton* m_modeBtn;               // switches between the two
     bool         m_keyMode = false;
+    // Read-only "Investor Access" sign-in: the admin generates the credential
+    // in the back office and hands it to whoever may watch the account. It goes
+    // to a different route and leaves the terminal in a mode where nothing can
+    // be traded.
+    QPushButton* m_investorBtn;
+    bool         m_investorMode = false;
     QWidget*     m_advanced;              // REST + WebSocket block (collapsible)
     QPushButton* m_advancedBtn;
     QLabel*      m_stepTitle;

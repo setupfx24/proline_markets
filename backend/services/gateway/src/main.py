@@ -95,6 +95,13 @@ async def _ensure_mt5_link_column():
                 await session.execute(text(
                     f"ALTER TABLE positions ADD COLUMN IF NOT EXISTS {col} {typ}"
                 ))
+            # Migration 0025 owns this one. Without the column every refresh
+            # 500s, and the fallback — dropping it — is worse: that is how an
+            # investor session silently becomes a full trading session.
+            await session.execute(text(
+                "ALTER TABLE user_refresh_tokens "
+                "ADD COLUMN IF NOT EXISTS role_override VARCHAR(20)"
+            ))
             await session.commit()
     except Exception as e:
         logger.warning("mt5_link_id column check skipped: %s", e)
