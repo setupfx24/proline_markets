@@ -21,14 +21,14 @@ AppName={#MyApp}
 ; website's download button already links to
 ; (frontend/trader/src/landing/marketing/Navbar.tsx). Bump both together, and
 ; the site's href with them, or the link 404s.
-AppVersion=1.2.0
+AppVersion=1.2.1
 AppPublisher=Proline Markets
 DefaultDirName={autopf}\Proline Markets Terminal
 DefaultGroupName=Proline Markets Terminal
 DisableProgramGroupPage=yes
 UninstallDisplayIcon={app}\{#MyExe}
 OutputDir={#SourcePath}dist
-OutputBaseFilename=ProlineMarketsTerminal-Setup-1.2.0
+OutputBaseFilename=ProlineMarketsTerminal-Setup-1.2.1
 SetupIconFile={#SourcePath}resources\prolinemarket.ico
 Compression=lzma2/max
 SolidCompression=yes
