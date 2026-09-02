@@ -80,7 +80,11 @@ MainWindow::MainWindow(const Config& cfg, QWidget* parent)
 
     // The one-click strip floats in the chart's toolbar band, in the gap
     // between TradingView's Indicators/undo controls and its icon cluster.
-    m_charts->setOverlayWidget(m_ticket);
+    //
+    // Never installed for a read-only investor: WebChartWidget::setOverlayWidget()
+    // calls show() on whatever it is handed, so hiding the ticket beforehand is
+    // undone here — and again on every pane switch, which re-installs it.
+    if (!m_cfg.readOnly) m_charts->setOverlayWidget(m_ticket);
 
     // ── blotter + the account line beneath it ──
     auto* bottom = new QWidget;
