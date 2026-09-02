@@ -1,4 +1,5 @@
 #include "ui/OrderDialog.h"
+#include "ui/Toast.h"
 #include "ui/Theme.h"
 #include "ui/SpinInput.h"
 #include <QVBoxLayout>
@@ -253,7 +254,10 @@ QWidget* OrderDialog::buildMarketTab() {
     m_mktSubmit = new QPushButton;
     m_mktSubmit->setMinimumHeight(40);
     m_mktSubmit->setCursor(Qt::PointingHandCursor);
-    connect(m_mktSubmit, &QPushButton::clicked, this, &QDialog::accept);
+    connect(m_mktSubmit, &QPushButton::clicked, this, [this]() {
+        if (warnReadOnly()) return;
+        accept();
+    });
 
     auto* cancel = new QPushButton(tr("Cancel"));
     cancel->setMinimumHeight(40);
@@ -434,7 +438,10 @@ QWidget* OrderDialog::buildPendingTab() {
     m_place = new QPushButton(tr("Place order"));
     m_place->setMinimumHeight(36);
     m_place->setCursor(Qt::PointingHandCursor);
-    connect(m_place, &QPushButton::clicked, this, &QDialog::accept);
+    connect(m_place, &QPushButton::clicked, this, [this]() {
+        if (warnReadOnly()) return;
+        accept();
+    });
 
     auto* actions = new QHBoxLayout;
     actions->setSpacing(8);
@@ -584,6 +591,22 @@ QString OrderDialog::symbol() const { return m_spec.symbol; }
 QString OrderDialog::mode() const {
     return m_tabs->currentIndex() == 0 ? QStringLiteral("market")
                                        : QStringLiteral("pending");
+}
+
+void OrderDialog::setReadOnly(bool on) {
+    m_readOnly = on;
+    if (!on) return;
+    const QString hint = tr("Investor mode — read-only. Trading and deposits are disabled.");
+    for (QWidget* w : { static_cast<QWidget*>(m_mktSubmit), static_cast<QWidget*>(m_place) })
+        if (w) w->setToolTip(hint);
+}
+
+// Raises the warning and reports whether the caller must stop.
+bool OrderDialog::warnReadOnly() {
+    if (!m_readOnly) return false;
+    Toast::error(this, tr("Investor mode"),
+                 tr("This is a read-only investor login — the order was not placed."));
+    return true;
 }
 
 QString OrderDialog::side() const {

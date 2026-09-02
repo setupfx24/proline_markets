@@ -41,6 +41,11 @@ public:
                 const QString& symbol,
                 int leverage, double freeMargin, QWidget* parent = nullptr);
 
+    // Read-only investor session: the window opens and fills in exactly as it
+    // does for a trader — the investor can price an order and see the margin it
+    // would need — but the submit buttons warn instead of accepting.
+    void setReadOnly(bool on);
+
     QString symbol() const;      // may differ from the one it opened on
     QString mode() const;        // "market" | "pending"  — which tab was used
     QString side() const;        // "buy" | "sell"
@@ -55,6 +60,10 @@ public slots:
     void updateQuote(const Quote& q);
 
 private:
+    // Raises the investor warning; true means the caller must not proceed.
+    bool warnReadOnly();
+    bool m_readOnly = false;
+
     QWidget* buildHeader();
     QWidget* buildMarketTab();
     QWidget* buildPendingTab();

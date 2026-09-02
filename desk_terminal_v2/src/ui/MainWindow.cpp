@@ -1248,7 +1248,6 @@ void MainWindow::openOrderWindow() {
     // people did not find. The blotter listed pending orders the UI had no
     // obvious way to create; "we can't find the pending order window" was
     // literally true.
-    if (warnIfReadOnly(tr("Placing an order"))) return;
     if (!requireSession(tr("Placing an order"))) return;
     if (m_currentSymbol.isEmpty()) {
         setStatus(tr("Pick a symbol in Market Watch first."), true);
@@ -1261,6 +1260,9 @@ void MainWindow::openOrderWindow() {
     // Keep it live: a market order confirmed against the quote the dialog
     // opened with is a fill at a price the trader never saw.
     connect(m_stream, &PriceStream::tickReceived, &dlg, &OrderDialog::updateQuote);
+    // An investor gets the whole window — symbol, volume, SL/TP, the margin
+    // preview — and a warning on BUY/SELL rather than a locked door.
+    dlg.setReadOnly(m_cfg.readOnly);
     if (dlg.exec() != QDialog::Accepted) return;
 
     // dlg.symbol(), not m_currentSymbol — the picker inside the window may have
