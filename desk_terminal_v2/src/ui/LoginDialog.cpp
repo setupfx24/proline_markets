@@ -775,7 +775,12 @@ void LoginDialog::fetchAccounts() {
 
 void LoginDialog::populateAccounts(const QJsonArray& accts) {
     if (accts.isEmpty()) {
-        setStatus(tr("Signed in, but no trading accounts were found."), true);
+        // The credential is fine — there is simply nothing to look at. Say which
+        // it is, or an investor reads this as "my password is wrong".
+        setStatus(m_investorMode
+            ? tr("Signed in. This investor login is valid, but the account holder "
+                 "has no trading account yet — ask the broker to open one.")
+            : tr("Signed in, but no trading accounts were found."), true);
         return;
     }
 

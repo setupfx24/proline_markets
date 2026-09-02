@@ -689,8 +689,12 @@ void ApiClient::handleReply(QNetworkReply* reply, const QString& kind, const QSt
                 out.push_back(parseSymbolV1(v.toObject()));
             emit symbolsReceived(out);
         } else if (kind == "account_v1") {
-            const QJsonArray arr = doc.isArray() ? doc.array()
-                                                 : obj.value("accounts").toArray();
+            // GET /api/v1/accounts answers {"items":[…]} — not a bare array and
+            // not {"accounts":[…]}. Read all three: the legacy algo gateway and
+            // the login response spell it differently again.
+            QJsonArray arr = doc.isArray() ? doc.array()
+                                           : obj.value("items").toArray();
+            if (arr.isEmpty()) arr = obj.value("accounts").toArray();
             // Match the selected account; fall back to the only/first one so a
             // session whose accountId is stale still shows something.
             QJsonObject picked;
