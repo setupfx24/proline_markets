@@ -97,6 +97,11 @@ function AdvancedChartInner() {
         'header_symbol_search',
         'display_market_status',
         'popup_hints',
+        // The feed carries no traded volume (see visible_plots_set in
+        // datafeed.ts) — the default study would only plot a tick counter.
+        // This file is the documented fallback widget; keep it in step with
+        // ChartingLibraryChart so swapping back does not bring the bar back.
+        'create_volume_indicator_by_default',
       ],
       enabled_features: [
         'study_templates',
