@@ -1,6 +1,22 @@
 import { Platform } from 'react-native';
-import * as Notifications from 'expo-notifications';
 import Constants from 'expo-constants';
+
+// expo-notifications is loaded LAZILY, never as a top-level import.
+// In Expo Go (SDK 53+) importing it THROWS on Android — remote push was removed
+// there. A throw at import time aborted this module, which aborted App.js's own
+// evaluation, so App.js finished with no `export default` and the app rendered
+// a permanent blank screen. Loading it on demand keeps that failure contained:
+// every helper below degrades to a no-op instead of taking the app down.
+let _notifs;
+export function getNotifications() {
+  if (_notifs !== undefined) return _notifs;
+  try {
+    _notifs = require('expo-notifications');
+  } catch (_) {
+    _notifs = null;
+  }
+  return _notifs;
+}
 
 // Remote push (Expo push tokens) was removed from Expo Go in SDK 53 — calling
 // getExpoPushTokenAsync there throws a console error. `storeClient` is Expo Go;
@@ -9,23 +25,33 @@ const IS_EXPO_GO = Constants.executionEnvironment === 'storeClient';
 
 // Foreground notifications must still surface as a banner + sound (default RN
 // behaviour suppresses them while the app is open). Set at module load.
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    // New API (SDK 54) + legacy key for safety — extra keys are ignored.
-    shouldShowBanner: true,
-    shouldShowList: true,
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-  }),
-});
+// MUST NOT throw at module scope. This module is reached through the lazy
+// `import('./src/app/App')` in index.js, so a throw here rejects that import,
+// App is never set, and the root renders its black placeholder forever — a
+// black screen with no error on screen. Expo Go raises on the notifications
+// native module (remote push was removed in SDK 53), which is exactly how that
+// happened. Local notifications still work when this succeeds.
+try {
+  getNotifications()?.setNotificationHandler({
+    handleNotification: async () => ({
+      // New API (SDK 54) + legacy key for safety — extra keys are ignored.
+      shouldShowBanner: true,
+      shouldShowList: true,
+      shouldShowAlert: true,
+      shouldPlaySound: true,
+      shouldSetBadge: false,
+    }),
+  });
+} catch (_) {}
 
 export async function configureAndroidChannel() {
   if (Platform.OS !== 'android') return;
   try {
-    await Notifications.setNotificationChannelAsync('default', {
+    const N = getNotifications();
+    if (!N) return;
+    await N.setNotificationChannelAsync('default', {
       name: 'ProlineMarket',
-      importance: Notifications.AndroidImportance.HIGH,
+      importance: N.AndroidImportance.HIGH,
       vibrationPattern: [0, 250, 250, 250],
       lightColor: '#F26A1F',
       sound: 'default',
@@ -36,9 +62,11 @@ export async function configureAndroidChannel() {
 // Android 13+ and iOS require explicit permission even for local notifications.
 export async function ensureNotificationPermission() {
   try {
-    const { status } = await Notifications.getPermissionsAsync();
+    const N = getNotifications();
+    if (!N) return false;
+    const { status } = await N.getPermissionsAsync();
     if (status === 'granted') return true;
-    const req = await Notifications.requestPermissionsAsync();
+    const req = await N.requestPermissionsAsync();
     return req.status === 'granted';
   } catch (_) {
     return false;
@@ -64,7 +92,9 @@ export async function registerForPushToken() {
   try {
     const granted = await ensureNotificationPermission();
     if (!granted) return null;
-    const res = await Notifications.getExpoPushTokenAsync({ projectId: EAS_PROJECT_ID });
+    const N = getNotifications();
+    if (!N) return null;
+    const res = await N.getExpoPushTokenAsync({ projectId: EAS_PROJECT_ID });
     return res?.data || null;
   } catch (_) {
     return null;
@@ -75,7 +105,9 @@ export async function registerForPushToken() {
 // other app's notification).
 export async function presentLocalNotification({ title, body, data }) {
   try {
-    await Notifications.scheduleNotificationAsync({
+    const N = getNotifications();
+    if (!N) return;
+    await N.scheduleNotificationAsync({
       content: {
         title: title || 'ProlineMarket',
         body: body || '',

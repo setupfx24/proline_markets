@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { View, Text, Pressable, ActivityIndicator, StyleSheet, Platform } from 'react-native';
+import { View, Text, Pressable, ActivityIndicator, StyleSheet, Platform, NativeModules } from 'react-native';
 import { WebView } from 'react-native-webview';
 import * as SecureStore from 'expo-secure-store';
+import Constants from 'expo-constants';
 
 import { API_URL, CHART_URL } from '../../../constants';
 import { vantage, space, sizes, weights, fontFamily, radius } from '../../../theme/vantageTheme';
@@ -20,10 +21,41 @@ import logger from '../../../utils/logger';
  *   WebView → RN : {type:'getBars'|'resolveSymbol'|'ready'|'bridgeReady', ...}
  *   RN → WebView : window.SC.onBars(id, bars) | onSymbol(id, info) | pushTick(bar)
  */
-const LOCAL_HTML =
+// Production: the chart ships inside the app and is read straight off disk.
+// Dev (Expo Go): android_asset/webchart does not exist — the withWebChart
+// plugin only runs at prebuild — so the very same directory is served by the
+// dev server instead (see the /webchart middleware in metro.config.js). Same
+// files, same chart code; only where they are fetched from differs.
+const BUNDLED_HTML =
   Platform.OS === 'android'
     ? 'file:///android_asset/webchart/index.html'
     : 'webchart/index.html'; // iOS: bundled resource (added later)
+
+// Origin of the dev server this client is actually talking to — LAN
+// ("http://192.168.1.25:8081") or tunnel ("https://x-anonymous-8081.exp.direct").
+//
+// SourceCode.scriptURL is the URL this very JS bundle was downloaded from, so
+// it is always right and needs no guessing about scheme or port. The Constants
+// values are only fallbacks: `expoConfig.hostUri` is frequently absent from the
+// manifest (it was on this project), and debuggerHost carries no scheme.
+function devServerOrigin() {
+  const url = NativeModules?.SourceCode?.scriptURL;
+  if (typeof url === 'string') {
+    const m = url.match(/^(https?:\/\/[^/]+)/);
+    if (m) return m[1];
+  }
+  const host = Constants.expoConfig?.hostUri || Constants.expoGoConfig?.debuggerHost;
+  if (!host) return null;
+  const bare = String(host).replace(/^https?:\/\//, '');
+  // exp.direct tunnels are HTTPS-only; a LAN dev server is plain HTTP.
+  return `${bare.includes('exp.direct') ? 'https' : 'http'}://${bare}`;
+}
+
+const DEV_ORIGIN = __DEV__ ? devServerOrigin() : null;
+const DEV_CHART_URL = DEV_ORIGIN ? `${DEV_ORIGIN}/webchart/index.html` : null;
+const DEV_HOST = DEV_ORIGIN;
+
+const LOCAL_HTML = (__DEV__ && DEV_CHART_URL) ? DEV_CHART_URL : BUNDLED_HTML;
 
 const RES_SECONDS = { '1': 60, '5': 300, '15': 900, '30': 1800, '60': 3600, '240': 14400, '1D': 86400, D: 86400 };
 function resSeconds(r) { return RES_SECONDS[r] || 300; }
@@ -318,7 +350,14 @@ export default function NativeChart({ symbol = 'EURUSD', interval = '60', theme,
         // universal (network) access and no mixed-content allowance.
         // Local mode stays file://-only. The fallback additionally allows the
         // trader-web origin (and nothing else) so the hosted chart can load.
-        originWhitelist={remoteFallback ? ['file://*', `${CHART_URL.replace(/^(https?:\/\/[^/]+).*$/, '$1')}/*`] : ['file://*']}
+        // Local mode is file://-only in production. In dev the same page comes
+        // from the dev server, so that origin has to be allowed too; the hosted
+        // fallback adds the trader-web origin and nothing else.
+        originWhitelist={
+          remoteFallback
+            ? ['file://*', `${CHART_URL.replace(/^(https?:\/\/[^/]+).*$/, '$1')}/*`]
+            : (__DEV__ && DEV_HOST ? ['file://*', 'http://*', 'https://*'] : ['file://*'])
+        }
         style={styles.web}
         javaScriptEnabled
         domStorageEnabled
@@ -333,7 +372,7 @@ export default function NativeChart({ symbol = 'EURUSD', interval = '60', theme,
         onMessage={onMessage}
         onError={(e) => {
           const ne = e?.nativeEvent;
-          logger.log('NativeChart: chart source failed at stage', stage, ne?.description);
+          logger.log('[CHART] failed at stage', stage, '|', ne?.description, '|', ne?.url);
           setStage((s) => (s < 2 ? s + 1 : s));
         }}
         startInLoadingState

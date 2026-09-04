@@ -1,10 +1,9 @@
 import { useEffect, useRef } from 'react';
-import { AppState, Platform } from 'react-native';
-import * as Notifications from 'expo-notifications';
+import { AppState } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 
 import ApiService from '../services/api/ApiService';
-import { configureAndroidChannel, ensureNotificationPermission, registerForPushToken, presentLocalNotification } from '../services/notifications/pushNotifications';
+import { configureAndroidChannel, ensureNotificationPermission, presentLocalNotification, getNotifications } from '../services/notifications/pushNotifications';
 import { navigate } from '../app/navigation/navigationRef';
 
 // High-water mark: the created_at of the newest notification we've already
@@ -105,12 +104,9 @@ export default function NotificationsBridge() {
     (async () => {
       await configureAndroidChannel();
       await ensureNotificationPermission();
-      // Register the Expo push token so the server can push even when the app
-      // is closed. Best-effort — local polling still covers the foreground.
-      try {
-        const token = await registerForPushToken();
-        if (token) await ApiService.registerPushToken(token, Platform.OS);
-      } catch (_) {}
+      // No push-token registration: the gateway has no endpoint to store one
+      // (the trader web app never registers either), so notifications are
+      // delivered by the local poll below rather than by server-side push.
       try {
         const raw = await SecureStore.getItemAsync(LAST_ALERT_TS_KEY);
         const ts = Number(raw);
@@ -150,7 +146,10 @@ export default function NotificationsBridge() {
     // first few seconds after mount skips that stale re-delivery while real
     // taps (which happen much later) still route correctly.
     const mountedAt = Date.now();
-    const respSub = Notifications.addNotificationResponseReceivedListener((resp) => {
+    // Lazy — importing expo-notifications at module scope throws in Expo Go
+    // and would take the whole app down with it (see pushNotifications.js).
+    const N = getNotifications();
+    const respSub = N?.addNotificationResponseReceivedListener((resp) => {
       if (Date.now() - mountedAt < 4000) return;
       const data = resp?.notification?.request?.content?.data || {};
       const [name, params] = routeFor(data);
@@ -161,7 +160,7 @@ export default function NotificationsBridge() {
       cancelled = true;
       clearInterval(timer);
       appSub.remove();
-      respSub.remove();
+      respSub?.remove();
     };
   }, []);
 

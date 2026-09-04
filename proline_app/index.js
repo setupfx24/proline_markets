@@ -2,7 +2,7 @@ import 'react-native-gesture-handler';
 import 'react-native-reanimated';
 import { registerRootComponent } from 'expo';
 import React, { useEffect, useState } from 'react';
-import { View, LogBox } from 'react-native';
+import { View, Text, LogBox } from 'react-native';
 
 import { applyVantageThemeFromStorage } from './src/app/bootstrap/themeRuntime';
 
@@ -30,16 +30,63 @@ LogBox.ignoreLogs([
 // reason — a static import would run all screen modules with the default theme.
 function Root() {
   const [App, setApp] = useState(null);
+  const [bootError, setBootError] = useState(null);
 
   useEffect(() => {
     let mounted = true;
     (async () => {
-      await applyVantageThemeFromStorage();
-      const mod = await import('./src/app/App');
-      if (mounted) setApp(() => mod.default);
+      // Theme is best-effort: a storage failure must not stop the app from
+      // loading (it only means the default theme is used).
+      try {
+        await applyVantageThemeFromStorage();
+      } catch (e) {
+        console.warn('theme bootstrap failed, using defaults:', e);
+      }
+      try {
+        // SYNCHRONOUS require, not `await import()`. Metro serves a dynamic
+        // import as a lazily-fetched async chunk, and in Expo Go that promise
+        // could never settle — it neither resolved nor rejected, so `App`
+        // stayed null and the placeholder below rendered as a permanent blank
+        // screen. require() goes through the same module registry but resolves
+        // inline, and it still runs AFTER the theme above, which is the whole
+        // reason App is not a static top-level import.
+        const mod = require('./src/app/App');
+        // Interop: depending on how the module is transpiled the component is
+        // either `mod.default` (ES default export), `mod.default.default`
+        // (double-wrapped) or `mod` itself. The dynamic `import()` this used to
+        // use handed back `default: undefined`, which set App to undefined and
+        // left the placeholder rendering as a blank screen. Take the first
+        // thing that is actually callable.
+        const Comp =
+          typeof mod === 'function' ? mod
+          : typeof mod?.default === 'function' ? mod.default
+          : typeof mod?.default?.default === 'function' ? mod.default.default
+          : null;
+        if (!Comp) throw new Error('App module has no component export');
+        if (mounted) setApp(() => Comp);
+      } catch (e) {
+        // Without this the rejection was swallowed and `App` stayed null, so
+        // the placeholder below rendered as a permanent BLACK SCREEN with
+        // nothing on screen to say why. Always surface the reason instead.
+        console.error('Failed to load App:', e);
+        if (mounted) setBootError(e);
+      }
     })();
     return () => { mounted = false; };
   }, []);
+
+  if (bootError) {
+    return (
+      <View style={{ flex: 1, backgroundColor: '#000000', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+        <Text style={{ color: '#FFFFFF', fontSize: 16, fontWeight: 'bold', marginBottom: 8 }}>
+          App failed to start
+        </Text>
+        <Text style={{ color: '#9CA3AF', fontSize: 12, textAlign: 'center' }}>
+          {String(bootError?.message || bootError)}
+        </Text>
+      </View>
+    );
+  }
 
   if (!App) return <View style={{ flex: 1, backgroundColor: '#000000' }} />;
   return <App />;
