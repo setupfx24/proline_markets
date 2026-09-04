@@ -344,11 +344,7 @@ export default function InstrumentDetailScreen() {
     : (activeAccount?.balance != null ? Number(activeAccount.balance) : null);
   const marginTight = marginReq != null && freeMargin != null && marginReq > freeMargin;
 
-  // Chart fills everything between the header and the trade footer (the old
-  // fixed 380px left dead space once the price hero + tab row were removed).
-  // ~96px covers the header + chart margins; never below the old 380px minimum.
   const { height: winH } = useWindowDimensions();
-  const chartH = Math.max(380, winH - insets.top - footerH - 96);
 
   const interval = (TIMEFRAMES.find((x) => x.key === tf) || TIMEFRAMES[1]).tv;
 
@@ -370,8 +366,13 @@ export default function InstrumentDetailScreen() {
           ScrollView renders blank on many Android devices, which is why the
           normal chart didn't show while the fullscreen (Modal, no ScrollView)
           one did. No scroll content here anyway; the chart fills the area. */}
-      <View style={{ flex: 1 }}>
-        <View style={[styles.chartWrap, { height: chartH }]}>
+      {/* The footer is position:absolute, so the chart area reserves exactly its
+          measured height and the chart then just fills what is left. This used
+          to be a hand-computed height (window - header - footer - 96), and the
+          96 was a guess: whenever it over-subtracted, the leftover showed as a
+          band of dead black between the chart and the trade panel. */}
+      <View style={{ flex: 1, paddingBottom: footerH }}>
+        <View style={styles.chartWrap}>
               {/* Direct in-APK chart (bundled library). Reliable-loading; the
                   persistent-host optimization was reverted after it caused a
                   stuck-spinner regression. Loads per open (a bit slower) but
@@ -825,7 +826,7 @@ const styles = StyleSheet.create({
   tfTxt: { color: vantage.textMuted, fontFamily, fontSize: sizes.body },
   tfMore: { marginLeft: 'auto' },
 
-  chartWrap: { height: 380, marginHorizontal: space.sm, backgroundColor: vantage.bg, borderRadius: radius.md, overflow: 'hidden' },
+  chartWrap: { flex: 1, marginHorizontal: space.sm, marginBottom: space.sm, backgroundColor: vantage.bg, borderRadius: radius.md, overflow: 'hidden' },
   chartLoader: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', backgroundColor: vantage.bg },
   chart: { flex: 1, backgroundColor: vantage.bg },
   fsBtn: {
