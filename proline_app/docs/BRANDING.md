@@ -55,27 +55,27 @@ Namespaced keys were renamed with the brand: `prolinemarket.watchlist`,
 `prolinemarket.balanceHidden`. Renaming them resets those preferences for anyone
 upgrading in place — intended here, since this is a different app.
 
-## ⚠️ Outstanding: EAS project
+## EAS project
 
-`app.json` deliberately ships with **no** `extra.eas.projectId`, no `owner`, and
-`updates.enabled: false` — the old values pointed at the Expo account of the
-build this was white-labelled from. Before the first build, on the ProlineMarket Expo account:
+Linked to the **shivam92388** Expo account:
 
-```bash
-eas init                # writes extra.eas.projectId + owner
-eas update:configure    # writes updates.url = https://u.expo.dev/<projectId>
-```
+| Thing | Value |
+|---|---|
+| Project id | `054b5447-1ebf-4a6a-afe3-6d49191ea3ac` (`app.json` → `extra.eas.projectId`) |
+| Owner | `shivam92388` |
+| Update URL | `https://u.expo.dev/054b5447-1ebf-4a6a-afe3-6d49191ea3ac` |
+| `updates.enabled` | `true` |
 
-then set `updates.enabled` back to `true`. Until that is done:
+This section used to describe all three as deliberately unset, because the old
+values pointed at the Expo account of the build this was white-labelled from.
+They are set now, which turns three things back on:
 
-- **OTA updates are off.** `Updates.checkForUpdateAsync()` in `src/app/App.js`
-  throws and is swallowed — harmless.
-- **Theme switching degrades.** `setThemeAndReload()` reloads the JS bundle via
-  `Updates.reloadAsync()`; with updates disabled it cannot, so the app falls back
-  to showing *"Theme saved — reopen the app to apply"*. The preference still
-  persists and applies on the next cold start.
-- **Server-side push is off.** `registerForPushToken()` reads the project id from
-  the Expo config (`src/services/notifications/pushNotifications.js`); with no id
-  it returns `null`. Local notifications are unaffected.
+- **OTA updates.** `Updates.checkForUpdateAsync()` in `src/app/App.js` works.
+- **Theme switching.** `setThemeAndReload()` reloads the JS bundle through
+  `Updates.reloadAsync()`; it no longer has to fall back to
+  *"Theme saved — reopen the app to apply"*.
+- **The Expo push token.** `registerForPushToken()` can mint one again. Note the
+  app does not send it anywhere: the gateway has no endpoint to store a push
+  token, so notifications still arrive through the in-app poll.
 
-All three fix themselves once `eas init` has run — no code changes needed.
+Builds use the `preview` profile in `eas.json` (internal distribution, APK).

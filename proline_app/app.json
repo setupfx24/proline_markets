@@ -21,8 +21,9 @@
       }
     },
     "updates": {
-      "enabled": false,
-      "fallbackToCacheTimeout": 3000
+      "enabled": true,
+      "fallbackToCacheTimeout": 3000,
+      "url": "https://u.expo.dev/054b5447-1ebf-4a6a-afe3-6d49191ea3ac"
     },
     "ios": {
       "supportsTablet": true,
@@ -59,7 +60,13 @@
           "resizeMode": "contain",
           "backgroundColor": "#000000"
         }
-      }
+      },
+      "permissions": [
+        "android.permission.USE_BIOMETRIC",
+        "android.permission.USE_FINGERPRINT",
+        "android.permission.USE_BIOMETRIC",
+        "android.permission.USE_FINGERPRINT"
+      ]
     },
     "web": {
       "favicon": "./assets/brand/proline-favicon.png"
@@ -81,6 +88,12 @@
         }
       ],
       "./plugins/withWebChart.js"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "054b5447-1ebf-4a6a-afe3-6d49191ea3ac"
+      }
+    },
+    "owner": "shivam92388"
   }
 }
