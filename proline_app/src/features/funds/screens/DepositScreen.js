@@ -10,18 +10,21 @@ import { Screen, Card, PillButton, IconButton, SegmentedTabs, showToast } from '
 import { vantage, space, sizes, weights, fontFamily, radius } from '../../../theme/vantageTheme';
 import { BOTTOM_NAV_PILL_HEIGHT } from '../../../components/vantage/BottomNavPill';
 import ApiService from '../../../services/api/ApiService';
-import LocalBankingPanel from '../components/LocalBankingPanel';
 
 const QUICK_AMOUNTS = [100, 500, 1000, 5000];
 
-// Mirrors the website's Deposit tab: a shared amount on top, then a
-// Crypto | Local Banking toggle. Crypto shows the admin's pay-to
-// destinations + the OxaPay gateway + manual tx-hash/proof submission.
+// Mirrors the website's Deposit tab exactly: a shared amount on top, then a
+// Crypto | USDT | Manual toggle.
+//   Crypto — the OxaPay hosted gateway.
+//   USDT   — admin's crypto wallet, paid manually, submitted as method
+//            "crypto_usdt" with the tx hash as the reference.
+//   Manual — admin's bank/UPI destination, submitted as method "manual".
 export default function DepositScreen() {
   const nav = useNavigation();
   const [amount, setAmount] = useState('');
   const [section, setSection] = useState('crypto');
 
+  const [cryptoInfo, setCryptoInfo] = useState(null);
   const [bankInfo, setBankInfo] = useState(null);
   const [txId, setTxId] = useState('');
   const [proof, setProof] = useState(null);
@@ -34,11 +37,17 @@ export default function DepositScreen() {
         const res = await ApiService.getDepositBankDetails();
         if (!cancelled) setBankInfo(res || null);
       } catch (_) { if (!cancelled) setBankInfo(null); }
+      try {
+        const res = await ApiService.getDepositCryptoDetails();
+        if (!cancelled) setCryptoInfo(res?.available ? res : null);
+      } catch (_) { if (!cancelled) setCryptoInfo(null); }
     })();
     return () => { cancelled = true; };
   }, []);
 
-  const hasDestination = !!(bankInfo && (bankInfo.bank_name || bankInfo.upi_id || bankInfo.qr_code_url || bankInfo.wallet_address));
+  // Bank/UPI destination for the Manual tab; crypto wallet for the USDT tab.
+  const hasBank = !!(bankInfo && (bankInfo.bank_name || bankInfo.upi_id || bankInfo.account_number || bankInfo.qr_code_url));
+  const hasCrypto = !!(cryptoInfo && cryptoInfo.wallet_address);
 
   const copyAddr = useCallback(async (addr) => {
     await Clipboard.setStringAsync(addr);
@@ -57,16 +66,26 @@ export default function DepositScreen() {
     if (!res.canceled && res.assets?.[0]) setProof(res.assets[0]);
   }, []);
 
+  // Both manual tabs post to /wallet/deposit/manual; only `method` differs,
+  // exactly as the website does (usdt -> crypto_usdt, otherwise manual).
   const submitManual = useCallback(async () => {
+    const isUsdt = section === 'usdt';
     if (!(Number(amount) > 0)) { showToast({ kind: 'warn', message: 'Enter a valid amount' }); return; }
-    if (!hasDestination) { showToast({ kind: 'warn', message: 'No manual destination — use the crypto gateway' }); return; }
-    if (!txId.trim()) { showToast({ kind: 'warn', message: 'Enter your transaction reference / tx hash' }); return; }
+    if (isUsdt ? !hasCrypto : !hasBank) {
+      showToast({ kind: 'warn', message: 'No deposit destination configured — use the crypto gateway' });
+      return;
+    }
+    if (!txId.trim()) {
+      showToast({ kind: 'warn', message: isUsdt ? 'Enter your transaction hash' : 'Enter your transaction / reference ID' });
+      return;
+    }
     if (!proof) { showToast({ kind: 'warn', message: 'Upload a screenshot of your payment' }); return; }
     setSubmitting(true);
     const fd = new FormData();
     fd.append('amount', String(amount));
     fd.append('transaction_id', txId.trim());
     fd.append('file', { uri: proof.uri, type: proof.mimeType || 'image/jpeg', name: proof.fileName || 'proof.jpg' });
+    fd.append('method', isUsdt ? 'crypto_usdt' : 'manual');
     try {
       await ApiService.submitManualDeposit(fd);
       showToast({ kind: 'success', message: `Deposit of $${Number(amount).toLocaleString()} submitted — pending approval` });
@@ -76,7 +95,56 @@ export default function DepositScreen() {
     } finally {
       setSubmitting(false);
     }
-  }, [amount, hasDestination, txId, proof]);
+  }, [amount, section, hasBank, hasCrypto, txId, proof]);
+
+  // Shared proof form for the USDT and Manual tabs. A plain function that
+  // returns JSX, NOT a component — declaring a component inside the screen
+  // gives it a new type every render, which remounts the TextInput and drops
+  // focus on every keystroke.
+  const renderManualProof = (kind) => (
+    <>
+      <Text style={styles.orNote}>
+        {kind === 'usdt'
+          ? 'Paid to the address above? Submit your transaction hash and a screenshot.'
+          : 'Paid to the account above? Submit your reference number and a screenshot.'}
+      </Text>
+
+      <Text style={[styles.label, { marginTop: space.md }]}>
+        {kind === 'usdt' ? 'Transaction hash' : 'Transaction / reference ID'}
+      </Text>
+      <TextInput
+        value={txId}
+        onChangeText={setTxId}
+        placeholder={kind === 'usdt' ? 'On-chain tx hash' : 'UTR / reference number'}
+        placeholderTextColor={vantage.textMuted}
+        style={styles.input}
+        autoCapitalize="none"
+        autoCorrect={false}
+      />
+
+      <Text style={[styles.label, { marginTop: space.md }]}>Payment proof (screenshot)</Text>
+      <Pressable onPress={pickProof} style={styles.proofBtn} accessibilityRole="button">
+        {proof ? (
+          <Image source={{ uri: proof.uri }} style={styles.proofImg} resizeMode="cover" />
+        ) : (
+          <View style={styles.proofPlaceholder}>
+            <Ionicons name="image-outline" size={28} color={vantage.textMuted} />
+            <Text style={styles.proofTxt}>Tap to choose image</Text>
+          </View>
+        )}
+      </Pressable>
+
+      <PillButton
+        label={submitting ? 'Submitting…' : 'Submit deposit proof'}
+        variant="secondary"
+        size="lg"
+        loading={submitting}
+        disabled={submitting}
+        onPress={submitManual}
+        style={{ marginTop: space.lg }}
+      />
+    </>
+  );
 
   return (
     <Screen edges={['top']}>
@@ -87,7 +155,7 @@ export default function DepositScreen() {
       </View>
 
       <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: BOTTOM_NAV_PILL_HEIGHT + space.huge }} keyboardShouldPersistTaps="handled">
-        <Text style={styles.label}>Amount (USD){section === 'local_banking' ? ' · optional' : ''}</Text>
+        <Text style={styles.label}>Amount (USD)</Text>
         <TextInput
           value={amount}
           onChangeText={setAmount}
@@ -110,14 +178,63 @@ export default function DepositScreen() {
             onChange={setSection}
             options={[
               { value: 'crypto', label: 'Crypto' },
-              { value: 'local_banking', label: 'Local Banking' },
+              { value: 'usdt',   label: 'USDT' },
+              { value: 'manual', label: 'Manual' },
             ]}
           />
         </View>
 
         {section === 'crypto' ? (
           <>
-            {hasDestination ? (
+            <Card style={styles.payCard}>
+              <Text style={styles.payTitle}>Crypto gateway</Text>
+              <Text style={styles.hint}>
+                Pay in any supported coin through the hosted OxaPay checkout. Your
+                balance is credited automatically once the payment confirms.
+              </Text>
+            </Card>
+            <PillButton
+              label="Pay with crypto gateway →"
+              variant="primary"
+              size="lg"
+              onPress={openGateway}
+              style={{ marginTop: space.md }}
+            />
+          </>
+        ) : section === 'usdt' ? (
+          <>
+            {hasCrypto ? (
+              <Card style={styles.payCard}>
+                <Text style={styles.payTitle}>Send {cryptoInfo.asset || 'USDT'} ({cryptoInfo.network || 'TRC20'})</Text>
+                {cryptoInfo.qr_code_url ? (
+                  <Image source={{ uri: cryptoInfo.qr_code_url }} style={styles.adminQr} resizeMode="contain" />
+                ) : null}
+                <View style={styles.walletBox}>
+                  <Text style={styles.walletLab}>Wallet address</Text>
+                  <View style={styles.walletRow}>
+                    <View style={styles.qrChip}>
+                      <QRCode value={cryptoInfo.wallet_address} size={92} backgroundColor="#FFFFFF" color="#000000" />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.walletAddr} selectable>{cryptoInfo.wallet_address}</Text>
+                      <Pressable onPress={() => copyAddr(cryptoInfo.wallet_address)} hitSlop={6}>
+                        <Text style={styles.copyTxt}>Copy address</Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                  <Text style={styles.hint}>Scan or copy, pay, then paste your tx hash below as proof.</Text>
+                </View>
+              </Card>
+            ) : (
+              <Card style={styles.payCard}>
+                <Text style={styles.hint}>No crypto deposit wallet is configured right now. Use the Crypto gateway tab.</Text>
+              </Card>
+            )}
+            {hasCrypto ? renderManualProof('usdt') : null}
+          </>
+        ) : (
+          <>
+            {hasBank ? (
               <Card style={styles.payCard}>
                 <Text style={styles.payTitle}>Pay to</Text>
                 {bankInfo.qr_code_url ? (
@@ -128,68 +245,14 @@ export default function DepositScreen() {
                 {bankInfo.account_number ? <Detail label="A/C" value={bankInfo.account_number} /> : null}
                 {bankInfo.ifsc_code ? <Detail label="IFSC" value={bankInfo.ifsc_code} /> : null}
                 {bankInfo.upi_id ? <Detail label="UPI" value={bankInfo.upi_id} /> : null}
-
-                {bankInfo.wallet_address ? (
-                  <View style={styles.walletBox}>
-                    <Text style={styles.walletLab}>Crypto address</Text>
-                    <View style={styles.walletRow}>
-                      <View style={styles.qrChip}>
-                        <QRCode value={bankInfo.wallet_address} size={92} backgroundColor="#FFFFFF" color="#000000" />
-                      </View>
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.walletAddr} selectable>{bankInfo.wallet_address}</Text>
-                        <Pressable onPress={() => copyAddr(bankInfo.wallet_address)} hitSlop={6}>
-                          <Text style={styles.copyTxt}>Copy address</Text>
-                        </Pressable>
-                      </View>
-                    </View>
-                    <Text style={styles.hint}>Scan or copy, pay, then paste your tx hash below as proof.</Text>
-                  </View>
-                ) : null}
               </Card>
-            ) : null}
-
-            <PillButton
-              label="Pay with crypto gateway →"
-              variant="primary"
-              size="lg"
-              onPress={openGateway}
-              style={{ marginTop: hasDestination ? space.md : 0 }}
-            />
-
-            {hasDestination ? (
-              <>
-                <Text style={styles.orNote}>Or pay manually to the address above and submit your transaction hash below.</Text>
-
-                <Text style={[styles.label, { marginTop: space.md }]}>Transaction reference / tx hash</Text>
-                <TextInput value={txId} onChangeText={setTxId} placeholder="On-chain tx hash, UTR, or reference" placeholderTextColor={vantage.textMuted} style={styles.input} autoCapitalize="none" autoCorrect={false} />
-
-                <Text style={[styles.label, { marginTop: space.md }]}>Payment proof (screenshot)</Text>
-                <Pressable onPress={pickProof} style={styles.proofBtn} accessibilityRole="button">
-                  {proof ? (
-                    <Image source={{ uri: proof.uri }} style={styles.proofImg} resizeMode="cover" />
-                  ) : (
-                    <View style={styles.proofPlaceholder}>
-                      <Ionicons name="image-outline" size={28} color={vantage.textMuted} />
-                      <Text style={styles.proofTxt}>Tap to choose image</Text>
-                    </View>
-                  )}
-                </Pressable>
-
-                <PillButton
-                  label={submitting ? 'Submitting…' : 'Submit deposit proof'}
-                  variant="secondary"
-                  size="lg"
-                  loading={submitting}
-                  disabled={submitting}
-                  onPress={submitManual}
-                  style={{ marginTop: space.lg }}
-                />
-              </>
-            ) : null}
+            ) : (
+              <Card style={styles.payCard}>
+                <Text style={styles.hint}>No bank/UPI destination is configured right now. Use the Crypto gateway tab.</Text>
+              </Card>
+            )}
+            {hasBank ? renderManualProof('manual') : null}
           </>
-        ) : (
-          <LocalBankingPanel amount={amount} />
         )}
       </ScrollView>
     </Screen>

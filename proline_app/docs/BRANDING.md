@@ -1,6 +1,6 @@
 # Branding — ProlineMarket
 
-The app was white-labelled from SwissCresta to **ProlineMarket**. This is the map of
+The app was white-labelled to **ProlineMarket**. This is the map of
 every place the brand lives, so the next rebrand is a checklist rather than a hunt.
 
 ## Identity
@@ -58,8 +58,8 @@ upgrading in place — intended here, since this is a different app.
 ## ⚠️ Outstanding: EAS project
 
 `app.json` deliberately ships with **no** `extra.eas.projectId`, no `owner`, and
-`updates.enabled: false` — the old values pointed at the SwissCresta Expo
-account. Before the first build, on the ProlineMarket Expo account:
+`updates.enabled: false` — the old values pointed at the Expo account of the
+build this was white-labelled from. Before the first build, on the ProlineMarket Expo account:
 
 ```bash
 eas init                # writes extra.eas.projectId + owner

@@ -9,10 +9,6 @@ import { vantage, space, sizes, weights, fontFamily, radius } from '../../../the
 import ApiService from '../../../services/api/ApiService';
 import { authedFetch } from '../../../services/api/authedFetch';
 
-function money(n) {
-  return Number(n || 0).toLocaleString('en-US', { maximumFractionDigits: 0 });
-}
-
 const TYPES = [
   { key: 'signal_provider', label: 'Signal',  desc: 'Let others copy your trades, sized to each follower’s equity.' },
   { key: 'pamm',            label: 'PAMM',     desc: 'Manage a pooled fund — investors allocate a $ amount, sized to the pool.' },
@@ -32,19 +28,8 @@ export default function BecomeMasterScreen() {
   const [minInv, setMinInv] = useState('100');
   const [maxInv, setMaxInv] = useState('100');
 
-  const [elig, setElig] = useState(null);
   const [provider, setProvider] = useState(null);
-  const [loading, setLoading] = useState(true);
   const [applying, setApplying] = useState(false);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    // Eligibility (always 200) — global, not per type.
-    try { setElig(await ApiService.getMasterEligibility()); } catch (_) {}
-    setLoading(false);
-  }, []);
-
-  useEffect(() => { load(); }, [load]);
 
   // Provider status is PER master type: a user can be a PAMM master and still
   // apply as a Signal/Copy master. Re-check whenever the selected type changes.
@@ -85,13 +70,6 @@ export default function BecomeMasterScreen() {
       setApplying(false);
     }
   };
-
-  const criteria = elig ? [
-    { label: 'Active trading days', cur: `${elig.active_days} / ${elig.active_days_required}`, ok: elig.active_days_ok },
-    { label: 'Profitable track record', cur: `${elig.total_pnl_usd >= 0 ? '+' : '−'}$${money(Math.abs(elig.total_pnl_usd))}`, ok: elig.profitable_ok },
-    { label: 'Trade volume', cur: `$${money(elig.trade_volume_usd)} / $${money(elig.trade_volume_required)}`, ok: elig.trade_volume_ok },
-    { label: 'Trades placed', cur: `${elig.trade_count} / ${elig.trade_count_required}`, ok: elig.trade_count_ok },
-  ] : [];
 
   const status = String(provider?.status || provider?.application_status || '').toLowerCase();
   const alreadyApplied = !!provider && ['pending', 'submitted', 'approved', 'active'].includes(status);
@@ -151,21 +129,12 @@ export default function BecomeMasterScreen() {
               <Field label="Maximum investors" value={maxInv} onChange={setMaxInv} hint="1–1000" last />
             </Card>
 
-            {/* Eligibility */}
-            <Text style={styles.sectionTitle}>Eligibility</Text>
-            <Card padding={0}>
-              {loading ? (
-                <Text style={styles.loading}>Loading…</Text>
-              ) : criteria.map((c, i) => (
-                <View key={c.label} style={[styles.critRow, i > 0 && styles.critBorder]}>
-                  <Ionicons name={c.ok ? 'checkmark-circle' : 'ellipse-outline'} size={18} color={c.ok ? vantage.up : vantage.textMuted} />
-                  <Text style={styles.critLabel}>{c.label}</Text>
-                  <Text style={[styles.critVal, { color: c.ok ? vantage.up : vantage.textSecondary }]}>{c.cur}</Text>
-                </View>
-              ))}
-            </Card>
+            {/* The gateway has no eligibility endpoint and the trader web app
+                shows no checklist — an application is simply reviewed by an
+                admin, so say that rather than inventing criteria. */}
             <Text style={styles.hint}>
-              {elig?.all_passed ? 'You meet the criteria.' : 'PAMM requires all criteria. Signal provider may be approved sooner.'}
+              Applications are reviewed by our team. PAMM masters are held to a
+              longer track record; a signal provider may be approved sooner.
             </Text>
 
             <PillButton
@@ -215,11 +184,6 @@ const styles = StyleSheet.create({
   typeChipActive: { backgroundColor: vantage.accent, borderColor: vantage.accent },
   typeTxt: { color: vantage.textSecondary, fontFamily, fontSize: sizes.body, fontWeight: weights.bold },
   typeDesc: { color: vantage.textMuted, fontFamily, fontSize: sizes.label, marginTop: space.sm, lineHeight: 18 },
-  loading: { color: vantage.textMuted, fontFamily, fontSize: sizes.body, padding: space.lg, textAlign: 'center' },
-  critRow: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingHorizontal: space.lg, paddingVertical: space.md },
-  critBorder: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: vantage.border },
-  critLabel: { flex: 1, color: vantage.textPrimary, fontFamily, fontSize: sizes.body },
-  critVal: { fontFamily, fontSize: sizes.label, fontWeight: weights.bold },
   cardTitle: { color: vantage.textPrimary, fontFamily, fontSize: sizes.h3, fontWeight: weights.heavy },
   cardSub: { color: vantage.textMuted, fontFamily, fontSize: sizes.body, marginTop: space.sm, lineHeight: 20 },
   hint: { color: vantage.textMuted, fontFamily, fontSize: sizes.label, marginTop: space.sm },

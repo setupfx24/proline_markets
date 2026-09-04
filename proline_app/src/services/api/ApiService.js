@@ -113,33 +113,11 @@ class ApiService {
     return this.request('/wallet/deposit/bank-details', { method: 'POST' });
   }
 
-  async getRazorpayRate() {
-    return this.request('/wallet/deposit/razorpay/rate');
-  }
-
-  async createRazorpayOrder(amountUsd) {
-    return this.request('/wallet/deposit/razorpay/order', {
-      method: 'POST',
-      body: JSON.stringify({ amount_usd: amountUsd }),
-    });
-  }
-
-  async verifyRazorpayPayment(data) {
-    return this.request('/wallet/deposit/razorpay/verify', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
-  }
-
-  async submitOnchainDeposit(data) {
-    return this.request('/wallet/deposit/onchain', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
-  }
-
-  async getOnchainDepositStatus(depositId) {
-    return this.request(`/wallet/deposit/${encodeURIComponent(depositId)}/onchain-status`);
+  // Admin's active crypto (USDT/TRC20 etc.) deposit wallet — the destination
+  // the website's USDT tab shows. { available, asset, network, wallet_address,
+  // qr_code_url }.
+  async getDepositCryptoDetails() {
+    return this.request('/wallet/deposit/crypto-details');
   }
 
   // OxaPay automated crypto gateway. Goes through the generic /wallet/deposit
@@ -154,64 +132,6 @@ class ApiService {
     });
   }
 
-  // Local banking — Stage 1: submit a request (amount optional). No KYC
-  // gate — deposits are open to everyone; KYC is checked at withdrawal time.
-  async createLocalBankingRequest(amount) {
-    const token = await SecureStore.getItemAsync('token');
-    const fd = new FormData();
-    fd.append('amount', String(amount || 0));
-    const res = await fetch(`${this.baseUrl}/wallet/deposit/local-banking`, {
-      method: 'POST',
-      headers: {
-        ...(token && { 'Authorization': `Bearer ${token}` }),
-        'Accept': 'application/json',
-      },
-      body: fd,
-    });
-    const data = await res.json().catch(() => null);
-    if (!res.ok) throw new Error(toMessage(data, `Request failed (${res.status})`));
-    return data;
-  }
-
-  // Local banking — Stage 3: user paid via admin's link, uploads proof.
-  async confirmLocalBankingPayment(depositId, { amount, transactionId, file }) {
-    const token = await SecureStore.getItemAsync('token');
-    const fd = new FormData();
-    fd.append('amount', String(amount));
-    fd.append('transaction_id', String(transactionId || '').trim());
-    fd.append('file', {
-      uri: file.uri,
-      type: file.mimeType || 'image/jpeg',
-      name: file.fileName || 'proof.jpg',
-    });
-    const res = await fetch(`${this.baseUrl}/wallet/deposit/local-banking/${encodeURIComponent(depositId)}/confirm-payment`, {
-      method: 'POST',
-      headers: {
-        ...(token && { 'Authorization': `Bearer ${token}` }),
-        'Accept': 'application/json',
-      },
-      body: fd,
-    });
-    const data = await res.json().catch(() => null);
-    if (!res.ok) throw new Error(toMessage(data, `Submit failed (${res.status})`));
-    return data;
-  }
-
-  // Razorpay on a local-banking deposit. Stage-2 admin "Approve & Razorpay"
-  // sets payment_link="razorpay:awaiting"; user enters amount → this creates
-  // the order: { order_id, key_id, amount_inr }.
-  async createLbRazorpayOrder(depositId, amount) {
-    return this.request(`/wallet/deposit/${encodeURIComponent(depositId)}/razorpay-order`, {
-      method: 'POST',
-      body: JSON.stringify({ amount: Number(amount) }),
-    });
-  }
-
-  // Publishable key + locked INR amount for an already-created Razorpay order
-  // (payment_link="razorpay:<order_id>"): { key_id, amount_inr, amount_paise }.
-  async getRazorpayOrderMeta(orderId) {
-    return this.request(`/wallet/deposit/razorpay/${encodeURIComponent(orderId)}/meta`);
-  }
 
   async submitManualDeposit(formData) {
     const token = await SecureStore.getItemAsync('token');
@@ -228,13 +148,6 @@ class ApiService {
     return data;
   }
 
-  async submitOnchainWithdrawal(data) {
-    return this.request('/wallet/withdraw/onchain', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
-  }
-
   async submitManualWithdrawal(formData) {
     const token = await SecureStore.getItemAsync('token');
     const res = await fetch(`${this.baseUrl}/wallet/withdraw/manual`, {
@@ -248,10 +161,6 @@ class ApiService {
     const data = await res.json().catch(() => null);
     if (!res.ok) throw new Error(toMessage(data, `Manual withdrawal failed (${res.status})`));
     return data;
-  }
-
-  async getOnchainWithdrawStatus(withdrawalId) {
-    return this.request(`/wallet/withdraw/${encodeURIComponent(withdrawalId)}/onchain-status`);
   }
 
   async getTransactions({ page = 1, perPage = 50, type = null } = {}) {
@@ -273,11 +182,6 @@ class ApiService {
   // Provider detail.
   async getProvider(providerId) {
     return this.request(`/social/providers/${providerId}`);
-  }
-
-  // Copier's view of the master's open positions + trade history (since copying).
-  async getProviderActivity(providerId) {
-    return this.request(`/social/providers/${encodeURIComponent(providerId)}/activity`);
   }
 
   // Start copying a master. Backend takes master_id + amount (+ optional
@@ -318,18 +222,6 @@ class ApiService {
   async getMyProvider(masterType) {
     const q = masterType ? `?master_type=${encodeURIComponent(masterType)}` : '';
     return this.request(`/social/my-provider${q}`);
-  }
-
-  // PAMM / MAM master application.
-  async getMasterEligibility() {
-    return this.request('/social/masters/eligibility');
-  }
-
-  async applyAsMaster(data) {
-    return this.request('/social/masters/apply', {
-      method: 'POST',
-      body: JSON.stringify(data || {}),
-    });
   }
 
   // Apply to become a master/provider. Config goes in the QUERY string;
@@ -424,10 +316,6 @@ class ApiService {
     return data;
   }
 
-  async getDocuments() {
-    return this.request('/profile/documents');
-  }
-
   // Support APIs
   async getTickets(page = 1, perPage = 20) {
     return this.request(`/support/tickets?page=${page}&per_page=${perPage}`);
@@ -459,28 +347,6 @@ class ApiService {
   async markNotificationRead(notificationId) {
     return this.request(`/notifications/${notificationId}/read`, {
       method: 'PUT',
-    });
-  }
-
-  async deleteNotification(notificationId) {
-    return this.request(`/notifications/${notificationId}`, {
-      method: 'DELETE',
-    });
-  }
-
-  // Register this device's Expo push token so the backend can deliver push
-  // notifications even when the app is closed.
-  async registerPushToken(token, platform) {
-    return this.request('/profile/push-token', {
-      method: 'POST',
-      body: JSON.stringify({ token, platform }),
-    });
-  }
-
-  async unregisterPushToken(token) {
-    return this.request('/profile/push-token', {
-      method: 'DELETE',
-      body: JSON.stringify({ token }),
     });
   }
 
@@ -666,27 +532,6 @@ class ApiService {
     return this.request(`/accounts/${accountId}/summary`);
   }
 
-  // Social Trading - TrustEdge format
-  async getMasters() {
-    return this.request('/social/masters');
-  }
-
-  async getMySubscriptions() {
-    return this.request('/social/subscriptions');
-  }
-
-  async followMaster(data) {
-    return this.request('/social/follow', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
-  }
-
-  async unfollowMaster(subscriptionId) {
-    return this.request(`/social/unfollow/${subscriptionId}`, {
-      method: 'DELETE',
-    });
-  }
 }
 
 export default new ApiService();

@@ -9,33 +9,45 @@ import { BOTTOM_NAV_PILL_HEIGHT } from '../../../components/vantage/BottomNavPil
 import ApiService from '../../../services/api/ApiService';
 import { showWithdrawKycGate } from '../../../utils/kycGate';
 
-// Mirrors WITHDRAW_NETWORK_OPTIONS on the website. Backend expects
-// network ∈ {tron, bsc, eth} and destination_address (NOT chain/address).
-const NETWORKS = [
-  { network: 'tron', label: 'USDT TRC20', sub: 'Tron',      hint: 'Address starts with T', regex: /^T[1-9A-HJ-NP-Za-km-z]{33}$/ },
-  { network: 'bsc',  label: 'USDT BEP20', sub: 'BSC',       hint: '0x + 40 hex characters', regex: /^0x[a-fA-F0-9]{40}$/ },
-  { network: 'eth',  label: 'USDT ERC20', sub: 'Ethereum',  hint: '0x + 40 hex characters', regex: /^0x[a-fA-F0-9]{40}$/ },
+// Mirrors CRYPTO_ASSETS on the web wallet page. The selection is not a
+// separate backend field: it is prefixed onto the payout string so finance can
+// match the transfer, exactly as the website does.
+const CRYPTO_ASSETS = [
+  { id: 'BTC',      label: 'BTC',  sub: 'Bitcoin' },
+  { id: 'ETH',      label: 'ETH',  sub: 'Ethereum' },
+  { id: 'USDT_ERC', label: 'USDT', sub: 'ERC20' },
+  { id: 'USDC_ERC', label: 'USDC', sub: 'ERC20' },
+  { id: 'TRX',      label: 'TRX',  sub: 'Tron' },
+  { id: 'USDT_TRC', label: 'USDT', sub: 'TRC20' },
+  { id: 'USDC_TRC', label: 'USDC', sub: 'TRC20' },
+  { id: 'USDT_SOL', label: 'USDT', sub: 'SOL' },
+  { id: 'USDC_SOL', label: 'USDC', sub: 'SOL' },
+  { id: 'SOL',      label: 'SOL',  sub: 'Solana' },
+  { id: 'XRP',      label: 'XRP',  sub: 'XRP' },
 ];
 
 export default function WithdrawCrypto() {
   const nav = useNavigation();
-  const [network, setNetwork] = useState('tron');
+  const [asset, setAsset] = useState(CRYPTO_ASSETS[0].id);
   const [address, setAddress] = useState('');
   const [amount, setAmount] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
-  const opt = NETWORKS.find((n) => n.network === network) || NETWORKS[0];
+  const opt = CRYPTO_ASSETS.find((c) => c.id === asset) || CRYPTO_ASSETS[0];
 
   const submit = async () => {
     const addr = address.trim();
     if (!addr || !(Number(amount) > 0)) return;
-    if (!opt.regex.test(addr)) {
-      showToast({ kind: 'warn', message: `Invalid ${opt.label} address. ${opt.hint}` });
-      return;
-    }
     setSubmitting(true);
     try {
-      await ApiService.submitOnchainWithdrawal({ network: opt.network, amount: Number(amount), destination_address: addr });
+      // The same call the website's crypto withdrawal makes: the generic
+      // /wallet/withdraw route with the OxaPay method, the chosen asset
+      // prefixed onto the payout details.
+      await ApiService.submitWithdrawal({
+        amount: Number(amount),
+        method: 'oxapay',
+        bank_details: { oxapay_payout: `[${opt.id}] ${addr}`.trim() },
+      });
       showToast({ kind: 'success', message: 'Withdrawal submitted' });
       nav.goBack();
     } catch (e) {
@@ -61,19 +73,20 @@ export default function WithdrawCrypto() {
         <View style={{ width: 40 }} />
       </View>
       <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: BOTTOM_NAV_PILL_HEIGHT + space.huge }}>
-        <Text style={styles.label}>Network</Text>
+        <Text style={styles.label}>Asset</Text>
         <View style={styles.chainRow}>
-          {NETWORKS.map((c) => (
-            <Pressable key={c.network} onPress={() => setNetwork(c.network)} style={[styles.chainChip, network === c.network && styles.chainChipActive]}>
-              <Text style={[styles.chainTxt, network === c.network && { color: vantage.textPrimary, fontWeight: weights.bold }]}>{c.label.replace('USDT ', '')}</Text>
+          {CRYPTO_ASSETS.map((c) => (
+            <Pressable key={c.id} onPress={() => setAsset(c.id)} style={[styles.chainChip, asset === c.id && styles.chainChipActive]}>
+              <Text style={[styles.chainTxt, asset === c.id && { color: vantage.textPrimary, fontWeight: weights.bold }]}>{c.label}</Text>
+              <Text style={styles.chainSub}>{c.sub}</Text>
             </Pressable>
           ))}
         </View>
 
-        <Text style={[styles.label, { marginTop: space.md }]}>Destination address</Text>
-        <TextInput value={address} onChangeText={setAddress} placeholder={opt.hint} placeholderTextColor={vantage.textMuted} style={styles.input} autoCapitalize="none" autoCorrect={false} />
+        <Text style={[styles.label, { marginTop: space.md }]}>Wallet address / payout details</Text>
+        <TextInput value={address} onChangeText={setAddress} placeholder={`Your ${opt.label} (${opt.sub}) address`} placeholderTextColor={vantage.textMuted} style={styles.input} autoCapitalize="none" autoCorrect={false} />
 
-        <Text style={[styles.label, { marginTop: space.md }]}>Amount (USDT)</Text>
+        <Text style={[styles.label, { marginTop: space.md }]}>Amount (USD)</Text>
         <TextInput value={amount} onChangeText={setAmount} keyboardType="decimal-pad" placeholder="0.00" placeholderTextColor={vantage.textMuted} style={styles.input} />
 
         <Text style={styles.warn}>Triple-check the address. Crypto withdrawals are irreversible.</Text>
@@ -88,10 +101,11 @@ const styles = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: space.sm, paddingTop: space.sm, paddingBottom: space.xs },
   title: { flex: 1, color: vantage.textPrimary, fontFamily, fontSize: sizes.h2, fontWeight: weights.heavy, textAlign: 'center' },
   label: { color: vantage.textSecondary, fontFamily, fontSize: sizes.label, marginBottom: space.sm },
-  chainRow: { flexDirection: 'row', gap: space.sm },
-  chainChip: { flex: 1, paddingVertical: space.sm, backgroundColor: vantage.bgElevated, borderRadius: radius.pill, borderWidth: 1, borderColor: vantage.border, alignItems: 'center' },
+  chainRow: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
+  chainChip: { minWidth: 88, flexGrow: 1, paddingVertical: space.sm, paddingHorizontal: space.sm, backgroundColor: vantage.bgElevated, borderRadius: radius.md, borderWidth: 1, borderColor: vantage.border, alignItems: 'center' },
   chainChipActive: { backgroundColor: vantage.bgRaised, borderColor: vantage.accent },
   chainTxt: { color: vantage.textMuted, fontFamily, fontSize: sizes.label },
+  chainSub: { color: vantage.textMuted, fontFamily, fontSize: sizes.micro, marginTop: 2 },
   input: { backgroundColor: vantage.bgElevated, borderRadius: radius.md, paddingHorizontal: space.md, paddingVertical: space.md, color: vantage.textPrimary, fontFamily, fontSize: sizes.body },
   warn: { color: vantage.down, fontFamily, fontSize: sizes.label, marginTop: space.md, textAlign: 'center' },
 });
