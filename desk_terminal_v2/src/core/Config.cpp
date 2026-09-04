@@ -16,16 +16,16 @@ QString Config::filePath() {
 
 // NO legacy config migration — deliberately.
 //
-// This terminal was forked from the Bull4x → SwissCresta build, which did carry
+// This terminal was forked from an earlier white-label build, which did carry
 // its config forward on each rename because those were renames of the same
 // broker: the same account, the same backend, only the host moved. Proline Markets is a
-// *different platform*. A SwissCresta token or API key authenticates nothing
+// *different platform*. A token or API key from that build authenticates nothing
 // here, and adopting one would also drag its endpoints in, pointing this build
 // at another broker's API. So a Proline Markets install starts with a clean config and
 // a real sign-in.
 //
-// For the same reason nothing deletes those files either: the SwissCresta
-// terminal may still be installed on this machine and its config is its own.
+// For the same reason nothing deletes those files either: the terminal it was
+// forked from may still be installed on this machine and its config is its own.
 
 Config Config::load() {
     Config c;

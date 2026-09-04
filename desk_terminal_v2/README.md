@@ -85,10 +85,11 @@ does not upgrade WebSocket connections. For a local backend, point both at your
 local gateway instead. Credentials are saved to
 `%APPDATA%\Proline Markets\Proline Markets Terminal\config.json`.
 
-> This build was forked from the SwissCresta terminal and shares no identity
-> with it: different config path, different installer AppId, and **no** config
-> migration. A SwissCresta sign-in is not carried over — that account does not
-> exist on Proline Markets's backend. Both apps can be installed side by side.
+> This build was forked from an earlier white-label terminal and shares no
+> identity with it: different config path, different installer AppId, and **no**
+> config migration. A sign-in from that build is not carried over — the account
+> does not exist on the Proline Markets backend. Both apps can be installed side
+> by side.
 
 ## ⚠️ Smart App Control must be off to run
 

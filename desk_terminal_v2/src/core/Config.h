@@ -80,7 +80,7 @@ public:
     static Config  load();       // load from disk (defaults if missing)
     bool           save() const; // write to disk; returns success
 
-    // There is deliberately NO migration from the Bull4x / SwissCresta builds
+    // There is deliberately NO migration from the earlier white-label builds
     // this terminal was forked from — see the note in Config.cpp before adding
     // one back.
 };

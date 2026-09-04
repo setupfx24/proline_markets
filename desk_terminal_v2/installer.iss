@@ -9,11 +9,11 @@
 #define BuildDir SourcePath + "build-msvc"
 
 [Setup]
-; A FRESH AppId, unlike the Bull4x → SwissCresta renames this build was forked
-; from. Those were renames of one product, so they kept the original AppId to
+; A FRESH AppId, unlike the white-label renames this build was forked from.
+; Those were renames of one product, so they kept the original AppId to
 ; upgrade in place. Proline Markets is a different platform: reusing that AppId would
-; make this installer overwrite an existing SwissCresta install and take over
-; its Apps & features entry. Once published, do not change it again — that is
+; make this installer overwrite that earlier install and take over its Apps &
+; features entry. Once published, do not change it again — that is
 ; what lets a later version upgrade this one.
 AppId={{8CCDEF69-830D-4AAA-A9D0-4CD017B9C7B6}
 AppName={#MyApp}
