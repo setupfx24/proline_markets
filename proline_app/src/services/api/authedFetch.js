@@ -11,6 +11,14 @@ export function registerAuthFailureHandler(handler) {
   authFailureHandler = handler;
 }
 
+// Fire the handler from anywhere a session is found to be unusable — not just
+// from refreshAccessToken below. ApiService calls this when a request is STILL
+// 401 after a refresh attempt, so the user lands on the login screen instead of
+// reading the gateway's raw "Token expired" on a dead screen.
+export function notifyAuthFailure() {
+  try { authFailureHandler?.(); } catch (_) {}
+}
+
 async function clearStoredAuth() {
   await SecureStore.deleteItemAsync('token').catch(() => {});
   await SecureStore.deleteItemAsync('refreshToken').catch(() => {});

@@ -49,10 +49,19 @@ class ErrorBoundary extends Component {
 
   render() {
     if (this.state.hasError) {
+      const err = this.state.error;
       return (
         <View style={styles.errorContainer}>
           <Text style={styles.errorText}>Something went wrong</Text>
           <Text style={styles.errorSubtext}>Please restart the app</Text>
+          {/* In development show WHAT broke. A bare "something went wrong" is
+              indistinguishable from a hang and gives nothing to fix; release
+              builds still show only the calm message above. */}
+          {__DEV__ ? (
+            <Text style={styles.errorDetail} selectable>
+              {String(err?.message || err || 'unknown error')}
+            </Text>
+          ) : null}
         </View>
       );
     }
@@ -202,5 +211,11 @@ const styles = StyleSheet.create({
   errorSubtext: {
     color: vantage.textMuted,
     fontSize: 14,
+  },
+  errorDetail: {
+    color: vantage.down,
+    fontSize: 12,
+    marginTop: 16,
+    textAlign: 'center',
   },
 });

@@ -1,6 +1,6 @@
 import { API_URL } from '../../constants';
 import * as SecureStore from 'expo-secure-store';
-import { refreshAccessToken } from './authedFetch';
+import { refreshAccessToken, notifyAuthFailure } from './authedFetch';
 import { toMessage } from '../../utils/errorMessage';
 import logger from '../../utils/logger';
 
@@ -42,6 +42,18 @@ class ApiService {
         const newToken = await refreshAccessToken();
         if (newToken) {
           ({ response, data } = await this._attempt(endpoint, options, newToken));
+        }
+        // Still unauthorised after the retry (or the refresh could not run):
+        // the session is unusable. Surfacing the gateway's raw wording put
+        // "Token expired" on the screen as if it were a feature error and left
+        // the user on a dead screen, so hand it to the auth-failure handler —
+        // which drops in-memory auth and lands them on the login screen.
+        if (response.status === 401 || response.status === 403) {
+          notifyAuthFailure();
+          const err = new Error('Your session has expired. Please sign in again.');
+          err.status = response.status;
+          err.isAuthExpiry = true;
+          throw err;
         }
       }
 
