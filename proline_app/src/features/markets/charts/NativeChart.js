@@ -4,7 +4,7 @@ import { WebView } from 'react-native-webview';
 import * as SecureStore from 'expo-secure-store';
 import Constants from 'expo-constants';
 
-import { API_URL, CHART_URL } from '../../../constants';
+import { API_URL } from '../../../constants';
 import { vantage, space, sizes, weights, fontFamily, radius } from '../../../theme/vantageTheme';
 import { getInstruments } from '../../../utils/instrumentsCache';
 import logger from '../../../utils/logger';
@@ -14,8 +14,8 @@ import logger from '../../../utils/logger';
  * bundled INSIDE the APK (android_asset/webchart) and rendered here. The
  * WebView makes NO network calls of its own; this RN host does every fetch
  * with the user's token (so there are no CORS issues) and feeds the chart over
- * a small bridge. Independent of the web /chart — nothing is loaded from
- * trade.prolinemarket.com.
+ * a small bridge. Completely independent of the trader web app: nothing here
+ * is loaded from it, so the chart works whether or not the website is up.
  *
  * Bridge:
  *   WebView → RN : {type:'getBars'|'resolveSymbol'|'ready'|'bridgeReady', ...}
@@ -62,14 +62,13 @@ function resSeconds(r) { return RES_SECONDS[r] || 300; }
 
 export default function NativeChart({ symbol = 'EURUSD', interval = '60', theme, accountId, onDrag, refreshTick, onClosePosition }) {
   const webRef = useRef(null);
-  // The bundled chart lives in android_asset, which only exists in a real
-  // build — in Expo Go (and if the asset ever fails to ship) the WebView
-  // renders its own raw "ERR_FILE_NOT_FOUND" browser error page, which is what
-  // a user/client actually sees. Degrade in stages instead:
-  //   0 = bundled chart · 1 = hosted chart · 2 = branded placeholder
-  // Never leave the WebView showing its own error page.
-  const [stage, setStage] = useState(0);
-  const remoteFallback = stage === 1;
+  // The app's chart is entirely its own: assets/webchart/ (the charting
+  // library + our chart page) ships inside the build and is loaded from there.
+  // NOTHING is fetched from the trader web app — there used to be a fallback to
+  // trade.prolinemarket.com/app-chart, and it is gone: the app must not depend
+  // on the website being deployed, and that host does not even serve a chart.
+  // On failure we show our own branded panel, never the WebView's raw error.
+  const [failed, setFailed] = useState(false);
   const tokenRef = useRef('');
   const instrRef = useRef([]);
   const readyRef = useRef(false);
@@ -192,6 +191,12 @@ export default function NativeChart({ symbol = 'EURUSD', interval = '60', theme,
     try { m = JSON.parse(evt.nativeEvent.data); } catch (e) { return; }
     if (!m || !m.type) return;
 
+    // The chart page reports its own boot progress and any uncaught error.
+    // Both used to be dropped on the floor here, which is why a chart stuck on
+    // its loading spinner gave nothing to go on.
+    if (m.type === 'stage') { if (__DEV__) logger.log('[chart]', m.stage); return; }
+    if (m.type === 'jserror') { logger.error('[chart] page error:', m.message); return; }
+
     if (m.type === 'bridgeReady' || m.type === 'ready') {
       if (m.type === 'ready') {
         readyRef.current = true;
@@ -310,32 +315,28 @@ export default function NativeChart({ symbol = 'EURUSD', interval = '60', theme,
   if (bootRef.current === null) {
     bootRef.current = { symbol: String(symbol).toUpperCase(), interval: String(interval) };
   }
-  // On the local page the boot symbol is fixed and later switches go through
-  // the bridge. The hosted fallback has no bridge, so it has to carry the LIVE
-  // symbol/interval in its URL — that reloads the page on each switch, which is
-  // the trade-off for having a chart at all.
-  const q = remoteFallback
-    ? { symbol: String(symbol).toUpperCase(), interval: String(interval) }
-    : bootRef.current;
-  const chartUri = `${remoteFallback ? CHART_URL : LOCAL_HTML}?symbol=${encodeURIComponent(q.symbol)}`
+  // The boot symbol is fixed; later switches go through the live
+  // window.SC.setSymbol()/setInterval() bridge rather than reloading the page.
+  const q = bootRef.current;
+  const chartUri = `${LOCAL_HTML}?symbol=${encodeURIComponent(q.symbol)}`
     + `&interval=${encodeURIComponent(q.interval)}`
     + `&theme=${dark ? 'dark' : 'light'}`
     + `&digits=${resolveSymbolInfo(q.symbol).digits}`;
 
-  // Calm branded panel used both as the final stage and as the WebView's own
+  // Calm branded panel, used both when the chart fails and as the WebView's own
   // error renderer. Trading and live prices are untouched, so the copy says so
   // rather than implying the whole screen is broken.
   const Unavailable = () => (
     <View style={[styles.wrap, styles.fallback]}>
       <Text style={styles.fallbackTitle}>Chart unavailable</Text>
       <Text style={styles.fallbackSub}>Live prices and trading are unaffected.</Text>
-      <Pressable onPress={() => setStage(0)} style={styles.retry} accessibilityRole="button" accessibilityLabel="Retry loading the chart">
+      <Pressable onPress={() => setFailed(false)} style={styles.retry} accessibilityRole="button" accessibilityLabel="Retry loading the chart">
         <Text style={styles.retryTxt}>Retry</Text>
       </Pressable>
     </View>
   );
 
-  if (stage >= 2) return <Unavailable />;
+  if (failed) return <Unavailable />;
 
   return (
     <View style={styles.wrap}>
@@ -353,11 +354,30 @@ export default function NativeChart({ symbol = 'EURUSD', interval = '60', theme,
         // Local mode is file://-only in production. In dev the same page comes
         // from the dev server, so that origin has to be allowed too; the hosted
         // fallback adds the trader-web origin and nothing else.
+        // blob:/data: are listed too — the charting library creates its workers
+        // and iframes as blob: URLs (see onShouldStartLoadWithRequest below).
+        // In dev the page is served by Metro, so that origin is allowed as well;
+        // in production it is file:// only.
         originWhitelist={
-          remoteFallback
-            ? ['file://*', `${CHART_URL.replace(/^(https?:\/\/[^/]+).*$/, '$1')}/*`]
-            : (__DEV__ && DEV_HOST ? ['file://*', 'http://*', 'https://*'] : ['file://*'])
+          __DEV__ && DEV_ORIGIN
+            ? ['file://*', 'blob:*', 'data:*', 'http://*', 'https://*']
+            : ['file://*', 'blob:*', 'data:*']
         }
+        // The charting library builds its workers/iframes as blob: URLs. Those
+        // are same-document loads, but react-native-webview's default handler
+        // measures every navigation against originWhitelist, does not match
+        // blob:, and hands the URL to Linking.canOpenURL instead — which fails
+        // with "Can't open url: blob:…" and silently blocks it. The library
+        // then never initialises: no bundle requests, no error, and a chart
+        // that spins forever. Allow the schemes the page legitimately loads
+        // itself; anything else still falls through to the default handler.
+        onShouldStartLoadWithRequest={(req) => {
+          const u = String(req?.url || '');
+          if (/^(blob:|data:|about:|file:)/.test(u)) return true;
+          if (DEV_ORIGIN && u.startsWith(DEV_ORIGIN)) return true;
+          // Keep the invariant: the chart page itself must not navigate away.
+          return u === chartUri || u.startsWith('file://');
+        }}
         style={styles.web}
         javaScriptEnabled
         domStorageEnabled
@@ -372,8 +392,8 @@ export default function NativeChart({ symbol = 'EURUSD', interval = '60', theme,
         onMessage={onMessage}
         onError={(e) => {
           const ne = e?.nativeEvent;
-          logger.log('[CHART] failed at stage', stage, '|', ne?.description, '|', ne?.url);
-          setStage((s) => (s < 2 ? s + 1 : s));
+          logger.error('[chart] load failed:', ne?.description, '|', ne?.url);
+          setFailed(true);
         }}
         startInLoadingState
         renderLoading={() => (
@@ -382,7 +402,7 @@ export default function NativeChart({ symbol = 'EURUSD', interval = '60', theme,
         // Without this the WebView paints Android's own "Error loading page /
         // net::ERR_FILE_NOT_FOUND" chrome, which is what the user actually saw.
         // renderError replaces that surface entirely, so the raw browser error
-        // can never reach the screen no matter which stage failed.
+        // can never reach the screen no matter what failed.
         renderError={() => <Unavailable />}
       />
     </View>

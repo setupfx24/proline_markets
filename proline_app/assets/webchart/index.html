@@ -37,9 +37,10 @@
     var RN = window.ReactNativeWebView;
     function post(obj) { try { RN && RN.postMessage(JSON.stringify(obj)); } catch (e) {} }
 
-    // Diagnostic stage readout — disabled in production (kept as a no-op so the
-    // stage() calls below don't need removing; re-enable to debug loading).
-    function stage(s) { /* no-op */ }
+    // Boot progress, reported to RN so a chart that never finishes loading can
+    // be diagnosed from the Metro log instead of just spinning forever. The
+    // host decides whether to surface it (it only logs in __DEV__).
+    function stage(s) { post({ type: 'stage', stage: String(s) }); }
     window.onerror = function (m) { try { post({ type: 'jserror', message: String(m).slice(0, 200) }); } catch (e) {} };
 
     // --- config injected by RN before the chart boots -----------------
@@ -423,15 +424,51 @@
         locale: 'en',
         autosize: true,
         theme: dark ? 'Dark' : 'Light',
-        timezone: 'Etc/UTC',
+        // Everything from here down mirrors the web terminal's widget config
+        // (frontend/trader/src/components/charts/ChartingLibraryChart.tsx) so
+        // the chart a trader sees in the app is the chart they see on the web.
+        timezone: 'Asia/Kolkata',
         custom_css_url: '',
-        disabled_features: ['use_localstorage_for_settings', 'header_symbol_search', 'header_compare', 'symbol_search_hot_key'],
-        enabled_features: ['hide_left_toolbar_by_default'],
-        overrides: {
-          'paneProperties.background': dark ? '#0b0e11' : '#ffffff',
-          'paneProperties.backgroundType': 'solid',
+        // header_compare / symbol_search_hot_key are app-only: the app switches
+        // symbol from its own instrument list, not from inside the chart.
+        // create_volume_indicator_by_default matches the web — the feed carries
+        // no traded volume, so the default study only drew a tick counter.
+        disabled_features: [
+          'use_localstorage_for_settings',
+          'header_symbol_search',
+          'header_compare',
+          'symbol_search_hot_key',
+          'trading_account_manager',
+          'create_volume_indicator_by_default',
+        ],
+        // The drawing toolbar is shown, as on the web. It used to be collapsed
+        // behind hide_left_toolbar_by_default.
+        enabled_features: [],
+        // The web terminal's pinned timeframe strip (client 2026-07-13):
+        // 3m/10m/45m/2h/3h + W/M on the toolbar, 3M/6M/12M in the menu.
+        favorites: {
+          intervals: ['1', '3', '5', '10', '15', '30', '45', '60', '120', '180', '240', '1D', '1W', '1M'],
         },
-        loading_screen: { backgroundColor: dark ? '#0b0e11' : '#ffffff' },
+        overrides: dark ? {
+          'paneProperties.background': '#0c0e12',
+          'paneProperties.backgroundType': 'solid',
+          'paneProperties.vertGridProperties.color': '#1c1f26',
+          'paneProperties.horzGridProperties.color': '#1c1f26',
+          'scalesProperties.textColor': '#b2b5be',
+          'scalesProperties.lineColor': '#2a2e39',
+          'symbolWatermarkProperties.transparency': 84,
+          'symbolWatermarkProperties.color': 'rgba(200,200,200,0.10)',
+        } : {
+          'paneProperties.background': '#ffffff',
+          'paneProperties.backgroundType': 'solid',
+          'paneProperties.vertGridProperties.color': '#ececec',
+          'paneProperties.horzGridProperties.color': '#ececec',
+          'scalesProperties.textColor': '#131722',
+          'scalesProperties.lineColor': '#e0e3eb',
+          'symbolWatermarkProperties.transparency': 84,
+          'symbolWatermarkProperties.color': 'rgba(40,40,40,0.10)',
+        },
+        loading_screen: { backgroundColor: dark ? '#0c0e12' : '#ffffff' },
       });
       stage('4 widget created, waiting onChartReady');
       widget.onChartReady(function () {

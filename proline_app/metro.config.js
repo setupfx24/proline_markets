@@ -2,6 +2,7 @@
 const { getDefaultConfig } = require('expo/metro-config');
 const fs = require('fs');
 const path = require('path');
+const zlib = require('zlib');
 
 const config = getDefaultConfig(__dirname);
 
@@ -40,6 +41,10 @@ config.server = {
     if (!req.url || !req.url.startsWith('/webchart/')) return middleware(req, res, next);
 
     const rel = decodeURIComponent(req.url.split('?')[0].replace(/^\/webchart\//, ''));
+    const __t0 = Date.now();
+    res.on('finish', () => {
+      console.log(`[webchart] ${res.statusCode} ${rel || 'index.html'} (${Date.now() - __t0}ms)`);
+    });
     // Contain the path inside WEBCHART_DIR — a "../" in the URL must not be
     // able to read arbitrary files off the dev machine.
     const target = path.resolve(WEBCHART_DIR, rel || 'index.html');
@@ -52,10 +57,33 @@ config.server = {
         res.writeHead(404);
         return res.end('Not found');
       }
-      res.writeHead(200, {
-        'Content-Type': MIME[path.extname(target).toLowerCase()] || 'application/octet-stream',
+      const type = MIME[path.extname(target).toLowerCase()] || 'application/octet-stream';
+      const headers = {
+        'Content-Type': type,
         'Access-Control-Allow-Origin': '*',
-      });
+        // Revalidate every time. A long max-age was tried and had to be undone:
+        // a slow tunnel session left PARTIAL responses cached, and the charting
+        // library then silently failed to initialise on every later load with
+        // no request and no error to show for it. Correctness first — the
+        // transfer cost is a dev-only concern, and on LAN it is milliseconds.
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+      };
+      // Text assets compress ~4x, and the tunnel — not the disk — is the
+      // bottleneck here, so spending CPU to send fewer bytes is a large win.
+      const compressible = /^(text\/|application\/(javascript|json))/.test(type);
+      const accepts = String(req.headers['accept-encoding'] || '').includes('gzip');
+      if (compressible && accepts) {
+        zlib.gzip(buf, (gzErr, gz) => {
+          if (gzErr) {
+            res.writeHead(200, headers);
+            return res.end(buf);
+          }
+          res.writeHead(200, { ...headers, 'Content-Encoding': 'gzip' });
+          res.end(gz);
+        });
+        return;
+      }
+      res.writeHead(200, headers);
       res.end(buf);
     });
   },
