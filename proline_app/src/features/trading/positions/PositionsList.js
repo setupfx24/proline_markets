@@ -800,6 +800,57 @@ function SlTpSheet({ position, onClose, onSaved }) {
   );
 }
 
+// Where a trade came from, shown as a badge exactly as the web terminal does.
+// Backend tags: self_trade = placed by hand, copy_trade = mirrored from a
+// master, algo_trade = placed by an external bot through the algo API. Older
+// rows carry no trade_type, so fall back to the account prefix — CF/IF is an
+// investor sub-account, i.e. a MAM mirror.
+function tradeSource(tradeType, accountNumber) {
+  const t = String(tradeType || '').toLowerCase();
+  if (t === 'algo_trade' || t === 'algo') {
+    return { label: 'Algo', color: vantage.accent, bg: vantage.accentMuted };
+  }
+  const acct = String(accountNumber || '').toUpperCase();
+  const looksInvestor = acct.startsWith('CF') || acct.startsWith('IF');
+  if (t === 'copy_trade' || t === 'mam' || t === 'pamm' || looksInvestor) {
+    return { label: 'MAM', color: vantage.textSecondary, bg: vantage.bgRaised };
+  }
+  return { label: 'Real', color: vantage.up, bg: vantage.upMuted };
+}
+
+// Why a trade closed, as the web terminal labels it. A trader needs to see
+// that a stop-loss fired rather than guessing from the price, so SL/TP badges
+// carry the trigger price too.
+function closeReason(reason, triggerPrice) {
+  const r = String(reason || 'manual').toLowerCase();
+  const px = Number.isFinite(Number(triggerPrice)) ? ` @ ${Number(triggerPrice).toFixed(5)}` : '';
+  if (r === 'sl' || r === 'stop_loss') return { label: `SL${px}`, color: vantage.down, bg: vantage.downMuted };
+  if (r === 'tp' || r === 'take_profit') return { label: `TP${px}`, color: vantage.up, bg: vantage.upMuted };
+  if (r === 'admin') return { label: 'Admin', color: vantage.accent, bg: vantage.accentMuted };
+  if (r === 'margin' || r === 'liquidation' || r === 'margin_call') return { label: 'Margin', color: vantage.down, bg: vantage.downMuted };
+  if (r === 'copy_close' || r === 'copy' || r === 'copy_stopped' || r === 'managed_withdrawal') return { label: 'Copy close', color: vantage.textSecondary, bg: vantage.bgRaised };
+  if (r === 'algo_close') return { label: 'Algo', color: vantage.textSecondary, bg: vantage.bgRaised };
+  return { label: 'Manual', color: vantage.textMuted, bg: vantage.bgElevated };
+}
+
+function CloseReasonBadge({ reason, closePrice }) {
+  const c = closeReason(reason, closePrice);
+  return (
+    <View style={[styles.srcBadge, { backgroundColor: c.bg, borderColor: c.color }]}>
+      <Text style={[styles.srcBadgeTxt, { color: c.color }]}>{c.label}</Text>
+    </View>
+  );
+}
+
+function SourceBadge({ tradeType, accountNumber }) {
+  const s = tradeSource(tradeType, accountNumber);
+  return (
+    <View style={[styles.srcBadge, { backgroundColor: s.bg, borderColor: s.color }]}>
+      <Text style={[styles.srcBadgeTxt, { color: s.color }]}>{s.label}</Text>
+    </View>
+  );
+}
+
 function PositionRow({ position, onClose, onSetSlTp }) {
   const nav = useNavigation();
   // Tapping the card body opens that instrument's chart (cross-tab into the
@@ -831,7 +882,10 @@ function PositionRow({ position, onClose, onSetSlTp }) {
       <Pressable onPress={openChart} accessibilityRole="button" accessibilityLabel={`Open ${position.symbol} chart`}>
       <View style={styles.cardRow}>
         <View style={{ flex: 1 }}>
-          <Text style={styles.sym}>{position.symbol}</Text>
+          <View style={styles.symRow}>
+            <Text style={styles.sym}>{position.symbol}</Text>
+            <SourceBadge tradeType={position.trade_type} accountNumber={position.account_number} />
+          </View>
           <Text style={[styles.side, { color: side === 'buy' ? vantage.up : vantage.down, fontWeight: weights.bold }]}>
             {side.toUpperCase()} {lots} @ {open ? open.toFixed(5) : '—'}
           </Text>
@@ -903,7 +957,11 @@ function HistoryRow({ trade }) {
     <Card style={styles.card}>
       <View style={styles.cardRow}>
         <View style={{ flex: 1 }}>
-          <Text style={styles.sym}>{trade.symbol}</Text>
+          <View style={styles.symRow}>
+            <Text style={styles.sym}>{trade.symbol}</Text>
+            <SourceBadge tradeType={trade.trade_type} accountNumber={trade.account_number} />
+            <CloseReasonBadge reason={trade.close_reason} closePrice={trade.close_price} />
+          </View>
           <Text style={[styles.side, { color: side === 'buy' ? vantage.up : vantage.down }]}>
             {side.toUpperCase()} {lots} @ {open ? open.toFixed(5) : '—'}
           </Text>
@@ -1027,6 +1085,9 @@ const styles = StyleSheet.create({
   },
   card: { marginBottom: space.sm },
   cardRow: { flexDirection: 'row', alignItems: 'center', gap: space.md },
+  symRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  srcBadge: { paddingHorizontal: space.sm, paddingVertical: 1, borderRadius: radius.sm, borderWidth: 1 },
+  srcBadgeTxt: { fontFamily, fontSize: sizes.micro, fontWeight: weights.bold, letterSpacing: 0.4 },
   sym: { color: vantage.textPrimary, fontFamily, fontSize: sizes.h3, fontWeight: weights.bold },
   side: { fontFamily, fontSize: sizes.label, fontWeight: weights.semibold, marginTop: 2 },
   plLabel: { color: vantage.textMuted, fontFamily, fontSize: sizes.micro },

@@ -248,6 +248,29 @@ class ApiService {
     });
   }
 
+  // Algo Connector — API keys for trading the account from an external bot.
+  // Mirrors the website's /algo-connector page: one key pair per trading
+  // account, generated once and revocable.
+  async getAlgoAccounts() {
+    return this.request('/algo/accounts');
+  }
+
+  // Generating REVOKES the account's previous key — the secret is returned
+  // exactly once here and is never retrievable again.
+  async generateAlgoKey(accountId) {
+    return this.request('/algo/generate', {
+      method: 'POST',
+      body: JSON.stringify({ account_id: accountId }),
+    });
+  }
+
+  async revokeAlgoKey(keyId) {
+    return this.request('/algo/revoke', {
+      method: 'POST',
+      body: JSON.stringify({ key_id: keyId }),
+    });
+  }
+
   // Business/IB APIs
   async getBusinessStatus() {
     return this.request('/business/status');

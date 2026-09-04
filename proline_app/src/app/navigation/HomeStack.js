@@ -13,6 +13,7 @@ import IBScreen from '../../features/profile/screens/IBScreen';
 import BusinessScreen from '../../features/profile/screens/BusinessScreen';
 import PammScreen from '../../features/trading/screens/PammScreen';
 import AcademyScreen from '../../features/profile/screens/AcademyScreen';
+import AlgoConnectorScreen from '../../features/profile/screens/AlgoConnectorScreen';
 import RiskCalculatorScreen from '../../features/markets/screens/RiskCalculatorScreen';
 import EconomicCalendarScreen from '../../features/markets/screens/EconomicCalendarScreen';
 import SupportScreen from '../../features/profile/screens/SupportScreen';
@@ -34,6 +35,7 @@ export default function HomeStack() {
       <Stack.Screen name="Business" component={BusinessScreen} />
       <Stack.Screen name="Pamm" component={PammScreen} />
       <Stack.Screen name="Academy" component={AcademyScreen} />
+      <Stack.Screen name="AlgoConnector" component={AlgoConnectorScreen} />
       <Stack.Screen name="RiskCalculator" component={RiskCalculatorScreen} />
       <Stack.Screen name="EconomicCalendar" component={EconomicCalendarScreen} />
       <Stack.Screen name="Support" component={SupportScreen} />
