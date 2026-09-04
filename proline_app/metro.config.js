@@ -35,10 +35,54 @@ const MIME = {
   '.map': 'application/json; charset=utf-8',
 };
 
+// Metro does not compress its own responses. The dev bundle is ~15MB, and over
+// an ngrok tunnel (~50KB/s) that is a five-minute wait sitting at "Bundling
+// 99%" — the bundle was built long ago, it is still being transferred.
+//
+// Gzip is applied as a STREAM, not by buffering: an earlier buffering attempt
+// silently truncated the body (15MB in, 2.3MB out) because it did not capture
+// everything Metro wrote. Piping through zlib preserves the bytes exactly.
+// Only whole-bundle GETs are touched; HMR, the websocket and every other Metro
+// route pass through untouched.
+function gzipBundle(req, res) {
+  if (req.method !== 'GET') return;
+  if (!/\.(bundle|map)(\?|$)/.test(req.url || '')) return;
+  if (!String(req.headers['accept-encoding'] || '').includes('gzip')) return;
+
+  const gz = zlib.createGzip();
+  const rawWrite = res.write.bind(res);
+  const rawEnd = res.end.bind(res);
+  const rawWriteHead = res.writeHead.bind(res);
+  let piping = false;
+
+  res.writeHead = (status, ...rest) => {
+    const hdrs = rest.length && typeof rest[rest.length - 1] === 'object' ? rest[rest.length - 1] : {};
+    hdrs['Content-Encoding'] = 'gzip';
+    // Length changes under compression, and a stale one truncates the client.
+    delete hdrs['Content-Length'];
+    delete hdrs['content-length'];
+    piping = true;
+    gz.on('data', (c) => rawWrite(c));
+    gz.on('end', () => rawEnd());
+    return rawWriteHead(status, hdrs);
+  };
+  res.write = (chunk, enc, cb) => (piping ? gz.write(chunk, enc, cb) : rawWrite(chunk, enc, cb));
+  res.end = (chunk, enc, cb) => {
+    if (!piping) return rawEnd(chunk, enc, cb);
+    if (typeof chunk === 'function') { cb = chunk; chunk = undefined; }
+    if (chunk) gz.write(chunk, enc);
+    gz.end(cb);
+    return res;
+  };
+}
+
 config.server = {
   ...config.server,
   enhanceMiddleware: (middleware) => (req, res, next) => {
-    if (!req.url || !req.url.startsWith('/webchart/')) return middleware(req, res, next);
+    if (!req.url || !req.url.startsWith('/webchart/')) {
+      gzipBundle(req, res);
+      return middleware(req, res, next);
+    }
 
     const rel = decodeURIComponent(req.url.split('?')[0].replace(/^\/webchart\//, ''));
     const __t0 = Date.now();
@@ -52,7 +96,26 @@ config.server = {
       res.writeHead(403);
       return res.end('Forbidden');
     }
-    fs.readFile(target, (err, buf) => {
+    fs.stat(target, (statErr, st) => {
+      if (statErr || !st.isFile()) {
+        res.writeHead(404);
+        return res.end('Not found');
+      }
+      // Validator from size + mtime. Opening the chart pulls ~105 files, so
+      // re-sending all of them every time is what made it feel slow; with a
+      // validator the browser asks and gets a 304 for anything unchanged.
+      //
+      // This is deliberately revalidation rather than a long max-age: a blind
+      // max-age was tried and had to be undone, because a slow tunnel left
+      // PARTIAL responses cached and the library then failed to initialise with
+      // no request and no error to show for it. A validator cannot do that —
+      // the size is part of it, so a truncated copy never matches.
+      const etag = `W/"${st.size.toString(16)}-${st.mtimeMs.toString(16)}"`;
+      if (req.headers['if-none-match'] === etag) {
+        res.writeHead(304, { ETag: etag, 'Cache-Control': 'no-cache' });
+        return res.end();
+      }
+      fs.readFile(target, (err, buf) => {
       if (err) {
         res.writeHead(404);
         return res.end('Not found');
@@ -61,12 +124,10 @@ config.server = {
       const headers = {
         'Content-Type': type,
         'Access-Control-Allow-Origin': '*',
-        // Revalidate every time. A long max-age was tried and had to be undone:
-        // a slow tunnel session left PARTIAL responses cached, and the charting
-        // library then silently failed to initialise on every later load with
-        // no request and no error to show for it. Correctness first — the
-        // transfer cost is a dev-only concern, and on LAN it is milliseconds.
-        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        ETag: etag,
+        // "no-cache" means revalidate, NOT "do not store" — the copy is kept
+        // and re-used the moment the ETag still matches.
+        'Cache-Control': 'no-cache',
       };
       // Text assets compress ~4x, and the tunnel — not the disk — is the
       // bottleneck here, so spending CPU to send fewer bytes is a large win.
@@ -85,6 +146,7 @@ config.server = {
       }
       res.writeHead(200, headers);
       res.end(buf);
+      });
     });
   },
 };
