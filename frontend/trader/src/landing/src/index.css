@@ -138,6 +138,13 @@ html, body, #root {
   color: hsl(var(--foreground));
 }
 html { scroll-behavior: smooth; }
+
+/* Hide the page's own scrollbar — the page still scrolls by wheel, touchpad,
+   keyboard and touch; only the bar is gone, so the dark design runs edge to
+   edge. Scoped to the document scroller: dropdowns and other inner scroll
+   areas keep their scrollbars. */
+html { scrollbar-width: none; }            /* Firefox */
+html::-webkit-scrollbar { display: none; } /* Chrome, Edge, Safari */
 body {
   font-family: var(--font-body);
   font-size: 16px;
