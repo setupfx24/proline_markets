@@ -19,6 +19,7 @@ const APK_DOWNLOAD_HREF = "/proline_apk.apk";
 const DESKTOP_WINDOWS_HREF = "/ProlineMarketsTerminal-Setup.exe";
 import { Button } from "@/components/ui/button";
 import { NAV_ITEMS, HEADER_BUTTONS, BRAND } from "@/lib/forexData";
+import { BrandLogo } from "@/components/BrandLogo";
 
 function isExternal(href) {
   return typeof href === "string" && /^https?:\/\//.test(href);
@@ -271,11 +272,7 @@ export function Navbar() {
           }`}
         >
           <Link to="/" className="flex items-center pl-3 group" aria-label={BRAND.name}>
-            <img
-              src={BRAND.logo}
-              alt={BRAND.name}
-              className="h-9 md:h-10 w-auto object-contain"
-            />
+            <BrandLogo className="h-9 md:h-10 w-auto object-contain" />
           </Link>
 
           <div className="hidden lg:flex items-center gap-1">

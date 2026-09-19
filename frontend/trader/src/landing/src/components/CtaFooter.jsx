@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { ArrowUpRight, MessageCircle, MapPin } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { BlurText } from "@/components/BlurText";
+import { BrandLogo } from "@/components/BrandLogo";
 import {
   CTA,
   COPYRIGHT,
@@ -115,11 +116,7 @@ export function CtaFooter() {
             {/* Brand column */}
             <div className="lg:col-span-2 flex flex-col gap-4">
               <Link to="/" className="flex items-center" aria-label={BRAND.name}>
-                <img
-                  src={BRAND.logo}
-                  alt={BRAND.name}
-                  className="h-12 md:h-14 w-auto object-contain"
-                />
+                <BrandLogo className="h-12 md:h-14 w-auto object-contain" />
               </Link>
               <p className="font-body text-sm text-foreground/65 leading-relaxed max-w-sm">
                 {FOOTER_ABOUT}

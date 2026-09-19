@@ -257,3 +257,10 @@ body {
             mask-image: linear-gradient(to right, transparent, black 8%, black 92%, transparent);
   }
 }
+
+/* Brand logo ink follows the theme (see components/BrandLogo.jsx). The site is
+   dark-first, so the white-ink logo is the default and the dark-ink one only
+   appears under [data-theme="light"]. */
+.brand-logo-on-light { display: none; }
+[data-theme="light"] .brand-logo-on-dark { display: none; }
+[data-theme="light"] .brand-logo-on-light { display: block; }

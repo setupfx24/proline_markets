@@ -1,7 +1,12 @@
 export const BRAND = {
   name: "Proline Markets",
   tagline: "Future of Trading. Trusted Worldwide.",
-  logo: "/prolinemarket%20logo%20landscap%20png.png",
+  // Two inks of the same wordmark. The landing is dark-first, and the old single
+  // logo was the DARK-ink file: its black "P" and "proline" sat on the dark
+  // navbar and footer and disappeared, leaving only the orange "market".
+  // BrandLogo picks the one that contrasts with the active theme.
+  logo: "/prolinemarket-logo-white.png",      // white ink — for dark backgrounds
+  logoOnLight: "/prolinemarket-logo-dark.png", // dark ink — for light backgrounds
   regulated: "Trusted by traders worldwide since 2019",
   founded: "2019",
 };
