@@ -206,6 +206,12 @@ class MarketDataService:
                     if msg and msg.get("type") == "message":
                         logger.info("Config reload signal — refreshing spread cache")
                         await self.spread_cache.reload_if_stale(force=True)
+                        # Push every symbol's last price through the new spread
+                        # now. Otherwise a saved spread only shows on the next
+                        # live tick — up to ~2 min for a quiet symbol, never
+                        # until the stale refresher when the market is closed.
+                        n = await self._republish_last_quotes(only_stale=False)
+                        logger.info("Republished %d quotes with the new spread", n)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -249,17 +255,29 @@ class MarketDataService:
             if not self.running:
                 break
             await self.spread_cache.reload_if_stale(force=False)
-            now = time.monotonic()
-            ts_dt = datetime.now(timezone.utc)
-            ts = ts_dt.strftime("%Y-%m-%dT%H:%M:%S.") + f"{ts_dt.microsecond // 1000:03d}Z"
-            for symbol, mid in list(self._last_mid.items()):
-                if now - self._last_live_mono.get(symbol, 0) < STALE_TICK_AFTER_SEC:
-                    continue
-                try:
-                    bid, ask = self.spread_cache.widen(symbol, mid)
-                    await publish_price(symbol, bid, ask, ts)
-                except Exception as exc:
-                    logger.debug("Stale quote refresh failed for %s: %s", symbol, exc)
+            await self._republish_last_quotes(only_stale=True)
+
+    async def _republish_last_quotes(self, only_stale: bool) -> int:
+        """Re-publish each symbol's last mid widened by the current spread.
+
+        ``only_stale`` limits it to symbols with no live tick for
+        STALE_TICK_AFTER_SEC (the periodic refresher); a spread save passes
+        False so every symbol shows the new spread immediately.
+        """
+        now = time.monotonic()
+        ts_dt = datetime.now(timezone.utc)
+        ts = ts_dt.strftime("%Y-%m-%dT%H:%M:%S.") + f"{ts_dt.microsecond // 1000:03d}Z"
+        n = 0
+        for symbol, mid in list(self._last_mid.items()):
+            if only_stale and now - self._last_live_mono.get(symbol, 0) < STALE_TICK_AFTER_SEC:
+                continue
+            try:
+                bid, ask = self.spread_cache.widen(symbol, mid)
+                await publish_price(symbol, bid, ask, ts)
+                n += 1
+            except Exception as exc:
+                logger.debug("Quote republish failed for %s: %s", symbol, exc)
+        return n
 
     async def _process_ticks(self):
         logger.info("Tick processor started")
