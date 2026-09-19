@@ -8,6 +8,7 @@ import { Lock, Mail, Loader2, AlertCircle, Eye, EyeOff } from 'lucide-react';
 import toast from 'react-hot-toast';
 import ThemeToggle from '@/components/ThemeToggle';
 import { useAuthRehydrated } from '@/hooks/useAuthRehydrated';
+import BrandLogo from '@/components/BrandLogo';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -60,11 +61,9 @@ export default function LoginPage() {
         {/* Branding */}
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center mb-4">
-            <img src="/logo.png" alt="ProlineMarketsFX" className="w-16 h-16 object-contain" />
+            <BrandLogo className="h-10 w-auto" />
           </div>
-          <h1 className="text-xl font-bold text-text-primary">
-            <span>ProlineMarkets</span><span style={{ color: '#00e676' }}>FX</span> Admin
-          </h1>
+          <h1 className="text-xl font-bold text-text-primary">Admin</h1>
           <p className="text-xs text-text-tertiary mt-1">Broker Administration Panel</p>
         </div>
 

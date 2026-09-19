@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { adminApi } from '@/lib/api';
+import BrandLogo from '@/components/BrandLogo';
 import {
   LayoutDashboard, Users, CandlestickChart, Wallet, Landmark,
   Settings, Sliders, BarChart3, Gift, Image, HeadphonesIcon,
@@ -118,13 +119,10 @@ export default function AdminSidebar() {
       {/* Header */}
       <div className="flex items-center h-14 px-3 border-b border-border-primary/40">
         {collapsed ? (
-          <img src="/logo.png" alt="ProlineMarketsFX" className="w-7 h-7 object-contain mx-auto" />
+          <div className="mx-auto"><BrandLogo variant="mark" className="h-6 w-auto" /></div>
         ) : (
           <Link href="/" className="flex items-center gap-2 min-w-0">
-            <img src="/logo.png" alt="ProlineMarketsFX" className="w-7 h-7 object-contain shrink-0" />
-            <span className="font-bold tracking-tight text-sm select-none">
-              <span className="text-text-primary">ProlineMarkets</span><span className="text-[#00e676]">FX</span>
-            </span>
+            <BrandLogo className="h-7 w-auto max-w-[170px]" />
           </Link>
         )}
         <button
