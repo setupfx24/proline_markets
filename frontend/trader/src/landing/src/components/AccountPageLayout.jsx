@@ -5,6 +5,7 @@ import { PageHeader, PageContainer, SectionHeader } from "@/components/PageShell
 import { Button } from "@/components/ui/button";
 import { CtaFooter } from "@/components/CtaFooter";
 import { ACCOUNT_TYPES, EXTERNAL } from "@/lib/forexData";
+import { AccountVisual } from "@/components/AccountVisual";
 
 /**
  * AccountPageLayout — themed page for each Trading account type.
@@ -106,9 +107,7 @@ export function AccountPageLayout({
               </div>
             </motion.div>
 
-            <div className="liquid-glass rounded-2xl flex items-center justify-center min-h-[420px] text-foreground/30 font-body text-sm">
-              [ {imageLabel || acc.name} Image ]
-            </div>
+            <AccountVisual acc={acc} variant="hero" />
           </div>
         </PageContainer>
       </section>
@@ -151,9 +150,7 @@ export function AccountPageLayout({
         <section className="py-20 md:py-28 border-t border-border">
           <PageContainer>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-10 items-center">
-              <div className="liquid-glass rounded-2xl flex items-center justify-center min-h-[320px] text-foreground/30 font-body text-sm">
-                [ Best-for Image ]
-              </div>
+              <AccountVisual acc={acc} variant="hero" />
               <div className="flex flex-col gap-5 items-start">
                 <span className="liquid-glass rounded-full px-4 py-1.5 text-xs text-foreground/80">
                   Best for

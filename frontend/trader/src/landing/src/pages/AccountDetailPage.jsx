@@ -5,6 +5,7 @@ import { PageHeader, PageContainer, SectionHeader } from "@/components/PageShell
 import { Button } from "@/components/ui/button";
 import { CtaFooter } from "@/components/CtaFooter";
 import { ACCOUNT_TYPES, EXTERNAL } from "@/lib/forexData";
+import { AccountVisual } from "@/components/AccountVisual";
 
 export default function AccountDetailPage() {
   const { slug } = useParams();
@@ -77,10 +78,7 @@ export default function AccountDetailPage() {
               </div>
             </motion.div>
 
-            <div className="liquid-glass rounded-2xl flex items-center justify-center min-h-[420px] text-foreground/30 font-body text-sm">
-              {/* Image container left intentionally blank */}
-              [ Image ]
-            </div>
+            <AccountVisual acc={acc} variant="hero" />
           </div>
         </PageContainer>
       </section>

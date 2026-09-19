@@ -4,6 +4,7 @@ import { Check, ArrowUpRight } from "lucide-react";
 import { BlurText } from "@/components/BlurText";
 import { Button } from "@/components/ui/button";
 import { ACCOUNT_TYPES } from "@/lib/forexData";
+import { AccountVisual } from "@/components/AccountVisual";
 
 function AccountCard({ acc, i }) {
   return (
@@ -16,6 +17,8 @@ function AccountCard({ acc, i }) {
         acc.featured ? "liquid-glass-strong ring-2 ring-primary/40" : "liquid-glass"
       }`}
     >
+      <AccountVisual acc={acc} />
+
       {acc.badge && (
         <span className="self-start bg-primary text-primary-foreground rounded-full px-3 py-1 text-[11px] font-semibold tracking-wide uppercase">
           {acc.badge}

@@ -5,6 +5,7 @@ import { PageHeader, PageContainer, SectionHeader } from "@/components/PageShell
 import { Button } from "@/components/ui/button";
 import { CtaFooter } from "@/components/CtaFooter";
 import { ACCOUNT_TYPES, DEPOSIT_METHODS } from "@/lib/forexData";
+import { AccountVisual } from "@/components/AccountVisual";
 
 export default function AccountsPage() {
   return (
@@ -39,6 +40,8 @@ export default function AccountsPage() {
                   acc.featured ? "liquid-glass-strong ring-2 ring-primary/40" : "liquid-glass"
                 }`}
               >
+                <AccountVisual acc={acc} />
+
                 {acc.badge && (
                   <span className="self-start bg-primary text-primary-foreground rounded-full px-3 py-1 text-[11px] font-semibold tracking-wide uppercase">
                     {acc.badge}
