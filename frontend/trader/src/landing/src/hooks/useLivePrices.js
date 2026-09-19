@@ -1,119 +1,147 @@
 import { useEffect, useRef, useState } from "react";
 
 /**
- * Pull real spot FX rates from a free, key-free, CORS-enabled endpoint
- * (open.er-api.com — daily ECB-derived rates) and add a tiny random tick
- * every couple of seconds so the UI feels live.
+ * Live quotes for the ticker and the home pricing table, from the platform's
+ * own price feed — the same bid/ask clients trade on.
  *
- * For instruments the API doesn't cover (crypto, commodities, indices) we
- * keep the seed price provided by the caller and just simulate ticks.
+ * This used to be a simulation: FX came from open.er-api.com (daily ECB
+ * rates, not live), gold/BTC/oil/indices were HARDCODED seeds, and a random
+ * ±0.05% wiggle every 2.2s made them look live. Gold was shown at ~2,318 while
+ * the platform quoted ~4,478, BTC at ~67k against ~80k, and the "change %" was
+ * the difference between two random ticks. A broker's site must not present
+ * invented prices as live, so nothing here is simulated any more:
+ *
+ *   price / sell  = platform bid        buy = platform ask
+ *   change %      = bid vs the previous daily close (from 1D bars)
+ *
+ * Until the first real quote arrives a pair shows "—", and a pair the platform
+ * does not quote at all is dropped rather than filled with a made-up number.
+ * Both endpoints are public and CORS-allow prolinemarket.com.
  */
 
-const FETCH_INTERVAL_MS = 10 * 60 * 1000; // refresh real rates every 10 min
-const TICK_INTERVAL_MS  = 2200;           // visual tick cadence
+const API_BASE = (import.meta.env.VITE_API_BASE || "https://api.prolinemarket.com/api/v1").replace(/\/$/, "");
+const POLL_MS = 4000;
+const DAY_S = 86400;
+
+// Ticker label -> platform symbol. Labels are "EUR/USD"-style for display.
+function symbolFor(pair) {
+  if (pair === "WTI OIL") return "USOIL"; // WTI crude is USOIL on the platform
+  return pair.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+}
 
 function formatPrice(num, pair) {
-  if (pair.includes("JPY"))                       return num.toFixed(3);
-  if (pair === "XAU/USD")                         return num.toFixed(2);
-  if (pair === "BTC/USD")                         return num.toLocaleString("en-US", { maximumFractionDigits: 0 });
-  if (pair === "US30" || pair === "NAS100")       return num.toLocaleString("en-US", { maximumFractionDigits: 0 });
+  if (pair.includes("JPY"))                  return num.toFixed(3);
+  if (pair === "XAU/USD" || pair === "WTI OIL") return num.toFixed(2);
+  if (pair === "BTC/USD" || pair === "US30" || pair === "NAS100") {
+    return num.toLocaleString("en-US", { maximumFractionDigits: 0 });
+  }
   return num.toFixed(5);
 }
 
-function applySpread(price, pair) {
-  // Bid/ask spread (sell vs buy) — varies by asset class
-  const spreadFactor =
-    pair === "BTC/USD"     ? 0.00040 :
-    pair === "XAU/USD"     ? 0.00020 :
-    pair.includes("JPY")   ? 0.00010 :
-    0.00007;
-  const half = price * spreadFactor / 2;
-  return { sell: price - half, buy: price + half };
-}
+const PENDING = { price: "—", sell: "—", buy: "—", change: "0.00", up: true };
 
-function buildQuotes(usdRates) {
-  // usdRates: { EUR: 0.92, JPY: 156.2, GBP: 0.78, ... } — values are USD->X
-  const get = (k) => Number(usdRates?.[k]);
-  const inv = (k) => (get(k) ? 1 / get(k) : null);
-
-  const out = {};
-  if (inv("EUR")) out["EUR/USD"] = inv("EUR");
-  if (get("JPY")) out["USD/JPY"] = get("JPY");
-  if (inv("GBP")) out["GBP/USD"] = inv("GBP");
-  if (get("AUD") && get("CAD")) out["AUD/CAD"] = get("CAD") / get("AUD");
-  if (get("INR")) out["USD/INR"] = get("INR");
-  if (inv("EUR") && get("JPY")) out["EUR/JPY"] = inv("EUR") * get("JPY");
-  if (inv("GBP") && get("JPY")) out["GBP/JPY"] = inv("GBP") * get("JPY");
-  return out;
+// Close of the last COMPLETED daily bar — i.e. before today's (still-forming)
+// bar. Returns null when there is no such bar.
+async function fetchPrevClose(symbol) {
+  const now = Math.floor(Date.now() / 1000);
+  const todayStart = now - (now % DAY_S);
+  const url = `${API_BASE}/instruments/${encodeURIComponent(symbol)}/bars?resolution=1D&from=${now - 7 * DAY_S}&to=${now}`;
+  const res = await fetch(url);
+  if (!res.ok) return null;
+  const data = await res.json();
+  const bars = Array.isArray(data?.bars) ? data.bars : [];
+  const done = bars.filter((b) => Number(b.time) < todayStart);
+  const last = done[done.length - 1];
+  const close = Number(last?.close);
+  return Number.isFinite(close) && close > 0 ? close : null;
 }
 
 export function useLivePrices(initialPairs) {
-  const [pairs, setPairs] = useState(initialPairs);
-  const realQuotesRef = useRef({}); // last known real rates
-  const seedRef = useRef(
-    Object.fromEntries(
-      initialPairs.map((p) => {
-        const num = parseFloat(String(p.price).replace(/,/g, ""));
-        return [p.pair, isNaN(num) ? null : num];
-      })
-    )
-  );
+  const [pairs, setPairs] = useState(() => initialPairs.map((p) => ({ ...p, ...PENDING })));
+  const prevCloseRef = useRef({});   // symbol -> previous daily close
+  const quotedRef = useRef(new Set()); // symbols the platform has actually quoted
+  const firstPollDoneRef = useRef(false);
 
-  // 1) Fetch real FX rates and seed the price book
+  // 1) Previous daily close per symbol, once — the base for "change %".
   useEffect(() => {
     let alive = true;
-
-    async function fetchRates() {
+    initialPairs.forEach(async (p) => {
+      const sym = symbolFor(p.pair);
       try {
-        const res = await fetch("https://open.er-api.com/v6/latest/USD");
-        if (!res.ok) return;
-        const data = await res.json();
-        if (!alive || !data?.rates) return;
-        const quotes = buildQuotes(data.rates);
-        realQuotesRef.current = quotes;
-        // Reset seed prices for the pairs we have real data for
-        Object.entries(quotes).forEach(([pair, price]) => {
-          seedRef.current[pair] = price;
-        });
+        const close = await fetchPrevClose(sym);
+        if (alive && close != null) prevCloseRef.current[sym] = close;
       } catch {
-        // network failure → keep using last seed; tick simulation continues
+        /* no base → change stays 0.00 for this pair */
+      }
+    });
+    return () => { alive = false; };
+    // initialPairs are module constants; running this once is intended.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 2) Poll real quotes. Paused while the tab is hidden, so an open background
+  //    tab does not keep hitting the gateway.
+  useEffect(() => {
+    let alive = true;
+    let timer = null;
+
+    async function poll() {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      try {
+        const res = await fetch(`${API_BASE}/instruments/prices/all`);
+        if (!res.ok) return;
+        const list = await res.json();
+        if (!alive || !Array.isArray(list)) return;
+
+        const book = {};
+        list.forEach((q) => { if (q?.symbol) book[q.symbol] = q; });
+        firstPollDoneRef.current = true;
+
+        setPairs(() =>
+          initialPairs
+            .map((p) => {
+              const sym = symbolFor(p.pair);
+              const q = book[sym];
+              const bid = Number(q?.bid);
+              const ask = Number(q?.ask);
+              if (!Number.isFinite(bid) || bid <= 0) return { ...p, ...PENDING, _sym: sym };
+              quotedRef.current.add(sym);
+
+              const base = prevCloseRef.current[sym];
+              const changePct = base ? ((bid - base) / base) * 100 : 0;
+              const buy = Number.isFinite(ask) && ask > 0 ? ask : bid;
+              return {
+                ...p,
+                _sym: sym,
+                price:  formatPrice(bid, p.pair),
+                sell:   "$" + formatPrice(bid, p.pair),
+                buy:    "$" + formatPrice(buy, p.pair),
+                change: `${changePct >= 0 ? "+" : ""}${changePct.toFixed(2)}`,
+                up:     changePct >= 0,
+                tickAt: Date.now(),
+              };
+            })
+            // After the first real poll, drop pairs the platform has never
+            // quoted (e.g. USD/INR is not offered) instead of showing "—"
+            // forever. A pair that HAS been quoted keeps its row even if it
+            // misses one poll, so the ticker does not flicker.
+            .filter((p) => !firstPollDoneRef.current || quotedRef.current.has(p._sym))
+        );
+      } catch {
+        /* network blip — keep the last real quotes, never invent new ones */
       }
     }
 
-    fetchRates();
-    const id = setInterval(fetchRates, FETCH_INTERVAL_MS);
-    return () => { alive = false; clearInterval(id); };
-  }, []);
-
-  // 2) Simulate live ticks
-  useEffect(() => {
-    const id = setInterval(() => {
-      setPairs((prev) =>
-        prev.map((p) => {
-          const last = seedRef.current[p.pair];
-          if (last == null) return p;
-
-          // Mean-revert wiggle: drift around the seed by ±0.05%
-          const wiggle = last * ((Math.random() - 0.5) * 0.0010);
-          const next = last + wiggle;
-          seedRef.current[p.pair] = next;
-
-          const { sell, buy } = applySpread(next, p.pair);
-          const changePct = ((next - last) / last) * 100;
-          const sign = changePct >= 0 ? "+" : "";
-          return {
-            ...p,
-            price:  formatPrice(next, p.pair),
-            sell:   "$" + formatPrice(sell, p.pair),
-            buy:    "$" + formatPrice(buy, p.pair),
-            change: `${sign}${changePct.toFixed(2)}`,
-            up:     changePct >= 0,
-            tickAt: Date.now(),
-          };
-        })
-      );
-    }, TICK_INTERVAL_MS);
-    return () => clearInterval(id);
+    poll();
+    timer = setInterval(poll, POLL_MS);
+    const onVisible = () => { if (document.visibilityState === "visible") poll(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return pairs;
