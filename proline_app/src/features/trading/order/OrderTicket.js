@@ -12,6 +12,7 @@ import {
 import { vantage, space, sizes, weights, fontFamily, radius } from '../../../theme/vantageTheme';
 import { handleTradeError } from '../../../utils/tradeErrors';
 import ApiService from '../../../services/api/ApiService';
+import useInstrumentCharges, { spreadPips, formatCommission, formatSwap } from '../../../hooks/useInstrumentCharges';
 
 const ORDER_TYPES = ['market', 'limit', 'stop'];
 const ORDER_LABEL = { market: 'Market', limit: 'Limit', stop: 'Stop' };
@@ -38,7 +39,10 @@ export default function OrderTicket({ accountId, account, accountSummary, symbol
 
   const bid = tick?.bid != null ? Number(tick.bid) : null;
   const ask = tick?.ask != null ? Number(tick.ask) : null;
-  const spread = (bid != null && ask != null) ? Math.round((ask - bid) * 100000) : null;
+  // Spread in pips like the website (was (ask-bid)*100000, which read 1000
+  // for a 1-pip XAUUSD spread). Charges refresh live when admin saves.
+  const charges = useInstrumentCharges(symbol);
+  const spread = spreadPips(bid, ask, charges?.pip_size);
   const change = tick?.change_points != null ? Number(tick.change_points) : null;
 
   // Account summary fields arrive as strings — coerce before maths/formatting.
@@ -113,6 +117,13 @@ export default function OrderTicket({ accountId, account, accountSummary, symbol
         onChange={setSide}
         changePoints={change}
       />
+
+      {charges ? (
+        <View style={styles.chargesRow}>
+          <Text style={styles.chargesTxt}>Comm: {formatCommission(charges, Number(volume))}</Text>
+          <Text style={styles.chargesTxt}>{formatSwap(charges)}</Text>
+        </View>
+      ) : null}
 
       {/* Order type dropdown */}
       <View>
@@ -259,6 +270,8 @@ const styles = StyleSheet.create({
   volValue: { color: vantage.textPrimary, fontFamily, fontSize: sizes.body, fontWeight: weights.bold, marginTop: 1 },
   volDivider: { width: StyleSheet.hairlineWidth, height: 28, backgroundColor: vantage.borderStrong, marginHorizontal: space.xs },
   lotsUnit: { flexDirection: 'row', alignItems: 'center', gap: 2, paddingHorizontal: space.sm },
+  chargesRow: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', columnGap: space.md, marginTop: -space.xs },
+  chargesTxt: { color: vantage.textMuted, fontFamily, fontSize: sizes.micro },
   lotsTxt: { color: vantage.textSecondary, fontFamily, fontSize: sizes.body, fontWeight: weights.semibold },
   maxOpen: { color: vantage.textMuted, fontFamily, fontSize: sizes.label, textAlign: 'right' },
   fieldLabel: { color: vantage.textSecondary, fontFamily, fontSize: sizes.label, marginBottom: space.xs },

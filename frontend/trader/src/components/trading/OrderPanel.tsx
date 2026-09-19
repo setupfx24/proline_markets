@@ -13,6 +13,7 @@ import { getDigits } from '@/lib/utils';
 import { getMarketStatus } from '@/lib/marketHours';
 import { wsManager } from '@/lib/ws/wsManager';
 import OrderPanelSymbolPicker from '@/components/trading/OrderPanelSymbolPicker';
+import InstrumentChargesLine from '@/components/trading/InstrumentChargesLine';
 import { useViewOnly } from '@/stores/authStore';
 
 type OrderSide = 'buy' | 'sell';
@@ -70,6 +71,7 @@ export default function OrderPanel() {
 
   const execPrice = tick ? (side === 'buy' ? tick.ask : tick.bid) : 0;
   const lotsNum = parseFloat(lots) || 0;
+
 
   const marginRequired = useMemo(() => {
     if (!execPrice || !activeAccount) return 0;
@@ -401,6 +403,7 @@ export default function OrderPanel() {
                 </span>
              </div>
           )}
+          <InstrumentChargesLine symbol={selectedSymbol} lots={lotsNum} className={isTradingTerminal ? 'text-[9px] mt-1' : 'text-[10px] mt-1.5'} />
 
           {viewOnly ? (
             <div className="mt-3 rounded-lg border border-accent/25 bg-accent/[0.07] px-3 py-2.5 text-center">

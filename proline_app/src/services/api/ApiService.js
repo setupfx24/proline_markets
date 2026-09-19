@@ -484,6 +484,12 @@ class ApiService {
   }
 
   // Instruments APIs
+  // Pip size plus the commission / swap admin set for this symbol, with the
+  // signed-in user's own overrides — same endpoint the website order panel uses.
+  async getTradingInstrument(symbol) {
+    return this.request(`/trading/instruments/${encodeURIComponent(symbol)}`);
+  }
+
   async getInstruments() {
     // Trailing slash to match the website's call exactly (the route is GET
     // /instruments/) — avoids a 307 redirect that can drop auth / alter results.

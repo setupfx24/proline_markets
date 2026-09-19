@@ -94,6 +94,8 @@ async def update_charges(
         new_values={"count": len(body.configs)}, ip_address=ip_address,
     )
     await db.commit()
+    # Terminals refetch commission/swap on this signal (gateway /ws/prices).
+    await publish_instrument_config_reload()
     return {"message": f"{len(body.configs)} charge configs saved"}
 
 
@@ -193,4 +195,6 @@ async def update_swaps(
         new_values={"count": len(body.configs)}, ip_address=ip_address,
     )
     await db.commit()
+    # Terminals refetch commission/swap on this signal (gateway /ws/prices).
+    await publish_instrument_config_reload()
     return {"message": f"{len(body.configs)} swap configs saved"}

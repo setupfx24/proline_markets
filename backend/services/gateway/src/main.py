@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.common.src.config import get_settings
 from packages.common.src.database import get_db, AsyncSessionLocal
-from packages.common.src.redis_client import redis_client, PriceChannel
+from packages.common.src.redis_client import redis_client, PriceChannel, CONFIG_INSTRUMENTS_RELOAD_CHANNEL
 from packages.common.src.kafka_client import close_producer
 from packages.common.src.auth import decode_token
 from packages.common.src.models import TradingAccount
@@ -247,7 +247,9 @@ async def price_stream(websocket: WebSocket, token: str | None = Query(default=N
 
     await websocket.accept()
     pubsub = redis_client.pubsub()
-    await pubsub.subscribe(PriceChannel.PRICE_CHANNEL)
+    # Admin config saves (spread / commission / swap) are announced too, so an
+    # open terminal refetches its charges at once instead of on next load.
+    await pubsub.subscribe(PriceChannel.PRICE_CHANNEL, CONFIG_INSTRUMENTS_RELOAD_CHANNEL)
 
     try:
         ping_interval = 30
@@ -255,7 +257,13 @@ async def price_stream(websocket: WebSocket, token: str | None = Query(default=N
         while True:
             message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=0.1)
             if message and message["type"] == "message":
-                await websocket.send_text(message["data"])
+                channel = message.get("channel")
+                if isinstance(channel, bytes):
+                    channel = channel.decode()
+                if channel == CONFIG_INSTRUMENTS_RELOAD_CHANNEL:
+                    await websocket.send_json({"type": "config_updated"})
+                else:
+                    await websocket.send_text(message["data"])
 
             now = asyncio.get_event_loop().time()
             if now - last_ping >= ping_interval:
@@ -266,7 +274,7 @@ async def price_stream(websocket: WebSocket, token: str | None = Query(default=N
     except WebSocketDisconnect:
         pass
     finally:
-        await pubsub.unsubscribe(PriceChannel.PRICE_CHANNEL)
+        await pubsub.unsubscribe(PriceChannel.PRICE_CHANNEL, CONFIG_INSTRUMENTS_RELOAD_CHANNEL)
         await pubsub.close()
 
 

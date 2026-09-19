@@ -5,6 +5,7 @@ import { useTradingStore } from '@/stores/tradingStore';
 import { clsx } from 'clsx';
 import toast from 'react-hot-toast';
 import { sounds, unlockAudio } from '@/lib/sounds';
+import InstrumentChargesLine from '@/components/trading/InstrumentChargesLine';
 
 interface MobileOrderSheetProps {
   symbol: string;
@@ -183,6 +184,7 @@ export default function MobileOrderSheet({ symbol, onClose, onGoToChart }: Mobil
 
           <div className="text-center">
             <span className="text-[9px] font-bold text-text-tertiary/40 uppercase tracking-[0.2em] -mt-2 block">Spread: {spread.toFixed(1)} pips</span>
+            <InstrumentChargesLine symbol={symbol} lots={lots} className="text-[10px] mt-1" />
           </div>
 
           {/* Market/Pending Switch */}

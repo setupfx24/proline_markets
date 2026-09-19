@@ -10,6 +10,9 @@ class WebSocketService {
     this.maxReconnectAttempts = 12;
     this.reconnectDelay = 3000;
     this.priceListeners = new Set();
+    // Fired when admin saves spread / commission / swap config (gateway sends
+    // {type:'config_updated'} on the price socket).
+    this.configListeners = new Set();
     this.isConnecting = false;
     // Set while WE close a socket on purpose — its onclose must not schedule
     // a reconnect (previously disconnectPriceStream() triggered an immediate
@@ -44,6 +47,10 @@ class WebSocketService {
       this.priceWs.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
+          if (data?.type === 'config_updated') {
+            this.configListeners.forEach((cb) => { try { cb(); } catch (_) {} });
+            return;
+          }
           this.notifyPriceListeners(data);
         } catch (error) {
           logger.error('Error parsing price message:', error);
@@ -86,6 +93,11 @@ class WebSocketService {
   onPriceUpdate(callback) {
     this.priceListeners.add(callback);
     return () => this.priceListeners.delete(callback);
+  }
+
+  onConfigUpdated(callback) {
+    this.configListeners.add(callback);
+    return () => this.configListeners.delete(callback);
   }
 
   notifyPriceListeners(data) {

@@ -7,7 +7,7 @@ from uuid import UUID
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from packages.common.src.models import ChargeConfig, SpreadConfig, Instrument, InstrumentConfig
+from packages.common.src.models import ChargeConfig, SpreadConfig, SwapConfig, Instrument, InstrumentConfig
 
 async def _get_instrument_config_row(
     db: AsyncSession, instrument_id: UUID
@@ -213,6 +213,16 @@ async def resolve_commission(
     every other rule for that user.
     """
     notional = lots * (instrument.contract_size or Decimal("100000")) * fill_price
+    cfg = await resolve_commission_rule(db, instrument, user_id)
+    return _commission_from_config(cfg, lots, notional) if cfg else Decimal("0")
+
+
+async def resolve_commission_rule(
+    db: AsyncSession,
+    instrument: Instrument,
+    user_id: Optional[UUID] = None,
+) -> Optional[ChargeConfig]:
+    """The ChargeConfig row that decides commission (see resolve_commission)."""
 
     if user_id is not None:
         ur = await db.execute(
@@ -227,7 +237,7 @@ async def resolve_commission(
         )
         urow = ur.scalar_one_or_none()
         if urow:
-            return _commission_from_config(urow, lots, notional)
+            return urow
 
         ur2 = await db.execute(
             select(ChargeConfig)
@@ -241,7 +251,7 @@ async def resolve_commission(
         )
         urow2 = ur2.scalar_one_or_none()
         if urow2:
-            return _commission_from_config(urow2, lots, notional)
+            return urow2
 
     for scope, seg_id, inst_id in [
         ("instrument", None, instrument.id),
@@ -265,9 +275,9 @@ async def resolve_commission(
         r = await db.execute(q.limit(1))
         cfg = r.scalar_one_or_none()
         if cfg:
-            return _commission_from_config(cfg, lots, notional)
+            return cfg
 
-    return Decimal("0")
+    return None
 
 
 def _commission_from_config(cfg: ChargeConfig, lots: Decimal, notional: Decimal) -> Decimal:
@@ -280,3 +290,25 @@ def _commission_from_config(cfg: ChargeConfig, lots: Decimal, notional: Decimal)
     if ct in ("commission_percentage", "percentage", "spread_percentage"):
         return notional * (v / Decimal("100"))
     return v * lots
+
+
+async def resolve_swap(db: AsyncSession, instrument: Instrument) -> Optional[SwapConfig]:
+    """The SwapConfig row the risk engine charges at rollover.
+
+    Same order as risk-engine ``_swap_calculator``: instrument, then segment,
+    then default. None means no swap is charged.
+    """
+    for scope, col, val in [
+        ("instrument", SwapConfig.instrument_id, instrument.id),
+        ("segment", SwapConfig.segment_id, instrument.segment_id),
+        ("default", None, None),
+    ]:
+        if scope == "segment" and not val:
+            continue
+        q = select(SwapConfig).where(SwapConfig.scope == scope, SwapConfig.is_enabled == True)
+        if col is not None:
+            q = q.where(col == val)
+        row = (await db.execute(q.limit(1))).scalar_one_or_none()
+        if row:
+            return row
+    return None

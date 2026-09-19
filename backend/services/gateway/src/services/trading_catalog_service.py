@@ -11,6 +11,8 @@ from packages.common.src.models import Instrument, InstrumentConfig, InstrumentS
 from packages.common.src.instrument_pricing import (
     resolve_spread_config,
     resolve_commission,
+    resolve_commission_rule,
+    resolve_swap,
 )
 from packages.common.src.redis_client import redis_client, PriceChannel
 
@@ -69,7 +71,7 @@ async def list_trading_instruments(segment: str | None, db: AsyncSession) -> lis
     return out
 
 
-async def get_trading_instrument(symbol: str, db: AsyncSession) -> dict:
+async def get_trading_instrument(symbol: str, db: AsyncSession, user_id=None) -> dict:
     r = await db.execute(
         select(Instrument)
         .where(Instrument.symbol == symbol.upper(), Instrument.is_active == True)
@@ -84,9 +86,14 @@ async def get_trading_instrument(symbol: str, db: AsyncSession) -> dict:
     if ic and ic.is_enabled is False:
         raise HTTPException(status_code=404, detail="Instrument not available")
 
+    # Same resolvers the order path and the rollover job use, with the
+    # caller's own user overrides, so what the terminal shows is what is
+    # charged.
     sv, st, pimp = await resolve_spread_config(db, inst)
     mid = await _mid_price(inst.symbol)
-    comm = await resolve_commission(db, inst, Decimal("1"), mid)
+    comm = await resolve_commission(db, inst, Decimal("1"), mid, user_id=user_id)
+    rule = await resolve_commission_rule(db, inst, user_id)
+    sw = await resolve_swap(db, inst)
     return {
         "id": str(inst.id),
         "symbol": inst.symbol,
@@ -99,7 +106,11 @@ async def get_trading_instrument(symbol: str, db: AsyncSession) -> dict:
         "contract_size": float(inst.contract_size or 0),
         "spread": {"type": st, "value": float(sv), "price_impact": float(pimp)},
         "commission_preview_per_lot": float(comm),
-        "swap_long": float(ic.swap_long) if ic else None,
-        "swap_short": float(ic.swap_short) if ic else None,
-        "swap_free": bool(ic.swap_free) if ic else False,
+        "commission": (
+            {"type": (rule.charge_type or "").lower(), "value": float(rule.value or 0)} if rule else None
+        ),
+        "swap_long": float(sw.swap_long or 0) if sw else 0.0,
+        "swap_short": float(sw.swap_short or 0) if sw else 0.0,
+        "swap_free": bool(sw.swap_free) if sw else True,
+        "triple_swap_day": (sw.triple_swap_day if sw.triple_swap_day is not None else 2) if sw else None,
     }

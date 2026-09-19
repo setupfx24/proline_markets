@@ -19,6 +19,7 @@ import { vantage, space, sizes, weights, fontFamily, radius } from '../../../the
 import * as SecureStore from 'expo-secure-store';
 import ApiService from '../../../services/api/ApiService';
 import webSocketService from '../../../services/websocket/WebSocketService';
+import useInstrumentCharges, { spreadPips } from '../../../hooks/useInstrumentCharges';
 import NativeChart from '../charts/NativeChart';
 import { describeTradeError } from '../../../utils/tradeErrors';
 import { getInstruments } from '../../../utils/instrumentsCache';
@@ -170,7 +171,8 @@ export default function InstrumentDetailScreen() {
   const ask = tick?.ask != null ? Number(tick.ask) : null;
   const change = tick?.change != null ? Number(tick.change) : null;
   const changePct = tick?.change_pct != null ? Number(tick.change_pct) : null;
-  const spread = bid != null && ask != null ? Math.round((ask - bid) * 100000) : null;
+  const charges = useInstrumentCharges(symbol);
+  const spread = spreadPips(bid, ask, charges?.pip_size);
 
   const ohlc = useMemo(() => {
     if (!bars1D.length) return { open: null, high: null, low: null, close: null };
