@@ -45,9 +45,9 @@ interface EditState {
 }
 
 const CONFIG_LINKS = [
-  { href: '/config/charges', icon: DollarSign, title: 'Charges', desc: 'Per-instrument & per-user rules' },
-  { href: '/config/spreads', icon: ArrowLeftRight, title: 'Spreads', desc: 'Per-instrument & per-user rules' },
-  { href: '/config/swaps', icon: RefreshCw, title: 'Swaps', desc: 'Per-instrument & per-user rules' },
+  { href: '/config/charges', icon: DollarSign, title: 'Charges', desc: 'Default and per-instrument spread (pips)' },
+  { href: '/config/spreads', icon: ArrowLeftRight, title: 'Spreads', desc: 'Default and per-instrument spread (pips)' },
+  { href: '/config/swaps', icon: RefreshCw, title: 'Swaps', desc: 'Default and per-instrument spread (pips)' },
 ];
 
 const SEGMENT_OPTIONS = ['forex', 'indices', 'commodities', 'crypto', 'stocks', 'energies'];

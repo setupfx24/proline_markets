@@ -1,6 +1,6 @@
 """Resolve spread / commission / price impact for order execution (gateway, engines)."""
 
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Optional, Tuple
 from uuid import UUID
 
@@ -155,16 +155,18 @@ def symmetric_quote_from_mid(
     else:
         adj = spread_value * pip_size
     imp = price_impact or Decimal("0")
-    half = (adj + imp) / Decimal("2")
-    bid = mid - half
-    ask = mid + half
     q = Decimal("1") / (Decimal(10) ** max(decimals, 0))
-    bid = bid.quantize(q)
-    ask = ask.quantize(q)
-    if ask < bid:
-        ask = bid + q
-    elif ask == bid and half > 0:
-        ask = bid + q
+    # Round the WIDTH once, then place it around mid. Rounding bid and ask
+    # separately rounded both halves outward whenever mid - half landed on a
+    # half tick (1 pip on XAUUSD, 2 digits: 4378.385 / 4378.395 -> .38 / .40),
+    # so the terminal showed 2.0 pips for an admin spread of 1.
+    width = (adj + imp).quantize(q, rounding=ROUND_HALF_UP)
+    if width <= 0 and (adj + imp) > 0:
+        width = q
+    if width < 0:
+        width = Decimal("0")
+    bid = (mid - width / Decimal("2")).quantize(q, rounding=ROUND_HALF_UP)
+    ask = bid + width
     return bid, ask
 
 
