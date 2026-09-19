@@ -550,6 +550,9 @@ export const TRADING_CONDITIONS = [
 export const SUPPORT_CHANNELS = [
   { icon: "MessageSquare", title: "Live Chat",     body: "Average response under 60 seconds. Available 24/7 in multiple languages.", action: "Start Chat",     href: "https://wa.me/447577347804" },
   { icon: "Phone",         title: "Phone Support", body: "Speak with a real human, no IVR mazes.",                                   action: "Call Now",       href: "#" },
-  { icon: "Mail",          title: "Email Support", body: "Detailed queries answered quickly. info@example.com.",                     action: "Email Us",       href: "mailto:info@example.com" },
+  // Read from CONTACT_INFO, not typed out: this card said info@example.com —
+  // both in the text and in the mailto — so "Email Us" opened a message to a
+  // placeholder address while every other page gave the real one.
+  { icon: "Mail",          title: "Email Support", body: `Detailed queries answered quickly. ${CONTACT_INFO.email}.`, action: "Email Us",       href: `mailto:${CONTACT_INFO.email}` },
   { icon: "Send",          title: "WhatsApp",      body: "Convenient mobile-first support on WhatsApp.",                              action: "Open WhatsApp", href: "https://wa.me/447577347804" },
 ];
