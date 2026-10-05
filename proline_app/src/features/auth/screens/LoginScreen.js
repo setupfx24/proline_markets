@@ -149,7 +149,7 @@ export default function LoginScreen({ navigation }) {
 
           {/* Form */}
           <View style={styles.form}>
-            <Text style={styles.label}>Email</Text>
+            <Text style={styles.label}>Email or Account Number</Text>
             <View style={[styles.inputWrap, focused === 'email' && styles.inputWrapFocus]}>
               <Ionicons name="mail-outline" size={18} color={focused === 'email' ? THEME : C.textMuted} style={styles.leadIcon} />
               <TextInput
@@ -157,9 +157,9 @@ export default function LoginScreen({ navigation }) {
                 onChangeText={setEmail}
                 onFocus={() => setFocused('email')}
                 onBlur={() => setFocused(null)}
-                placeholder="you@example.com"
+                placeholder="you@example.com or PM-700001"
                 placeholderTextColor={C.textMuted}
-                keyboardType="email-address"
+                keyboardType="default"
                 autoCapitalize="none"
                 autoCorrect={false}
                 autoComplete="off"

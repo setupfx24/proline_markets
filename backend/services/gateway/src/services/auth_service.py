@@ -9,7 +9,7 @@ from time import monotonic
 import pyotp
 from fastapi import Request
 from fastapi.responses import JSONResponse
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid import UUID
 
@@ -372,7 +372,17 @@ async def login_user(
     db: AsyncSession,
 ) -> JSONResponse:
     rate_limit_http(request, "login", 40, 60.0)
-    result = await db.execute(select(User).where(User.email == email))
+    identifier = email.strip()
+    if "@" in identifier:
+        result = await db.execute(select(User).where(User.email == identifier))
+    else:
+        # Account-number login: resolve the owner of that trading account.
+        result = await db.execute(
+            select(User)
+            .join(TradingAccount, TradingAccount.user_id == User.id)
+            .where(func.upper(TradingAccount.account_number) == identifier.upper())
+            .limit(1)
+        )
     user = result.scalar_one_or_none()
 
     if not user or not verify_password(password, user.password_hash):

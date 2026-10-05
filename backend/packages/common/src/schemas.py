@@ -3,7 +3,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Optional
 from uuid import UUID
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, TypeAdapter, field_validator
 
 
 # ============================================
@@ -21,9 +21,18 @@ class RegisterRequest(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    email: EmailStr
+    # Email, or a trading account number (e.g. PM-700001) — see login_user.
+    email: str = Field(min_length=1, max_length=255)
     password: str
     totp_code: Optional[str] = None
+
+    @field_validator("email")
+    @classmethod
+    def _email_or_account_number(cls, v: str) -> str:
+        v = v.strip()
+        if "@" in v:
+            return TypeAdapter(EmailStr).validate_python(v)
+        return v
 
 
 class VerifyEmailRequest(BaseModel):

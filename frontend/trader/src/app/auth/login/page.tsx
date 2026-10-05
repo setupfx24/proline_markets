@@ -123,7 +123,10 @@ export default function LoginPage() {
   const handleSignIn = async (ev: React.FormEvent) => {
     ev.preventDefault();
     const e: Record<string, string> = {};
-    if (!email.includes('@') || !email.includes('.')) e.email = 'Please enter a valid email address.';
+    // Email, or a trading account number (e.g. PM-700001).
+    const ident = email.trim();
+    if (!ident) e.email = 'Please enter your email or account number.';
+    else if (ident.includes('@') && !ident.includes('.')) e.email = 'Please enter a valid email address.';
     if (password.length < 8) e.password = 'Password must be at least 8 characters.';
     setErrors(e);
     if (Object.keys(e).length > 0) return;
@@ -310,9 +313,9 @@ export default function LoginPage() {
 
                     <motion.div {...fadeUp(0.37)}>
                       <AuthInput
-                        label="Email"
-                        type="email"
-                        placeholder="eg. john@example.com"
+                        label="Email or Account Number"
+                        type="text"
+                        placeholder="eg. john@example.com or PM-700001"
                         value={email}
                         onChange={(e) => { setEmail(e.target.value); setErrors((p) => ({ ...p, email: '' })); }}
                         error={errors.email}
