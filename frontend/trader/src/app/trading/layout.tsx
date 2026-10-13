@@ -157,12 +157,26 @@ function TradingSession({ children }: { children: React.ReactNode }) {
       }
     }, 1500);
 
+    // Browsers throttle timers in a hidden tab, so a trade opened or closed
+    // while another tab was in front (the platform bridge, SL/TP, another
+    // device) would wait for the next slow tick. Refresh the moment this tab is
+    // shown or focused again.
+    const refreshNow = () => {
+      if (document.visibilityState !== 'visible') return;
+      void refreshPositions();
+      void refreshAccount();
+    };
+    document.addEventListener('visibilitychange', refreshNow);
+    window.addEventListener('focus', refreshNow);
+
     return () => {
       cancelled = true;
       pollCancelled = true;
       unsub();
       clearInterval(positionPoll);
       clearInterval(pricePoll);
+      document.removeEventListener('visibilitychange', refreshNow);
+      window.removeEventListener('focus', refreshNow);
     };
   }, [setAccounts, setInstruments, updatePrice, refreshPositions, refreshAccount]);
 

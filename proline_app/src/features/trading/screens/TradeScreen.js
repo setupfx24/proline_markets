@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { ScrollView, RefreshControl, View, StyleSheet } from 'react-native';
+import { ScrollView, RefreshControl, View, StyleSheet, AppState } from 'react-native';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 
 import { Screen, SegmentedTabs } from '../../../components/vantage';
@@ -190,7 +190,12 @@ export default function TradeScreen() {
       if (n % 6 === 5) refreshAccountData();   // periodic full refresh (orders + closed history)
       n += 1;
     }, 1000);
-    return () => clearInterval(id);
+    // Back from the background: timers were paused, so refresh right away
+    // instead of showing positions from before the app was minimised.
+    const sub = AppState.addEventListener('change', (st) => {
+      if (st === 'active') { refreshTick(); refreshAccountData(); }
+    });
+    return () => { clearInterval(id); sub.remove(); };
   }, [refreshTick, refreshLive, refreshAccountData]));
 
   useEffect(() => {

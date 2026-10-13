@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useContext } from 'react';
-import { ScrollView, RefreshControl, View, StyleSheet, Pressable, Text, Image } from 'react-native';
+import { ScrollView, RefreshControl, View, StyleSheet, Pressable, Text, Image, AppState } from 'react-native';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 
 import { AuthContext } from '../../../app/providers/AuthContext';
@@ -78,16 +78,24 @@ export default function HomeScreen() {
     ]);
   }, [refreshAccounts]);
 
-  // Fetch live equity/PnL for the selected account.
-  useEffect(() => {
+  // Live equity/PnL for the selected account — polled while Home is focused,
+  // and refreshed the moment the app comes back to the foreground, so a trade
+  // opened or closed elsewhere (another device, the platform bridge, SL/TP)
+  // shows without pulling to refresh.
+  useFocusEffect(useCallback(() => {
     const id = selectedAccount?.id || selectedAccount?._id;
-    if (!id) { setAccountSummary(null); return; }
+    if (!id) { setAccountSummary(null); return undefined; }
     let cancelled = false;
-    ApiService.getAccountSummary(id)
+    let first = true;
+    const load = () => ApiService.getAccountSummary(id)
       .then((s) => { if (!cancelled) setAccountSummary(s); })
-      .catch(() => { if (!cancelled) setAccountSummary(null); });
-    return () => { cancelled = true; };
-  }, [selectedAccount]);
+      .catch(() => { if (!cancelled && first) setAccountSummary(null); })
+      .finally(() => { first = false; });
+    load();
+    const timer = setInterval(load, 3000);
+    const sub = AppState.addEventListener('change', (st) => { if (st === 'active') load(); });
+    return () => { cancelled = true; clearInterval(timer); sub.remove(); };
+  }, [selectedAccount]));
 
   useEffect(() => {
     fetchAll();
