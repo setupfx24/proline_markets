@@ -19,6 +19,7 @@ where the copy loses (its SL) and the source's SL is where the copy wins (its TP
 | SL/TP changed | Copy's SL/TP updated (swapped in reverse mode) |
 | Partial close | Copy closes the same fraction |
 | Full close (manual, SL/TP, stop-out) | Copy closed |
+| Copy fully closed on the other platform first | Source closed |
 
 Each copy is a real trade on the receiving platform. It goes through the normal
 order path, so it fills at that platform's own price and spread, passes its
@@ -27,9 +28,11 @@ engines. Fill prices differ slightly between the platforms for that reason.
 
 - **Only new trades are copied.** A link copies positions opened after it was
   created, re-enabled or re-pointed. Positions already open are left alone.
-- **Closes flow from the source to the copy only.** If the copy closes first
-  (its own SL/TP, stop-out or a manual close), the source stays open. The source
-  platform sees the copy as closed within about 30 s.
+- **Closing either trade closes the other.** If the source closes, the copy is
+  closed. If the copy closes first (manual close, its own SL/TP, or a
+  stop-out), the source is closed too, within about a second. Each side closes
+  at its own platform's market price. A partial close is mirrored only from the
+  source to the copy.
 - **A refusal is final.** If the receiving platform refuses the copy (for
   example insufficient margin, market closed or unknown symbol), the reason is
   shown on the admin page and the copy is not retried. Network errors and 5xx

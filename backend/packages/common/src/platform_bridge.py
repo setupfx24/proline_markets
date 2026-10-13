@@ -218,6 +218,10 @@ class PeerClient:
     async def close_trade(self, payload: dict) -> dict:
         return await self._call("POST", "/trades/close", payload)
 
+    async def close_source(self, payload: dict) -> dict:
+        """Ask the peer to close ITS source position because our copy closed."""
+        return await self._call("POST", "/trades/close-source", payload)
+
     async def modify_trade(self, payload: dict) -> dict:
         return await self._call("POST", "/trades/modify", payload)
 

@@ -16,8 +16,9 @@ Rules
     tag, is never sent out. Copies the peer opened HERE carry both, so two
     links over the same pair of accounts (A→B here, B→A there) cannot loop.
   * MT5-mirrored rows (mt5_link_id set) are not real trades and are skipped.
-  * Closes flow source → copy only. A copy closed on the peer by its own SL/TP,
-    stop-out or by hand is marked closed here; the source stays open.
+  * Closes run BOTH ways. Source closed here → the copy is closed on the
+    peer. A copy the peer opened HERE that closes here first (client, SL/TP,
+    stop-out) → the peer is asked to close its source (close-source).
   * Peer opens are idempotent (keyed by our position id), so every transient
     failure is simply retried with backoff. A refusal (no margin, market closed,
     unknown symbol…) is final and shown on the admin page.
@@ -42,7 +43,6 @@ logger = logging.getLogger("trade-bridge")
 logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
 
 settings = get_settings()
-STATUS_SWEEP_SECONDS = 30.0
 MAX_BACKOFF_SECONDS = 60.0
 
 
@@ -82,7 +82,6 @@ def _clear_retry(row: BridgeTrade) -> None:
 class Bridge:
     def __init__(self, peer: pb.PeerClient):
         self.peer = peer
-        self._last_sweep = 0.0
 
     # ── One cycle ────────────────────────────────────────────────────────
     async def cycle(self) -> None:
@@ -97,14 +96,10 @@ class Bridge:
                     await self._link_status(db, link.id, "error", f"{type(e).__name__}: {e}")
 
         await self._process_rows()
-
-        loop = asyncio.get_running_loop()
-        if loop.time() - self._last_sweep >= STATUS_SWEEP_SECONDS:
-            self._last_sweep = loop.time()
-            try:
-                await self._sweep()
-            except Exception:
-                logger.exception("status sweep failed")
+        try:
+            await self._inbound_closes()
+        except Exception:
+            logger.exception("inbound close sync failed")
 
     async def _link_status(self, db, link_id, status: str, error: str | None) -> None:
         link = await db.get(BridgeLink, link_id)
@@ -319,36 +314,48 @@ class Bridge:
 
     @staticmethod
     def _absorb(row: BridgeTrade, res: dict) -> None:
-        """Take the peer's view of the copy: closed there means closed here."""
-        if res.get("position_status") and res["position_status"] != "open":
-            row.state = "closed"
-        elif res.get("state") == "closed":
-            row.state = "closed"
+        """Keep the peer's note on the copy (e.g. an SL/TP it couldn't set).
+
+        A copy that closed over there is NOT marked closed here: the peer's
+        worker asks us to close the source (close-source), which closes the row
+        together with the position."""
         row.error = res.get("error") or None
 
-    # ── Copies closed on the peer by themselves ──────────────────────────
-    async def _sweep(self) -> None:
+    # ── Copies WE hold that closed here first → close the peer's source ──
+    async def _inbound_closes(self) -> None:
         async with AsyncSessionLocal() as db:
             rows = (await db.execute(
-                select(BridgeTrade).where(BridgeTrade.direction == "out", BridgeTrade.state == "open")
+                select(BridgeTrade)
+                .join(Position, Position.id == BridgeTrade.local_position_id)
+                .where(
+                    BridgeTrade.direction == "in",
+                    BridgeTrade.state == "open",
+                    Position.status != "open",
+                )
             )).scalars().all()
-            if not rows:
-                return
-            by_src = {str(r.local_position_id): r for r in rows}
-            ids = list(by_src)
-            for i in range(0, len(ids), 500):
+            for row in rows:
+                if not _due(row):
+                    continue
                 try:
-                    res = await self.peer.trade_status({"source_position_ids": ids[i:i + 500]})
+                    await self.peer.close_source({
+                        "position_id": row.peer_position_id,
+                        "copy_position_id": str(row.local_position_id),
+                    })
                 except pb.PeerError as e:
-                    logger.warning("status sweep: %s", e)
-                    return
-                for src_id, info in (res.get("trades") or {}).items():
-                    r = by_src.get(src_id)
-                    if r is not None and (info.get("state") == "closed"
-                                          or info.get("position_status") not in (None, "open")):
-                        r.state = "closed"
-                        logger.info("[%s→%s] copy of %s was closed on the peer",
-                                    r.local_account_number, r.peer_account_number, src_id)
+                    if e.status == 404:
+                        row.state, row.error = "closed", None   # nothing to close there
+                    elif e.definitive:
+                        row.state, row.error = "closed", f"source not closed: {e}"[:500]
+                        logger.warning("[%s←%s] could not close source %s: %s",
+                                       row.local_account_number, row.peer_account_number,
+                                       row.peer_position_id, e)
+                    else:
+                        _backoff(row, str(e))
+                    continue
+                row.state = "closed"
+                _clear_retry(row)
+                logger.info("[%s←%s] copy closed here — closed source %s on the peer",
+                            row.local_account_number, row.peer_account_number, row.peer_position_id)
             await db.commit()
 
 

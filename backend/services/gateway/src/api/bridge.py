@@ -87,6 +87,11 @@ async def close_trade(request: Request, source: str = Depends(verified_source)):
     return await _run(bridge_service.close_trade(source, await _json(request)))
 
 
+@router.post("/trades/close-source")
+async def close_source(request: Request, source: str = Depends(verified_source)):
+    return await _run(bridge_service.close_source(source, await _json(request)))
+
+
 @router.post("/trades/modify")
 async def modify_trade(request: Request, source: str = Depends(verified_source)):
     return await _run(bridge_service.modify_trade(source, await _json(request)))

@@ -6,6 +6,10 @@ same place_order / close_position / modify_position a client's own click does,
 so it is a real trade here: our price, our margin check, our commission, our
 SL/TP and stop-out engines.
 
+Closes run both ways: the peer closes our copy when its source closes
+(close_trade), and our worker asks the peer to close the source when the copy
+closes here first (close_source on the peer).
+
 Idempotency: the peer identifies a trade by ITS position id. The
 ('in', peer_platform, peer_position_id) row is committed in state 'opening'
 BEFORE the order is placed, so a retried or duplicated open can never place a
@@ -14,6 +18,7 @@ second order — it finds the row and returns what the first one did.
 import logging
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from uuid import UUID
 
 from fastapi import HTTPException, Request
 from pydantic import ValidationError
@@ -387,7 +392,60 @@ async def modify_trade(source: str, payload: dict) -> dict:
         return _reply(row, await db.get(Position, pos_id))
 
 
-# ─── Status sweep ─────────────────────────────────────────────────────────
+# ─── Close the SOURCE because its copy closed on the peer ─────────────────
+
+async def close_source(source: str, payload: dict) -> dict:
+    """The peer's copy of one of OUR positions was closed over there (by the
+    client, its SL/TP or a stop-out) — close our source position too.
+
+    `position_id` is OUR position (the peer knows it as its peer_position_id).
+    Only positions we actually sent to this peer can be closed this way. The
+    out-row is marked closed in the same transaction as the close, so our own
+    worker never turns round and sends that close back.
+    """
+    try:
+        pos_id = UUID(str(payload["position_id"]))
+    except (KeyError, ValueError) as e:
+        raise BridgeReply(400, {"detail": f"bad close-source payload: {e}"})
+
+    async with AsyncSessionLocal() as db:
+        row = (await db.execute(
+            select(BridgeTrade).where(
+                BridgeTrade.direction == "out",
+                BridgeTrade.peer_platform == source,
+                BridgeTrade.local_position_id == pos_id,
+            ).with_for_update()
+        )).scalars().first()
+        if row is None:
+            raise BridgeReply(404, {"detail": "no bridged position with that id"})
+        pos = await db.get(Position, pos_id)
+        if pos is None or _status(pos) != "open":
+            row.state = "closed"
+            await db.commit()
+            return _reply(row, pos)
+        acct = await db.get(TradingAccount, pos.account_id)
+        row.state = "closed"
+        try:
+            await close_position(pos_id, ClosePositionRequest(lots=None), acct.user_id, db)
+        except HTTPException as e:
+            await db.rollback()
+            if e.status_code == 400 and "not open" in str(e.detail).lower():
+                row = await db.get(BridgeTrade, row.id)
+                row.state = "closed"
+                await db.commit()
+                return _reply(row)
+            raise BridgeReply(503 if e.status_code >= 500 or "price" in str(e.detail).lower() else 422,
+                              {"detail": str(e.detail)})
+
+    async with AsyncSessionLocal() as db:
+        row = (await db.execute(
+            select(BridgeTrade).where(BridgeTrade.direction == "out", BridgeTrade.local_position_id == pos_id)
+        )).scalars().first()
+        logger.info("[%s] copy was closed there — closed source position %s here", source, pos_id)
+        return _reply(row, await db.get(Position, pos_id))
+
+
+# ─── Status (read-only) ───────────────────────────────────────────────────
 
 async def trade_status(source: str, payload: dict) -> dict:
     ids = [str(i) for i in (payload.get("source_position_ids") or [])][:500]
@@ -402,10 +460,9 @@ async def trade_status(source: str, payload: dict) -> dict:
                 BridgeTrade.peer_position_id.in_(ids),
             )
         )).scalars().all()
+        # Read-only: a copy that closed here is reported by our own worker
+        # (close-source), which needs the row still 'open' to notice it.
         for row in rows:
             pos = await db.get(Position, row.local_position_id) if row.local_position_id else None
-            if pos is not None and _status(pos) != "open" and row.state == "open":
-                row.state = "closed"
             out[row.peer_position_id] = _reply(row, pos)
-        await db.commit()
     return {"trades": out}

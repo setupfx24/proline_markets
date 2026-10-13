@@ -170,7 +170,7 @@ export default function PlatformBridgePage() {
         <p className="text-xxs text-text-tertiary mt-0.5 max-w-2xl">
           Copy trades from an account here to an account on {peerName}, by account number. Straight keeps the
           side (BUY → BUY); Reverse flips it (BUY → SELL, SL and TP swapped). Each copy is a real market order on{' '}
-          {peerName} at its own price, shows in that account's Positions tab, and closes when the source closes. For two-way copying, add the opposite
+          {peerName} at its own price, shows in that account's Positions tab. Closing either trade closes the other. For two-way copying, add the opposite
           link on {peerName}&apos;s admin panel too — bridged trades are never sent back, so it cannot loop.
         </p>
       </div>
@@ -410,7 +410,7 @@ export default function PlatformBridgePage() {
           <div className="bg-bg-secondary border border-border-primary rounded-md max-w-sm w-full p-5 space-y-3" onClick={(e) => e.stopPropagation()}>
             <p className="text-sm text-text-primary font-semibold">Remove this link?</p>
             <p className="text-xs text-text-secondary">
-              New trades stop being copied. Copies already open on {peerName} still close when their source closes.
+              New trades stop being copied. Trades already copied stay paired: closing either side still closes the other.
             </p>
             <div className="flex justify-end gap-2 pt-2">
               <button type="button" onClick={() => setDeleteId(null)} className="px-3 py-1.5 text-xs border border-border-primary rounded-md">

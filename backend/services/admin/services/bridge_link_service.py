@@ -222,7 +222,7 @@ async def delete_link(link_id: uuid.UUID, admin_id: uuid.UUID, ip_address: str |
     await db.commit()
     # Copies already open on the peer keep following their source: the worker
     # still sends their closes (bridge_trades.link_id is set NULL, not deleted).
-    return {"message": "Bridge link removed. Copies already open will still close with their source."}
+    return {"message": "Bridge link removed. Trades already copied stay paired: closing either side still closes the other."}
 
 
 async def list_trades(db: AsyncSession, link_id: uuid.UUID | None = None,
