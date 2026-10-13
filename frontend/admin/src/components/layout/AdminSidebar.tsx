@@ -42,6 +42,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'Banks', href: '/banks', icon: Landmark, perm: 'banks.view' },
   { label: 'Account types', href: '/account-types', icon: Layers, perm: 'config.view' },
   { label: 'MT5-Connect', href: '/mt5-connect', icon: Cable, perm: 'config.view' },
+  { label: 'Platform Bridge', href: '/platform-bridge', icon: ArrowLeftRight, perm: 'config.view' },
   {
     label: 'Config', icon: Sliders, perm: 'config.view',
     children: [

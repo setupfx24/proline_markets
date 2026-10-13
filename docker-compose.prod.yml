@@ -51,6 +51,9 @@ services:
   metaapi-worker:
     restart: always
 
+  trade-bridge:
+    restart: always
+
   # ── Frontends — build with production domain + restart ──────
   trader-frontend:
     build:

@@ -88,6 +88,20 @@ class Settings(BaseSettings):
     METAAPI_TOKEN: str = ""      # MetaApi JWT (secret) — shared across all accounts
     METAAPI_REGION: str = ""     # optional default region (e.g. new-york)
 
+    # Platform bridge — copies trades between this platform and its sister
+    # platform (Opula Markets ⇄ Proline Markets) by account number. Per-account
+    # links live in the bridge_links table (admin-managed); these are the
+    # connection secrets. Both platforms must share the SAME secret, and each
+    # sets its own BRIDGE_PLATFORM_ID. The trade-bridge worker and the inbound
+    # /api/bridge/v1 endpoints stay off unless BRIDGE_ENABLED is true.
+    BRIDGE_ENABLED: bool = False
+    BRIDGE_PLATFORM_ID: str = "proline"          # this platform's id, sent as X-Bridge-Source
+    BRIDGE_PEER_ID: str = "opula"            # the sister platform's id
+    BRIDGE_PEER_URL: str = ""                  # sister gateway base URL, e.g. https://api.opulamarkets.com
+    BRIDGE_SHARED_SECRET: str = ""             # HMAC-SHA256 secret, identical on both platforms
+    BRIDGE_TIMESTAMP_TOLERANCE_MS: int = 30_000
+    BRIDGE_POLL_SECONDS: float = 1.0           # how often the worker scans linked accounts
+
     MARGIN_CALL_LEVEL: float = 80.0
     STOP_OUT_LEVEL: float = 50.0
     MAX_OPEN_TRADES: int = 200

@@ -3,7 +3,7 @@ import asyncio
 import json
 import logging
 from decimal import Decimal
-from uuid import UUID
+from uuid import UUID, uuid4
 from datetime import datetime
 
 from fastapi import HTTPException, Request
@@ -211,6 +211,9 @@ async def place_order(
     bid, ask = await get_current_price(instrument.symbol)
 
     order = Order(
+        # Explicit id: the position below takes order.id before any flush, and
+        # the column default only fires at flush — positions.order_id was NULL.
+        id=uuid4(),
         account_id=account.id,
         instrument_id=instrument.id,
         order_type=req.order_type,

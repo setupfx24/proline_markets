@@ -17,6 +17,7 @@ from routes import (
     config as routes_config, instruments_admin, business, social, analytics, bonus, banners,
     support, employees, settings, transactions, kyc, account_types, user_audit_logs,
     investor_access, notifications, mt5_links, managed_accounts, manual_trades,
+    bridge_links,
 )
 
 app_settings = get_settings()
@@ -31,6 +32,62 @@ if not _cors_origins:
     _cors_origins = ["http://localhost:3001"]
 _cors_methods = [m.strip() for m in app_settings.CORS_ALLOW_METHODS.split(",") if m.strip()]
 _cors_headers = [h.strip() for h in app_settings.CORS_ALLOW_HEADERS.split(",") if h.strip()]
+
+
+BRIDGE_DDL = (
+    """
+    CREATE TABLE IF NOT EXISTS bridge_links (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        local_account_number VARCHAR(20) NOT NULL,
+        peer_account_number VARCHAR(20) NOT NULL,
+        mode VARCHAR(10) NOT NULL DEFAULT 'straight' CHECK (mode IN ('straight','reverse')),
+        lot_multiplier NUMERIC(10,4) NOT NULL DEFAULT 1,
+        max_lots NUMERIC(10,4),
+        copy_sl_tp BOOLEAN NOT NULL DEFAULT TRUE,
+        enabled BOOLEAN NOT NULL DEFAULT TRUE,
+        baseline_at TIMESTAMPTZ DEFAULT now(),
+        status VARCHAR(20) DEFAULT 'pending',
+        last_error TEXT,
+        last_sync_at TIMESTAMPTZ,
+        label VARCHAR(100) DEFAULT '',
+        created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ DEFAULT now(),
+        updated_at TIMESTAMPTZ DEFAULT now(),
+        CONSTRAINT uq_bridge_links_local UNIQUE (local_account_number)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS bridge_trades (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        direction VARCHAR(3) NOT NULL CHECK (direction IN ('out','in')),
+        link_id UUID REFERENCES bridge_links(id) ON DELETE SET NULL,
+        local_position_id UUID UNIQUE REFERENCES positions(id) ON DELETE CASCADE,
+        local_account_number VARCHAR(20),
+        peer_platform VARCHAR(20) NOT NULL,
+        peer_account_number VARCHAR(20) NOT NULL,
+        peer_position_id VARCHAR(64),
+        mode VARCHAR(10) NOT NULL,
+        state VARCHAR(10) NOT NULL DEFAULT 'pending',
+        src_lots NUMERIC(10,4),
+        synced_sl NUMERIC(18,8),
+        synced_tp NUMERIC(18,8),
+        attempts INTEGER DEFAULT 0,
+        next_attempt_at TIMESTAMPTZ,
+        error TEXT,
+        created_at TIMESTAMPTZ DEFAULT now(),
+        updated_at TIMESTAMPTZ DEFAULT now()
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_bridge_trades_link ON bridge_trades(link_id)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_bridge_trades_live ON bridge_trades(direction, state)
+    """,
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_bridge_trades_inbound ON bridge_trades(peer_platform, peer_position_id) WHERE direction = 'in'
+    """,
+)
 
 
 async def _apply_startup_ddl():
@@ -178,6 +235,15 @@ async def _apply_startup_ddl():
     except Exception as e:
         logger.warning("startup DDL skipped: %s", e)
 
+    # Platform bridge (migration 0026) — admin page + trade-bridge worker.
+    # Own try: a failure in the block above must not leave the bridge page 500ing.
+    try:
+        async with engine.begin() as conn:
+            for stmt in BRIDGE_DDL:
+                await conn.execute(text(stmt))
+    except Exception as e:
+        logger.warning("bridge DDL skipped: %s", e)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -244,6 +310,7 @@ app.include_router(notifications.router, prefix=prefix)
 app.include_router(mt5_links.router, prefix=prefix)
 app.include_router(managed_accounts.router, prefix=prefix)
 app.include_router(manual_trades.router, prefix=prefix)
+app.include_router(bridge_links.router, prefix=prefix)
 
 
 @app.get("/health")

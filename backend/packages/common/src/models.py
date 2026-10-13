@@ -1,6 +1,6 @@
 """SQLAlchemy ORM models for the entire platform."""
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from sqlalchemy import (
     Column, String, Boolean, Integer, DateTime, ForeignKey, Text, Numeric,
@@ -900,6 +900,88 @@ class MT5AccountLink(Base):
     label = Column(String(100), default="")
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+def _aware_utcnow() -> datetime:
+    # The bridge's own timestamps drive retry/staleness maths, so they are
+    # timezone-aware: a naive value is read as the HOST's local time by asyncpg.
+    return datetime.now(timezone.utc)
+
+
+class BridgeLink(Base):
+    """Admin-managed outbound link: trades on a local account are copied to an
+    account on the sister platform (Opula Markets ⇄ Proline Markets).
+
+      mode='straight' → local BUY  becomes a BUY  on the peer account
+      mode='reverse'  → local BUY  becomes a SELL on the peer account (SL/TP swapped)
+
+    A link only ever sends. Two-way copying is two links, one configured on each
+    platform. Positions the bridge itself opened are never sent back, so a pair
+    of links over the same two accounts cannot loop.
+
+    Only positions opened at or after `baseline_at` are copied; it is reset
+    whenever the link is created or re-enabled, so switching a link on never
+    fires off the positions the account is already holding.
+    """
+    __tablename__ = "bridge_links"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    local_account_number = Column(String(20), nullable=False, unique=True)  # one outbound link per account
+    peer_account_number = Column(String(20), nullable=False)
+    mode = Column(String(10), nullable=False, default="straight")   # straight | reverse
+    lot_multiplier = Column(Numeric(10, 4), nullable=False, default=Decimal("1"))
+    max_lots = Column(Numeric(10, 4))              # per-trade cap on the peer side; NULL = uncapped
+    copy_sl_tp = Column(Boolean, nullable=False, default=True)
+    enabled = Column(Boolean, nullable=False, default=True)
+    # Compared with positions.created_at, so it is written the same (naive) way.
+    baseline_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    status = Column(String(20), default="pending")  # pending | active | error
+    last_error = Column(Text)
+    last_sync_at = Column(DateTime(timezone=True))
+    label = Column(String(100), default="")
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
+    created_at = Column(DateTime(timezone=True), default=_aware_utcnow)
+    updated_at = Column(DateTime(timezone=True), default=_aware_utcnow, onupdate=_aware_utcnow)
+
+
+class BridgeTrade(Base):
+    """One bridged position, as seen from this platform.
+
+      direction='out' — `local_position_id` is the SOURCE position here, and
+                        `peer_position_id` the copy the peer opened for it.
+      direction='in'  — `local_position_id` is the COPY opened here, and
+                        `peer_position_id` the source position on the peer.
+
+    A position with any bridge_trades row is never sent out again — that is the
+    loop guard for two-way links. ('in', peer_platform, peer_position_id) is
+    unique, which makes every inbound open idempotent: a retried request finds
+    the row and returns the copy it already made.
+
+    `src_lots` is the source position's volume as last synced, so a partial
+    close on the source closes the same fraction of the copy exactly once.
+    """
+    __tablename__ = "bridge_trades"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    direction = Column(String(3), nullable=False)               # out | in
+    link_id = Column(UUID(as_uuid=True), ForeignKey("bridge_links.id", ondelete="SET NULL"), index=True)
+    local_position_id = Column(UUID(as_uuid=True), ForeignKey("positions.id", ondelete="CASCADE"), unique=True)
+    local_account_number = Column(String(20))
+    peer_platform = Column(String(20), nullable=False)
+    peer_account_number = Column(String(20), nullable=False)
+    peer_position_id = Column(String(64))
+    mode = Column(String(10), nullable=False)
+    # out: pending | open | closed | failed | skipped
+    # in:  opening | open | closed | failed
+    state = Column(String(10), nullable=False, default="pending")
+    src_lots = Column(Numeric(10, 4))
+    synced_sl = Column(Numeric(18, 8))
+    synced_tp = Column(Numeric(18, 8))
+    attempts = Column(Integer, default=0)
+    next_attempt_at = Column(DateTime(timezone=True))
+    error = Column(Text)
+    created_at = Column(DateTime(timezone=True), default=_aware_utcnow)
+    updated_at = Column(DateTime(timezone=True), default=_aware_utcnow, onupdate=_aware_utcnow)
 
 
 class ManagedAccount(Base):
