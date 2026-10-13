@@ -30,23 +30,6 @@ interface BridgeConnection {
   secret_set: boolean;
 }
 
-interface BridgeTrade {
-  id: string;
-  direction: 'out' | 'in';
-  local_account_number: string | null;
-  peer_platform: string;
-  peer_account_number: string;
-  mode: string;
-  state: string;
-  symbol: string | null;
-  side: string | null;
-  lots: number | null;
-  open_price: number | null;
-  attempts: number;
-  error: string;
-  created_at: string | null;
-}
-
 const EMPTY = {
   local_account_number: '',
   peer_account_number: '',
@@ -58,15 +41,6 @@ const EMPTY = {
   label: '',
 };
 
-const STATE_STYLE: Record<string, string> = {
-  open: 'bg-buy/15 text-buy',
-  pending: 'bg-warning/15 text-warning',
-  opening: 'bg-warning/15 text-warning',
-  closed: 'bg-bg-tertiary text-text-secondary',
-  skipped: 'bg-bg-tertiary text-text-tertiary',
-  failed: 'bg-danger/15 text-danger',
-};
-
 function cap(s: string) {
   return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
 }
@@ -74,7 +48,6 @@ function cap(s: string) {
 export default function PlatformBridgePage() {
   const [links, setLinks] = useState<BridgeLink[]>([]);
   const [conn, setConn] = useState<BridgeConnection | null>(null);
-  const [trades, setTrades] = useState<BridgeTrade[]>([]);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
@@ -85,13 +58,9 @@ export default function PlatformBridgePage() {
 
   const fetchData = useCallback(async () => {
     try {
-      const [l, t] = await Promise.all([
-        adminApi.get<{ connection: BridgeConnection; links: BridgeLink[] }>('/bridge-links'),
-        adminApi.get<BridgeTrade[]>('/bridge-links/trades', { limit: '100' }),
-      ]);
+      const l = await adminApi.get<{ connection: BridgeConnection; links: BridgeLink[] }>('/bridge-links');
       setLinks(l.links || []);
       setConn(l.connection);
-      setTrades(Array.isArray(t) ? t : []);
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : 'Failed to load');
     } finally {
@@ -201,7 +170,7 @@ export default function PlatformBridgePage() {
         <p className="text-xxs text-text-tertiary mt-0.5 max-w-2xl">
           Copy trades from an account here to an account on {peerName}, by account number. Straight keeps the
           side (BUY → BUY); Reverse flips it (BUY → SELL, SL and TP swapped). Each copy is a real market order on{' '}
-          {peerName} at its own price, and closes when the source closes. For two-way copying, add the opposite
+          {peerName} at its own price, shows in that account's Positions tab, and closes when the source closes. For two-way copying, add the opposite
           link on {peerName}&apos;s admin panel too — bridged trades are never sent back, so it cannot loop.
         </p>
       </div>
@@ -332,52 +301,6 @@ export default function PlatformBridgePage() {
             </div>
           )}
 
-          <h2 className="text-sm font-semibold text-text-primary pt-2">Recent bridged trades</h2>
-          {trades.length === 0 ? (
-            <div className="text-center text-xs text-text-tertiary py-8 border border-border-primary rounded-md bg-bg-secondary">
-              Nothing bridged yet.
-            </div>
-          ) : (
-            <div className="overflow-x-auto border border-border-primary rounded-md">
-              <table className="w-full text-xs">
-                <thead className="bg-bg-tertiary text-text-tertiary text-left">
-                  <tr>
-                    <th className="p-2 font-medium">Time</th>
-                    <th className="p-2 font-medium">Direction</th>
-                    <th className="p-2 font-medium">Accounts</th>
-                    <th className="p-2 font-medium">Trade here</th>
-                    <th className="p-2 font-medium">Mode</th>
-                    <th className="p-2 font-medium">State</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {trades.map((t) => (
-                    <tr key={t.id} className="border-t border-border-primary">
-                      <td className="p-2 text-text-tertiary tabular-nums whitespace-nowrap">
-                        {t.created_at ? new Date(t.created_at).toLocaleString() : '—'}
-                      </td>
-                      <td className="p-2">{t.direction === 'out' ? `Sent → ${cap(t.peer_platform)}` : `Received ← ${cap(t.peer_platform)}`}</td>
-                      <td className="p-2 font-mono">
-                        {t.direction === 'out'
-                          ? `${t.local_account_number} → ${t.peer_account_number}`
-                          : `${t.peer_account_number} → ${t.local_account_number}`}
-                      </td>
-                      <td className="p-2 tabular-nums">
-                        {t.symbol ? `${(t.side || '').toUpperCase()} ${t.symbol} ${t.lots} @ ${t.open_price}` : '—'}
-                      </td>
-                      <td className="p-2">{t.mode === 'reverse' ? 'Reverse' : 'Straight'}</td>
-                      <td className="p-2">
-                        <span className={`text-xxs px-1.5 py-0.5 rounded-sm ${STATE_STYLE[t.state] || 'bg-bg-tertiary text-text-secondary'}`}>
-                          {t.state}{t.attempts > 0 && t.state === 'pending' ? ` (retry ${t.attempts})` : ''}
-                        </span>
-                        {t.error && <div className="text-xxs text-danger mt-0.5 max-w-xs truncate" title={t.error}>{t.error}</div>}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
         </>
       )}
 
